@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDisplayName</key>
+    <string>Woods Whisper</string>
+    <key>CFBundleShortVersionString</key>
+    <string>$(MARKETING_VERSION)</string>
+    <key>CFBundleVersion</key>
+    <string>$(CURRENT_PROJECT_VERSION)</string>
+
+    <!-- Modern single-target SwiftUI watch app -->
+    <key>WKApplication</key>
+    <true/>
+
+    <!-- Microphone capture on the Watch -->
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Woods Whisper records audio on your Watch to send to your paired iPhone or iPad.</string>
+
+    <!-- Direct Watch -> iPad over the local network (no companion phone) -->
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Woods Whisper sends your recordings directly to your paired iPad over WiFi, with no internet involved.</string>
+
+    <key>WKBackgroundModes</key>
+    <array>
+        <string>audio</string>
+    </array>
+</dict>
+</plist>

@@ -1,0 +1,27 @@
+# Xcode
+build/
+DerivedData/
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+
+# XcodeGen output (regenerated from project.yml)
+WoodsWhisper.xcodeproj/
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+
+# macOS
+.DS_Store
+
+# Downloaded ML models (large; fetched during initial setup)
+Models/Downloaded/
+*.mlmodelc
+*.safetensors
+*.gguf
+
+# Secrets / local config
+*.local.xcconfig
