@@ -17,8 +17,10 @@ packages:
   FluidAudio:
     url: https://github.com/FluidInference/FluidAudio.git
     from: "0.4.0"
-  MLXSwiftExamples:
-    url: https://github.com/ml-explore/mlx-swift-examples.git
+  # The reusable LLM/VLM libraries (MLXLLM, MLXLMCommon, ...) moved out of
+  # mlx-swift-examples into this dedicated repo.
+  MLXSwiftLM:
+    url: https://github.com/ml-explore/mlx-swift-lm.git
     branch: main
 
 settings:
@@ -39,9 +41,9 @@ targets:
       - package: WoodsWhisperKit
       - package: FluidAudio
         product: FluidAudio
-      - package: MLXSwiftExamples
+      - package: MLXSwiftLM
         product: MLXLLM
-      - package: MLXSwiftExamples
+      - package: MLXSwiftLM
         product: MLXLMCommon
       - target: WoodsWhisperWatch        # embed the watch app
     settings:

@@ -31,7 +31,7 @@ the rest of the app depends on.
 ## The two hard requirements, and how they're met
 
 1. **Fully offline.** Parakeet runs via [FluidAudio](https://github.com/FluidInference/FluidAudio)
-   (CoreML/ANE); Gemma 3 runs via [MLX Swift](https://github.com/ml-explore/mlx-swift-examples).
+   (CoreML/ANE); Gemma 3 runs via [MLX Swift LM](https://github.com/ml-explore/mlx-swift-lm).
    Both download once during setup and load from local cache forever after. No telemetry, no
    cloud calls in the recording/transcription/transformation paths.
 
