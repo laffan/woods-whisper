@@ -16,12 +16,10 @@ public typealias GemmaModel = WoodsWhisperKit.GemmaModel
 
 /// Gemma 3 text transformation via MLX Swift. iOS/iPadOS only.
 ///
-/// On platforms without MLX (the Watch) every method throws `.unsupportedPlatform`, so the
-/// type compiles everywhere and the Watch target links without the LLM dependency.
-///
-/// NOTE: like the ASR service, MLX's example API moves over time. Calls below target the
-/// `LLMModelFactory` / `ModelContainer` / `MLXLMCommon.generate` surface. Verify against the
-/// resolved version and tweak the marked lines; the app depends only on `TextTransformService`.
+/// Loads the model with the `#huggingFaceLoadModelContainer` macro (HF download + tokenizer)
+/// and generates via `ChatSession.streamResponse`. On platforms without MLX (the Watch) every
+/// method throws `.unsupportedPlatform`, so the type compiles everywhere and the Watch target
+/// links without the LLM dependency.
 public final class GemmaTransformService: TextTransformService {
 
     public private(set) var activeModel: GemmaModel
@@ -59,9 +57,13 @@ public final class GemmaTransformService: TextTransformService {
         #if canImport(MLXLLM)
         do {
             // Downloads weights on first run, then loads from the local HF cache (offline).
-            // The macro injects the HuggingFace hub downloader + tokenizer loader.
+            // The macro injects the HuggingFace hub downloader + tokenizer loader; the variant
+            // with a progressHandler lets us stream download progress to the Log.
             let configuration = ModelConfiguration(id: activeModel.rawValue)
-            container = try await #huggingFaceLoadModelContainer(configuration: configuration)
+            let throttle = ProgressThrottle(label: "Gemma weights")
+            container = try await #huggingFaceLoadModelContainer(configuration: configuration) { progress in
+                throttle.report(progress)
+            }
         } catch {
             throw TextTransformError.underlying(error)
         }

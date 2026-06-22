@@ -140,6 +140,29 @@ public final class DocumentStore: ObservableObject {
         touch(dstIdx)
     }
 
+    // MARK: Batch operations (selection mode)
+
+    public func deleteRecordings(_ ids: Set<UUID>, fromDocument documentID: UUID) {
+        guard let docIdx = index(of: documentID) else { return }
+        for recording in documents[docIdx].recordings where ids.contains(recording.id) {
+            removeAudio(recording)
+        }
+        documents[docIdx].recordings.removeAll { ids.contains($0.id) }
+        touch(docIdx)
+    }
+
+    public func moveRecordings(_ ids: Set<UUID>, from sourceID: UUID, to targetID: UUID) {
+        guard sourceID != targetID,
+              let srcIdx = index(of: sourceID),
+              let dstIdx = index(of: targetID) else { return }
+        let moving = documents[srcIdx].recordings.filter { ids.contains($0.id) }
+        guard !moving.isEmpty else { return }
+        documents[srcIdx].recordings.removeAll { ids.contains($0.id) }
+        documents[dstIdx].recordings.append(contentsOf: moving)
+        documents[srcIdx].updatedAt = Date()
+        touch(dstIdx)
+    }
+
     // MARK: Transformations
 
     public func appendTransformation(_ transformation: Document.Transformation,
