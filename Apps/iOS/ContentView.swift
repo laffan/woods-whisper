@@ -6,9 +6,6 @@ struct ContentView: View {
 
     var body: some View {
         TabView {
-            RecordingsView()
-                .tabItem { Label("Recordings", systemImage: "waveform") }
-
             DocumentsView()
                 .tabItem { Label("Documents", systemImage: "doc.text") }
 

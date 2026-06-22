@@ -1,7 +1,7 @@
 import Foundation
 
-/// A text document derived from a `Recording`. Lives only on iOS/iPadOS (the Watch has no
-/// documents section). Holds the raw transcription plus any model-transformed variants.
+/// A topic container that holds one or more `Recording`s and any model-produced text
+/// transformations. iOS/iPadOS only (the Watch has a flat recordings list).
 public struct Document: Identifiable, Codable, Hashable, Sendable {
     public let id: UUID
 
@@ -10,13 +10,10 @@ public struct Document: Identifiable, Codable, Hashable, Sendable {
     public let createdAt: Date
     public var updatedAt: Date
 
-    /// The recording this document was transcribed from, if still present.
-    public var sourceRecordingID: UUID?
+    /// The recordings that make up this document, in capture order.
+    public var recordings: [Recording]
 
-    /// Raw Parakeet transcription, kept verbatim so transformations can always be re-run.
-    public var transcript: String
-
-    /// Model-produced transformations of the transcript, newest last.
+    /// Model-produced transformations of the combined transcript, newest last.
     public var transformations: [Transformation]
 
     public init(
@@ -24,20 +21,30 @@ public struct Document: Identifiable, Codable, Hashable, Sendable {
         title: String,
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
-        sourceRecordingID: UUID? = nil,
-        transcript: String,
+        recordings: [Recording] = [],
         transformations: [Transformation] = []
     ) {
         self.id = id
         self.title = title
         self.createdAt = createdAt
         self.updatedAt = updatedAt
-        self.sourceRecordingID = sourceRecordingID
-        self.transcript = transcript
+        self.recordings = recordings
         self.transformations = transformations
     }
 
-    /// A single run of a prompt preset against the transcript (or a prior transformation).
+    /// All recording transcripts joined, in order — the input for transformations.
+    public var combinedTranscript: String {
+        recordings
+            .compactMap { $0.transcript?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n\n")
+    }
+
+    public var hasTranscribableContent: Bool {
+        recordings.contains { ($0.transcript?.isEmpty == false) }
+    }
+
+    /// A single run of a prompt preset against the combined transcript.
     public struct Transformation: Identifiable, Codable, Hashable, Sendable {
         public let id: UUID
         /// Name of the preset that produced this (snapshot, so renaming a preset later
