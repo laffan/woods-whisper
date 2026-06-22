@@ -64,8 +64,10 @@ public final class RecordingStore: ObservableObject {
     }
 
     public func delete(at offsets: IndexSet) {
-        for index in offsets { try? FileManager.default.removeItem(at: audioURL(for: recordings[index])) }
-        recordings.remove(atOffsets: offsets)
+        for index in offsets.sorted(by: >) {
+            try? FileManager.default.removeItem(at: audioURL(for: recordings[index]))
+            recordings.remove(at: index)
+        }
         persist()
     }
 

@@ -48,7 +48,7 @@ public final class DocumentStore: ObservableObject {
     }
 
     public func delete(at offsets: IndexSet) {
-        documents.remove(atOffsets: offsets)
+        for index in offsets.sorted(by: >) { documents.remove(at: index) }
         persistDocuments()
     }
 
