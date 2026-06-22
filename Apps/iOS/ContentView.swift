@@ -12,6 +12,9 @@ struct ContentView: View {
             DocumentsView()
                 .tabItem { Label("Documents", systemImage: "doc.text") }
 
+            LogView()
+                .tabItem { Label("Log", systemImage: "terminal") }
+
             SettingsView()
                 .tabItem { Label("Settings", systemImage: "gear") }
         }

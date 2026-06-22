@@ -44,6 +44,8 @@ public final class PhoneSessionTransport: NSObject, RecordingSender, RecordingRe
         // transferFile reliably delivers even if the iPhone app is backgrounded; the system
         // queues and retries. The metadata dictionary rides along with the file.
         session.transferFile(audioURL, metadata: ["transfer": metadata])
+        wwLog("Sending “\(transfer.recording.name)” to iPhone via WatchConnectivity "
+              + "(reachable: \(session.isReachable))", .transfer)
     }
 
     private struct EncodingFailure: Error {}
@@ -52,7 +54,13 @@ public final class PhoneSessionTransport: NSObject, RecordingSender, RecordingRe
 extension PhoneSessionTransport: WCSessionDelegate {
     public func session(_ session: WCSession,
                         activationDidCompleteWith state: WCSessionActivationState,
-                        error: Error?) {}
+                        error: Error?) {
+        if let error {
+            wwLog("WatchConnectivity activation error: \(error.localizedDescription)", .error)
+        } else {
+            wwLog("WatchConnectivity activated (state: \(state.rawValue))", .transfer)
+        }
+    }
 
     #if os(iOS)
     public func sessionDidBecomeInactive(_ session: WCSession) {}
@@ -62,12 +70,16 @@ extension PhoneSessionTransport: WCSessionDelegate {
     // MARK: RecordingReceiver (iPhone side)
 
     public func session(_ session: WCSession, didReceive file: WCSessionFile) {
+        wwLog("WatchConnectivity file received from Watch", .transfer)
         guard
             let wrapper = file.metadata?["transfer"] as? [String: Any],
             let metadataData = try? JSONSerialization.data(withJSONObject: wrapper),
             let transfer = try? JSONDecoder.iso.decode(RecordingTransfer.self, from: metadataData),
             let data = try? Data(contentsOf: file.fileURL)
-        else { return }
+        else {
+            wwLog("Could not decode incoming WatchConnectivity file", .error)
+            return
+        }
 
         let handler = onReceive
         Task { @MainActor in handler?(transfer, data) }

@@ -79,9 +79,12 @@ public final class LocalNetworkServer: RecordingReceiver {
             else { connection.cancel(); return }
 
             if let expected = self.expectedSecret, transfer.pairingSecret != expected {
+                wwLog("Rejected local-network sender “\(transfer.recording.name)”: bad pairing secret", .error)
                 self.send(ack: false, on: connection)   // reject unauthenticated sender
                 return
             }
+            wwLog("Incoming local-network recording “\(transfer.recording.name)” "
+                  + "(\(transfer.byteCount) bytes)…", .transfer)
             self.receivePayload(for: transfer, on: connection)
         }
     }
