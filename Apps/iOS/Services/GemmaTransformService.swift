@@ -7,8 +7,9 @@ import MLXLMCommon
 #endif
 
 // MLXLLM also declares a `GemmaModel` (the neural-net module). Disambiguate every
-// unqualified use in this file to our model-choice enum from the kit.
-private typealias GemmaModel = WoodsWhisperKit.GemmaModel
+// unqualified use in this file to our model-choice enum from the kit. Must be public
+// because it appears in this type's public API below.
+public typealias GemmaModel = WoodsWhisperKit.GemmaModel
 
 /// Gemma 3 text transformation via MLX Swift. iOS/iPadOS only.
 ///
