@@ -35,6 +35,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.woodswhisper.app
         INFOPLIST_FILE: Apps/iOS/Resources/Info.plist
         TARGETED_DEVICE_FAMILY: "1,2"     # iPhone + iPad
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ENABLE_USER_SCRIPT_SANDBOXING: NO
     info:
       path: Apps/iOS/Resources/Info.plist
@@ -52,6 +53,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.woodswhisper.app.watchkitapp
         INFOPLIST_FILE: Apps/Watch/Resources/Info.plist
         WATCHOS_DEPLOYMENT_TARGET: "10.0"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
 
 schemes:
   WoodsWhisper:
