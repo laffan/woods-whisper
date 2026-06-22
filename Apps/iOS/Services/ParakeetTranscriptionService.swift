@@ -8,17 +8,15 @@ import FluidAudio
 
 /// Parakeet TDT v3 (CoreML / ANE) transcription via the FluidAudio package.
 ///
-/// Runs only on iOS/iPadOS. On platforms without FluidAudio (the Watch) the methods throw
-/// `.unsupportedPlatform`, so the type still compiles everywhere and the Watch target links
-/// cleanly without pulling in the ASR models.
-///
-/// NOTE: FluidAudio's surface evolves between releases. The calls below target the documented
-/// `AsrModels` / `AsrManager` API. Verify names against the version Xcode resolves and adjust
-/// the three marked lines if needed — the rest of the app depends only on `TranscriptionService`.
+/// Uses `UnifiedAsrManager`, FluidAudio's offline batch API: `loadModels()` downloads the
+/// Parakeet "unified offline" CoreML models once (then loads from local cache), and
+/// `transcribe(_:)` returns the text for arbitrary-length 16 kHz mono samples — no decoder
+/// state to manage. Runs only on iOS/iPadOS; on the Watch the methods throw
+/// `.unsupportedPlatform`, so this type compiles everywhere without pulling in the models.
 public final class ParakeetTranscriptionService: TranscriptionService {
 
     #if canImport(FluidAudio)
-    private var manager: AsrManager?
+    private var manager: UnifiedAsrManager?
     #endif
 
     public init() {}
@@ -36,10 +34,9 @@ public final class ParakeetTranscriptionService: TranscriptionService {
     public func prepare() async throws {
         #if canImport(FluidAudio)
         do {
-            // Downloads on first run, then loads from local cache thereafter (offline).
-            let models = try await AsrModels.downloadAndLoad(version: .v3)
-            let manager = AsrManager(config: .default)
-            try await manager.loadModels(models)
+            // Downloads the offline models on first run, then loads from local cache (offline).
+            let manager = UnifiedAsrManager()
+            try await manager.loadModels()
             self.manager = manager
         } catch {
             throw TranscriptionError.underlying(error)
@@ -55,9 +52,9 @@ public final class ParakeetTranscriptionService: TranscriptionService {
         let started = Date()
         let samples = try Self.readMonoSamples(from: url)        // [Float] @16 kHz
         do {
-            let result = try await manager.transcribe(samples)
+            let text = try await manager.transcribe(samples)
             return TranscriptionResult(
-                text: result.text,
+                text: text,
                 detectedLanguage: nil,
                 duration: Date().timeIntervalSince(started)
             )
