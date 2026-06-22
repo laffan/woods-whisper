@@ -16,7 +16,7 @@ packages:
   # app target rather than the shared package.
   FluidAudio:
     url: https://github.com/FluidInference/FluidAudio.git
-    from: "0.4.0"
+    branch: main
   # The reusable LLM/VLM libraries (MLXLLM, MLXLMCommon, MLXHuggingFace, ...) moved out
   # of mlx-swift-examples into this dedicated repo.
   MLXSwiftLM:
