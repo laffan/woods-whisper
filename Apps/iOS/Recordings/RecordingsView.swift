@@ -128,17 +128,3 @@ struct RecordingRow: View {
         String(format: "%d:%02d", Int(recording.duration) / 60, Int(recording.duration) % 60)
     }
 }
-
-struct LevelMeter: View {
-    let level: Float
-    var body: some View {
-        GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                Capsule().fill(.quaternary)
-                Capsule().fill(.red).frame(width: geo.size.width * CGFloat(level))
-            }
-        }
-        .frame(height: 6)
-        .padding(.horizontal)
-    }
-}
