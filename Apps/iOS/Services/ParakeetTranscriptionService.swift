@@ -8,15 +8,18 @@ import FluidAudio
 
 /// Parakeet TDT v3 (CoreML / ANE) transcription via the FluidAudio package.
 ///
-/// Uses `UnifiedAsrManager`, FluidAudio's offline batch API: `loadModels()` downloads the
-/// Parakeet "unified offline" CoreML models once (then loads from local cache), and
-/// `transcribe(_:)` returns the text for arbitrary-length 16 kHz mono samples — no decoder
-/// state to manage. Runs only on iOS/iPadOS; on the Watch the methods throw
-/// `.unsupportedPlatform`, so this type compiles everywhere without pulling in the models.
+/// Uses the mature `AsrModels` + `AsrManager` API with the multilingual
+/// `parakeet-tdt-0.6b-v3` CoreML models (the same path most shipping FluidAudio apps use,
+/// and more reliable than the newer "unified offline" int8 models). `downloadAndLoad`
+/// fetches the models once; afterwards everything is offline. Batch transcription needs a
+/// `TdtDecoderState`, created per call via `TdtDecoderState.make(decoderLayers:)`.
+///
+/// Runs only on iOS/iPadOS; on the Watch the methods throw `.unsupportedPlatform`, so this
+/// type compiles everywhere without pulling in the models.
 public final class ParakeetTranscriptionService: TranscriptionService {
 
     #if canImport(FluidAudio)
-    private var manager: UnifiedAsrManager?
+    private var manager: AsrManager?
     #endif
 
     public init() {}
@@ -34,9 +37,10 @@ public final class ParakeetTranscriptionService: TranscriptionService {
     public func prepare() async throws {
         #if canImport(FluidAudio)
         do {
-            // Downloads the offline models on first run, then loads from local cache (offline).
-            let manager = UnifiedAsrManager()
-            try await manager.loadModels()
+            // Downloads on first run, then loads from local cache thereafter (offline).
+            let models = try await AsrModels.downloadAndLoad(version: .v3)
+            let manager = AsrManager(config: .default)
+            try await manager.loadModels(models)
             self.manager = manager
         } catch {
             throw TranscriptionError.underlying(error)
@@ -52,9 +56,11 @@ public final class ParakeetTranscriptionService: TranscriptionService {
         let started = Date()
         let samples = try Self.readMonoSamples(from: url)        // [Float] @16 kHz
         do {
-            let text = try await manager.transcribe(samples)
+            // Fresh decoder state per batch transcription (mirrors FluidAudio's own usage).
+            var state = TdtDecoderState.make(decoderLayers: await manager.decoderLayerCount)
+            let result = try await manager.transcribe(samples, decoderState: &state)
             return TranscriptionResult(
-                text: text,
+                text: result.text,
                 detectedLanguage: nil,
                 duration: Date().timeIntervalSince(started)
             )
