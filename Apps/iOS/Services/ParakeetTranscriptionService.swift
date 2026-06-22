@@ -36,10 +36,10 @@ public final class ParakeetTranscriptionService: TranscriptionService {
     public func prepare() async throws {
         #if canImport(FluidAudio)
         do {
-            // (1) Downloads on first run, then loads from local cache thereafter (offline).
-            let models = try await AsrModels.downloadAndLoad()
+            // Downloads on first run, then loads from local cache thereafter (offline).
+            let models = try await AsrModels.downloadAndLoad(version: .v3)
             let manager = AsrManager(config: .default)
-            try await manager.initialize(models: models)   // (2)
+            try await manager.loadModels(models)
             self.manager = manager
         } catch {
             throw TranscriptionError.underlying(error)
@@ -55,7 +55,7 @@ public final class ParakeetTranscriptionService: TranscriptionService {
         let started = Date()
         let samples = try Self.readMonoSamples(from: url)        // [Float] @16 kHz
         do {
-            let result = try await manager.transcribe(samples, source: .microphone)   // (3)
+            let result = try await manager.transcribe(samples)
             return TranscriptionResult(
                 text: result.text,
                 detectedLanguage: nil,

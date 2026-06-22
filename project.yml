@@ -17,11 +17,19 @@ packages:
   FluidAudio:
     url: https://github.com/FluidInference/FluidAudio.git
     from: "0.4.0"
-  # The reusable LLM/VLM libraries (MLXLLM, MLXLMCommon, ...) moved out of
-  # mlx-swift-examples into this dedicated repo.
+  # The reusable LLM/VLM libraries (MLXLLM, MLXLMCommon, MLXHuggingFace, ...) moved out
+  # of mlx-swift-examples into this dedicated repo.
   MLXSwiftLM:
     url: https://github.com/ml-explore/mlx-swift-lm.git
     branch: main
+  # MLXHuggingFace's load macros expand to code that references AutoTokenizer (Tokenizers)
+  # and HubClient (HuggingFace) — neither is bundled by mlx-swift-lm, so we add them.
+  SwiftTransformers:
+    url: https://github.com/huggingface/swift-transformers.git
+    branch: main
+  SwiftHuggingFace:
+    url: https://github.com/huggingface/swift-huggingface.git
+    from: "0.8.1"
 
 settings:
   base:
@@ -45,6 +53,12 @@ targets:
         product: MLXLLM
       - package: MLXSwiftLM
         product: MLXLMCommon
+      - package: MLXSwiftLM
+        product: MLXHuggingFace
+      - package: SwiftTransformers
+        product: Tokenizers
+      - package: SwiftHuggingFace
+        product: HuggingFace
       - target: WoodsWhisperWatch        # embed the watch app
     settings:
       base:

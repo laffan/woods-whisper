@@ -4,6 +4,9 @@ import WoodsWhisperKit
 #if canImport(MLXLLM)
 import MLXLLM
 import MLXLMCommon
+import MLXHuggingFace   // #huggingFaceLoadModelContainer macro + hub/tokenizer macros
+import HuggingFace      // HubClient (referenced by the macro expansion)
+import Tokenizers       // AutoTokenizer (referenced by the macro expansion)
 #endif
 
 // MLXLLM also declares a `GemmaModel` (the neural-net module). Disambiguate every
@@ -56,8 +59,9 @@ public final class GemmaTransformService: TextTransformService {
         #if canImport(MLXLLM)
         do {
             // Downloads weights on first run, then loads from the local HF cache (offline).
-            let configuration = ModelConfiguration(id: activeModel.rawValue)            // (1)
-            container = try await LLMModelFactory.shared.loadContainer(configuration: configuration) // (2)
+            // The macro injects the HuggingFace hub downloader + tokenizer loader.
+            let configuration = ModelConfiguration(id: activeModel.rawValue)
+            container = try await #huggingFaceLoadModelContainer(configuration: configuration)
         } catch {
             throw TextTransformError.underlying(error)
         }
@@ -76,27 +80,19 @@ public final class GemmaTransformService: TextTransformService {
         guard let container else { throw TextTransformError.modelNotPrepared }
         let userPrompt = preset.render(with: transcript)
 
+        let params = GenerateParameters(maxTokens: preset.maxTokens,
+                                        temperature: Float(preset.temperature))
+        // A fresh session per run: the system prompt is the instructions, and we stream tokens.
+        let session = ChatSession(container,
+                                  instructions: preset.systemPrompt,
+                                  generateParameters: params)
         do {
-            return try await container.perform { context in
-                let chat: [Chat.Message] = [
-                    .system(preset.systemPrompt),
-                    .user(userPrompt)
-                ]
-                let input = try await context.processor.prepare(input: .init(messages: chat))   // (3)
-                let params = GenerateParameters(temperature: Float(preset.temperature))
-
-                var output = ""
-                let stream = try MLXLMCommon.generate(
-                    input: input, parameters: params, context: context
-                )
-                for await item in stream {
-                    if let chunk = item.chunk {
-                        output += chunk
-                        onToken?(chunk)
-                    }
-                }
-                return output
+            var output = ""
+            for try await chunk in session.streamResponse(to: userPrompt) {
+                output += chunk
+                onToken?(chunk)
             }
+            return output
         } catch {
             throw TextTransformError.underlying(error)
         }
