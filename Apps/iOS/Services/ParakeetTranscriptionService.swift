@@ -1,5 +1,6 @@
 import Foundation
 import AVFoundation
+import WoodsWhisperKit
 
 #if canImport(FluidAudio)
 import FluidAudio

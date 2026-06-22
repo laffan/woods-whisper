@@ -10,28 +10,12 @@ let package = Package(
     products: [
         .library(name: "WoodsWhisperKit", targets: ["WoodsWhisperKit"])
     ],
-    dependencies: [
-        // On-device ASR (Parakeet TDT v3 via CoreML / ANE). iOS/iPadOS only at runtime.
-        // Pinned loosely; verify the exact API against the resolved version in Xcode.
-        .package(url: "https://github.com/FluidInference/FluidAudio.git", from: "0.4.0"),
-
-        // On-device LLM (Gemma 3) via MLX. iOS/iPadOS only at runtime.
-        .package(url: "https://github.com/ml-explore/mlx-swift-examples.git", branch: "main")
-    ],
+    // No external dependencies on purpose: this package compiles on BOTH iOS and watchOS.
+    // The watchOS-incompatible ML SDKs (FluidAudio, MLX) are added directly to the iOS app
+    // target instead — see project.yml. The shared kit only defines the protocols those
+    // implementations conform to.
     targets: [
-        .target(
-            name: "WoodsWhisperKit",
-            dependencies: [
-                // FluidAudio and MLX are linked only into the iOS app target, not the watch.
-                // They are referenced here via conditional compilation (#if canImport(...)).
-                .product(name: "FluidAudio", package: "FluidAudio",
-                         condition: .when(platforms: [.iOS])),
-                .product(name: "MLXLLM", package: "mlx-swift-examples",
-                         condition: .when(platforms: [.iOS])),
-                .product(name: "MLXLMCommon", package: "mlx-swift-examples",
-                         condition: .when(platforms: [.iOS]))
-            ]
-        ),
+        .target(name: "WoodsWhisperKit"),
         .testTarget(
             name: "WoodsWhisperKitTests",
             dependencies: ["WoodsWhisperKit"]

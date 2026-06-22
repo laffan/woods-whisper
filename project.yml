@@ -12,6 +12,14 @@ options:
 packages:
   WoodsWhisperKit:
     path: Packages/WoodsWhisperKit
+  # ML SDKs — iOS/iPadOS only (not watchOS-compatible), so they're attached to the iOS
+  # app target rather than the shared package.
+  FluidAudio:
+    url: https://github.com/FluidInference/FluidAudio.git
+    from: "0.4.0"
+  MLXSwiftExamples:
+    url: https://github.com/ml-explore/mlx-swift-examples.git
+    branch: main
 
 settings:
   base:
@@ -29,6 +37,12 @@ targets:
       - path: Apps/iOS
     dependencies:
       - package: WoodsWhisperKit
+      - package: FluidAudio
+        product: FluidAudio
+      - package: MLXSwiftExamples
+        product: MLXLLM
+      - package: MLXSwiftExamples
+        product: MLXLMCommon
       - target: WoodsWhisperWatch        # embed the watch app
     settings:
       base:

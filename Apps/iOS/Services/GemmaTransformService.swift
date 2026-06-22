@@ -1,4 +1,5 @@
 import Foundation
+import WoodsWhisperKit
 
 #if canImport(MLXLLM)
 import MLXLLM

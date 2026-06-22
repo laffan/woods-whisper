@@ -3,30 +3,30 @@
 ## Layers
 
 ```
-┌─────────────────────────────┐   ┌──────────────────────────┐
-│  Apps/iOS  (iPhone + iPad)  │   │  Apps/Watch  (watchOS)   │
-│  • Recordings / Documents   │   │  • Record button         │
-│  • Model interaction (LLM)  │   │  • Recordings list       │
-│  • Settings + pairing       │   │  • Sends to paired device│
-└──────────────┬──────────────┘   └────────────┬─────────────┘
-               │  depends on                    │  depends on
-               ▼                                ▼
+┌──────────────────────────────────────┐   ┌──────────────────────────┐
+│  Apps/iOS  (iPhone + iPad)            │   │  Apps/Watch  (watchOS)   │
+│  • Recordings / Documents             │   │  • Record button         │
+│  • Settings + pairing                 │   │  • Recordings list       │
+│  • Apps/iOS/Services/ (ML impls):     │   │  • Sends to paired device│
+│      Parakeet (ASR) · Gemma 3 (LLM)   │   │                          │
+│      + FluidAudio / MLX packages      │   │                          │
+└──────────────────┬───────────────────┘   └────────────┬─────────────┘
+                   │  depends on                          │  depends on
+                   ▼                                      ▼
         ┌───────────────────────────────────────────────┐
-        │           WoodsWhisperKit  (SPM)               │
-        │  Models · Audio · Storage · Transcription      │
-        │  Transform · Connectivity · Utilities          │
+        │       WoodsWhisperKit  (SPM, no external deps) │
+        │  Models · Audio · Storage · Connectivity       │
+        │  Service *protocols* · Utilities               │
         └───────────────────────────────────────────────┘
-                 │                         │
-        #if canImport(FluidAudio)   #if canImport(MLXLLM)
-                 ▼                         ▼
-            Parakeet (ASR)            Gemma 3 (LLM)
-            iOS/iPadOS only           iOS/iPadOS only
 ```
 
-The shared package compiles on **both** platforms. The heavy ML SDKs are linked **only into the
-iOS app target** (see `Package.swift` platform conditions) and are gated behind
-`#if canImport(...)`. On watchOS those code paths throw `.unsupportedPlatform`, so the Watch
-binary stays small and never tries to load a model.
+**Why the ML SDKs live in the iOS app target, not the shared package:** FluidAudio and MLX
+don't support watchOS. SPM resolves a package's *entire* dependency graph for every platform a
+consumer targets, so if the shared package (which supports watchOS) depended on them — even
+conditionally — watchOS resolution would fail. Instead the shared package is dependency-free and
+defines only the protocols (`TranscriptionService`, `TextTransformService`); the concrete
+implementations and the FluidAudio/MLX packages are attached to the iOS app target in
+`project.yml`. The implementations still guard SDK calls with `#if canImport(...)`.
 
 ## Key abstractions
 
