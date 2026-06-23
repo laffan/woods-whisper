@@ -34,16 +34,18 @@ public final class ParakeetTranscriptionService: TranscriptionService {
         }
     }
 
-    public func prepare(progress: (@Sendable (Double) -> Void)? = nil) async throws {
+    public func prepare(progress: (@Sendable (DownloadProgress) -> Void)? = nil) async throws {
         #if canImport(FluidAudio)
         do {
             // Downloads on first run (re-running resumes already-fetched files), then loads
             // from local cache (offline). Progress reports file-count phases.
             let throttle = ProgressThrottle(label: "Speech model")
             let models = try await AsrModels.downloadAndLoad(version: .v3) { dp in
-                throttle.report(fraction: dp.fractionCompleted, detail: Self.detail(for: dp.phase))
-                progress?(dp.fractionCompleted)
+                let detail = Self.detail(for: dp.phase)
+                throttle.report(fraction: dp.fractionCompleted, detail: detail)
+                progress?(DownloadProgress(fractionCompleted: dp.fractionCompleted, detail: detail))
             }
+            wwLog("Speech model files present — loading into AsrManager…", .model)
             let manager = AsrManager(config: .default)
             try await manager.loadModels(models)
             self.manager = manager

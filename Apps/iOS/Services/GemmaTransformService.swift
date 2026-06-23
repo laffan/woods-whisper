@@ -46,31 +46,51 @@ public final class GemmaTransformService: TextTransformService {
         guard model != activeModel else { return }
         activeModel = model
         #if canImport(MLXLLM)
-        container = nil          // force reload of the new weights on next prepare()
-        try await prepare(progress: nil)
+        // Just switch — drop the loaded weights so `isReady` is false until `prepare` is called
+        // for the new model. The UI's Download button drives the (one-time, online) fetch.
+        container = nil
+        wwLog("Language model switched to \(model.displayName) — download required before use", .model)
         #else
         throw TextTransformError.unsupportedPlatform
         #endif
     }
 
-    public func prepare(progress: (@Sendable (Double) -> Void)? = nil) async throws {
+    public func prepare(progress: (@Sendable (DownloadProgress) -> Void)? = nil) async throws {
         #if canImport(MLXLLM)
+        // Downloads weights on first run (re-running resumes via the HF cache), then loads from
+        // the local cache (offline). The macro injects the HuggingFace hub downloader + tokenizer
+        // loader; its progressHandler variant streams download progress as a `Foundation.Progress`.
+        let configuration = ModelConfiguration(id: activeModel.rawValue)
+        wwLog("Language model download starting: \(activeModel.rawValue)", .model)
+        let throttle = ProgressThrottle(label: "Gemma weights")
+        let stall = DownloadStallMonitor(label: "Gemma weights")
+        stall.start()
+        defer { stall.stop() }
         do {
-            // Downloads weights on first run (re-running resumes via the HF cache), then loads
-            // from the local cache (offline). The macro injects the HuggingFace hub downloader
-            // + tokenizer loader; its progressHandler variant streams download progress.
-            let configuration = ModelConfiguration(id: activeModel.rawValue)
-            let throttle = ProgressThrottle(label: "Gemma weights")
             container = try await #huggingFaceLoadModelContainer(configuration: configuration) { p in
+                stall.update(p.fractionCompleted)
                 throttle.report(p)
-                progress?(p.fractionCompleted)
+                progress?(DownloadProgress(p))
             }
+            wwLog("Language model weights loaded into memory", .model)
         } catch {
+            // Surface the real cause — a wrapped URLError reads as a generic "operation couldn't
+            // be completed", which is exactly the unhelpful output the log was missing.
+            wwLog("Language model download failed: \(Self.describe(error))", .error)
             throw TextTransformError.underlying(error)
         }
         #else
         throw TextTransformError.unsupportedPlatform
         #endif
+    }
+
+    /// A debugging-friendly description that pulls a connection diagnosis out of a `URLError`.
+    static func describe(_ error: Error) -> String {
+        if let urlError = error as? URLError {
+            return "connection error (\(urlError.code)): \(urlError.localizedDescription)"
+        }
+        let ns = error as NSError
+        return "\(ns.domain) \(ns.code): \(ns.localizedDescription)"
     }
 
     @discardableResult

@@ -22,10 +22,14 @@ final class AppModel: ObservableObject {
     @Published var setupError: String?
     @Published var busyMessage: String?
 
-    /// 0...1 download progress per model while preparing; nil when idle/ready (the last value
-    /// is retained on failure so the Settings bar shows where a download stalled).
-    @Published var speechProgress: Double?
-    @Published var llmProgress: Double?
+    /// Download progress per model while preparing; nil when idle/ready (the last value is
+    /// retained on failure so the Settings bar shows where a download stalled).
+    @Published var speechProgress: DownloadProgress?
+    @Published var llmProgress: DownloadProgress?
+
+    /// In-flight flags so each model's Download button can be disabled independently.
+    @Published var isPreparingSpeech = false
+    @Published var isPreparingLLM = false
 
     #if canImport(WatchConnectivity)
     private let phone = PhoneSessionTransport()
@@ -160,45 +164,57 @@ final class AppModel: ObservableObject {
 
     // MARK: Setup (one-time, online)
 
+    /// Download/prepare both models in sequence (used by "prepare everything" flows).
     func prepareModels() async {
+        await prepareSpeechModel()
+        await prepareLanguageModel()
+    }
+
+    /// Download/prepare the Parakeet speech model. Safe to call repeatedly; no-op if ready.
+    func prepareSpeechModel() async {
+        guard !isPreparingSpeech, !transcriptionReady else { return }
+        isPreparingSpeech = true
         busyMessage = "Preparing speech model…"
-        wwLog("Preparing speech model (Parakeet TDT v3)… downloading on first run", .model)
-        let speechStart = Date()
-        if !transcriptionReady {
-            speechProgress = 0
-            do {
-                try await transcription.prepare { [weak self] frac in
-                    Task { @MainActor in self?.speechProgress = frac }
-                }
-                transcriptionReady = await transcription.isReady
-                speechProgress = nil
-                wwLog(String(format: "Speech model ready in %.1fs", Date().timeIntervalSince(speechStart)), .model)
-            } catch {
-                setupError = error.localizedDescription      // keep speechProgress to show stall point
-                wwLog("Speech model failed: \(error.localizedDescription)", .error)
+        speechProgress = DownloadProgress(fractionCompleted: 0)
+        wwLog("Speech model (Parakeet TDT v3): preparing — downloads on first run", .model)
+        let start = Date()
+        do {
+            try await transcription.prepare { [weak self] p in
+                Task { @MainActor in self?.speechProgress = p }
             }
+            transcriptionReady = await transcription.isReady
+            speechProgress = nil
+            wwLog(String(format: "Speech model ready in %.1fs", Date().timeIntervalSince(start)), .model)
+            transcribePending()   // catch up anything captured during download
+        } catch {
+            setupError = error.localizedDescription      // keep speechProgress to show stall point
+            wwLog("Speech model failed: \(error.localizedDescription)", .error)
         }
+        isPreparingSpeech = false
+        if !isPreparingLLM { busyMessage = nil }
+    }
 
+    /// Download/prepare the selected Gemma language model. Safe to call repeatedly.
+    func prepareLanguageModel() async {
+        guard !isPreparingLLM, !modelReady else { return }
+        isPreparingLLM = true
         busyMessage = "Preparing language model… (this can take a while)"
-        wwLog("Preparing language model (\(AppSettings.shared.model.displayName))… downloading on first run", .model)
-        let llmStart = Date()
-        if !modelReady {
-            llmProgress = 0
-            do {
-                try await transform.prepare { [weak self] frac in
-                    Task { @MainActor in self?.llmProgress = frac }
-                }
-                modelReady = await transform.isReady
-                llmProgress = nil
-                wwLog(String(format: "Language model ready in %.1fs", Date().timeIntervalSince(llmStart)), .model)
-            } catch {
-                setupError = error.localizedDescription      // keep llmProgress to show stall point
-                wwLog("Language model failed: \(error.localizedDescription)", .error)
+        llmProgress = DownloadProgress(fractionCompleted: 0)
+        wwLog("Language model (\(AppSettings.shared.model.displayName)): preparing — downloads on first run", .model)
+        let start = Date()
+        do {
+            try await transform.prepare { [weak self] p in
+                Task { @MainActor in self?.llmProgress = p }
             }
+            modelReady = await transform.isReady
+            llmProgress = nil
+            wwLog(String(format: "Language model ready in %.1fs", Date().timeIntervalSince(start)), .model)
+        } catch {
+            setupError = error.localizedDescription      // keep llmProgress to show stall point
+            wwLog("Language model failed: \(error.localizedDescription)", .error)
         }
-        busyMessage = nil
-
-        if transcriptionReady { transcribePending() }   // catch up anything captured during download
+        isPreparingLLM = false
+        if !isPreparingSpeech { busyMessage = nil }
     }
 
     func refreshReadiness() async {

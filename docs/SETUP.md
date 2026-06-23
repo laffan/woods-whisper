@@ -20,11 +20,13 @@ iPhone or iPad. The watch app installs alongside it; you can also run the watch 
 
 ## 3. Download the models (online, once)
 
-On the phone/iPad: **Settings → Download / Prepare Models**.
+On the phone/iPad, open **Settings**. There are two model sections, each with its own
+**Download** button and a progress bar that shows megabytes downloaded over the total:
 
-- **Parakeet TDT v3** (~a few hundred MB) via FluidAudio.
-- **Gemma 3 4B** (default; ~2.5–3 GB quantized) via MLX. Pick a different size first under
-  **Settings → Language Model** if you want 1B (smaller/faster) or 12B (high-RAM devices only).
+- **Speech Model** — Parakeet TDT v3 (~a few hundred MB) via FluidAudio.
+- **Language Model** — Gemma 3 4B (default; ~2.5–3 GB quantized) via MLX. Pick a different
+  size in the same section first if you want 1B (smaller/faster) or 12B (high-RAM devices
+  only), then tap Download. Switching size requires downloading that model.
 
 Both load from local cache after this — no further network use.
 
@@ -53,7 +55,10 @@ See **`docs/CONNECTIVITY.md`** for the full walkthrough. In short:
 
 ## Troubleshooting
 
-- **"Model isn't ready"** — re-run *Download / Prepare Models* while online.
+- **"Model isn't ready"** — re-tap the model's **Download** button in Settings while online.
+- **Download stuck at 0%** — open the **Log** tab. It records when each download starts, byte
+  progress, a warning if no progress arrives for ~20s (slow/stalled connection), and the
+  underlying connection error if one occurs. Copy the log to diagnose.
 - **API mismatch when building** — the FluidAudio / MLX SDKs changed; adjust the lines marked
   `(1)/(2)/(3)` in `ParakeetTranscriptionService.swift` / `GemmaTransformService.swift`.
 - **Watch can't reach iPad** — confirm same WiFi, correct IP (it changes without a DHCP

@@ -8,8 +8,8 @@ public protocol TranscriptionService: AnyObject {
 
     /// Download/prepare model assets. Must be called once during initial (online) setup.
     /// After this completes, transcription works fully offline. Re-running resumes any
-    /// partially-downloaded assets. `progress` reports a 0...1 download fraction.
-    func prepare(progress: (@Sendable (Double) -> Void)?) async throws
+    /// partially-downloaded assets. `progress` reports download fraction and byte counts.
+    func prepare(progress: (@Sendable (DownloadProgress) -> Void)?) async throws
 
     /// Transcribe an audio file at `url` to text.
     func transcribe(audioFileAt url: URL) async throws -> TranscriptionResult

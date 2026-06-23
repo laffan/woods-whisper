@@ -65,7 +65,8 @@ Then in Xcode: select the **WoodsWhisper** scheme, set your signing team, and ru
 > have their version-sensitive lines marked `(1)/(2)/(3)`. If Xcode flags an API mismatch after
 > resolving packages, adjust those lines; nothing else in the app depends on the SDK surface.
 
-First launch: open **Settings → Download / Prepare Models** while online once.
+First launch: open **Settings** while online once and tap **Download** under both the
+**Speech Model** and **Language Model** sections.
 
 See **`docs/SETUP.md`** for the full first-run walkthrough and **`docs/ARCHITECTURE.md`** for
 how the pieces fit together.

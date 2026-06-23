@@ -9,8 +9,8 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
-                setupSection
-                modelSection
+                speechModelSection
+                languageModelSection
                 presetsSection
                 connectivitySection
                 aboutSection
@@ -19,37 +19,31 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: One-time setup
+    // MARK: Speech model
 
-    private var setupSection: some View {
+    private var speechModelSection: some View {
         Section {
-            ModelSetupRow(title: "Speech model (Parakeet)", systemImage: "waveform",
+            ModelSetupRow(title: "Parakeet TDT v3", systemImage: "waveform",
                           ready: model.transcriptionReady, progress: model.speechProgress)
-            ModelSetupRow(title: "Language model (Gemma)", systemImage: "brain",
-                          ready: model.modelReady, progress: model.llmProgress)
-            Button(buttonTitle) {
-                Task { await model.prepareModels() }
+            if !model.transcriptionReady {
+                Button(downloadTitle(preparing: model.isPreparingSpeech,
+                                     started: model.speechProgress != nil)) {
+                    Task { await model.prepareSpeechModel() }
+                }
+                .disabled(model.isPreparingSpeech)
             }
-            .disabled(model.busyMessage != nil)
         } header: {
-            Text("Setup")
+            Text("Speech Model")
         } footer: {
-            Text("Run once while connected to the internet. Everything works offline afterward. "
-                 + "If a download is interrupted, tap again to resume where it left off.")
+            Text("Transcribes recordings to text on-device. Download once while online "
+                 + "(~a few hundred MB); works offline afterward. If interrupted, tap to resume.")
         }
     }
 
-    private var buttonTitle: String {
-        if model.busyMessage != nil { return "Downloading…" }
-        let interrupted = (model.speechProgress != nil && !model.transcriptionReady)
-            || (model.llmProgress != nil && !model.modelReady)
-        return interrupted ? "Resume Download" : "Download / Prepare Models"
-    }
+    // MARK: Language model
 
-    // MARK: Model selection
-
-    private var modelSection: some View {
-        Section("Language Model") {
+    private var languageModelSection: some View {
+        Section {
             Picker("Model", selection: $selectedModel) {
                 ForEach(GemmaModel.allCases) { m in
                     Text(m.displayName).tag(m)
@@ -65,7 +59,29 @@ struct SettingsView: View {
             }
             Text(selectedModel.approxRAMNote)
                 .font(.caption).foregroundStyle(.secondary)
+
+            ModelSetupRow(title: "Gemma weights", systemImage: "brain",
+                          ready: model.modelReady, progress: model.llmProgress)
+            if !model.modelReady {
+                Button(downloadTitle(preparing: model.isPreparingLLM,
+                                     started: model.llmProgress != nil)) {
+                    Task { await model.prepareLanguageModel() }
+                }
+                .disabled(model.isPreparingLLM)
+            }
+        } header: {
+            Text("Language Model")
+        } footer: {
+            Text("Rewrites transcripts on-device with Gemma 3. Download once while online "
+                 + "(several GB depending on size); works offline afterward. If interrupted, "
+                 + "tap to resume. Switching size requires downloading that model.")
         }
+    }
+
+    /// Download button label: idle → "Download", interrupted → "Resume", in-flight → "Downloading…".
+    private func downloadTitle(preparing: Bool, started: Bool) -> String {
+        if preparing { return "Downloading…" }
+        return started ? "Resume Download" : "Download"
     }
 
     // MARK: Presets
@@ -123,12 +139,13 @@ struct StatusDot: View {
     }
 }
 
-/// A model row that shows a status dot normally, or a determinate download bar while preparing.
+/// A model row that shows a status dot normally, or a determinate download bar while preparing —
+/// with "downloaded MB / total MB" beneath it when the downloader reports byte counts.
 struct ModelSetupRow: View {
     let title: String
     let systemImage: String
     let ready: Bool
-    let progress: Double?
+    let progress: DownloadProgress?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -136,14 +153,20 @@ struct ModelSetupRow: View {
                 Label(title, systemImage: systemImage)
                 Spacer()
                 if let progress {
-                    Text("\(Int(progress * 100))%").font(.caption.monospacedDigit())
+                    Text("\(Int(progress.fractionCompleted * 100))%")
+                        .font(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
                 } else {
                     StatusDot(ready: ready)
                 }
             }
             if let progress {
-                ProgressView(value: progress)
+                ProgressView(value: progress.fractionCompleted)
+                if let summary = progress.byteSummary ?? progress.detail {
+                    Text(summary)
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
             }
         }
     }
