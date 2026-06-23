@@ -26,9 +26,14 @@ final class AppSettings {
         set { defaults.set(newValue, forKey: Key.localServerEnabled) }
     }
 
-    /// 0 means auto-assign; UI should surface the bound port for the Watch to be configured with.
+    /// The port the local server binds. Defaults to the shared well-known port so the Watch can
+    /// find this iPad by scanning the subnet during pairing (it can't browse Bonjour). A stored
+    /// value of 0 also maps to the default.
     var localServerPort: UInt16 {
-        get { UInt16(defaults.integer(forKey: Key.localServerPort)) }
+        get {
+            let stored = defaults.integer(forKey: Key.localServerPort)
+            return stored == 0 ? LocalNetworkDefaults.port : UInt16(stored)
+        }
         set { defaults.set(Int(newValue), forKey: Key.localServerPort) }
     }
 

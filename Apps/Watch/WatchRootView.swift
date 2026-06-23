@@ -10,6 +10,7 @@ struct WatchRootView: View {
             TabView {
                 recordTab
                 recordingsTab
+                settingsTab
             }
             .tabViewStyle(.verticalPage)
             .navigationTitle("Woods Whisper")
@@ -66,6 +67,26 @@ struct WatchRootView: View {
             if model.recordings.recordings.isEmpty {
                 Text("No recordings").font(.caption).foregroundStyle(.secondary)
             }
+        }
+    }
+
+    private var settingsTab: some View {
+        VStack(spacing: 12) {
+            Text(destinationLabel)
+                .font(.caption2).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            NavigationLink {
+                WatchSettingsView()
+            } label: {
+                Label("Settings & Pairing", systemImage: "gear")
+            }
+        }
+        .padding()
+    }
+
+    private var destinationLabel: String {
+        switch WatchSettings.shared.transport {
+        case .phoneSession: return "Sending to paired iPhone"
+        case .localNetwork: return "Sending to \(WatchSettings.shared.deviceLink?.displayName ?? "iPad")"
         }
     }
 

@@ -27,6 +27,15 @@ final class AppModel: ObservableObject {
     @Published var speechProgress: Double?
     @Published var llmProgress: Double?
 
+    /// Active Watch-pairing window: the 5-digit code shown on screen and when it expires. Nil
+    /// when not pairing. `lastPairedWatch` holds the name of the most recently paired Watch so
+    /// the UI can confirm success.
+    @Published var pairingCode: String?
+    @Published var pairingEndsAt: Date?
+    @Published var lastPairedWatch: String?
+
+    private let pairingWindow: TimeInterval = 120
+
     #if canImport(WatchConnectivity)
     private let phone = PhoneSessionTransport()
     #endif
@@ -65,6 +74,11 @@ final class AppModel: ObservableObject {
         server.onReceive = { [weak self] transfer, data in
             self?.ingest(transfer: transfer, data: data)
         }
+        server.onPairSuccess = { [weak self] watchName in
+            self?.lastPairedWatch = watchName
+            self?.cancelWatchPairing()
+            wwLog("Watch “\(watchName)” paired with this iPad", .transfer)
+        }
         do {
             try server.start()
             localServer = server
@@ -79,6 +93,39 @@ final class AppModel: ObservableObject {
         localServer?.stop()
         localServer = nil
         wwLog("Local receive server stopped", .transfer)
+    }
+
+    // MARK: Watch pairing
+
+    /// Open a pairing window: ensure the local server is running, show a fresh 5-digit code, and
+    /// arm the server to accept a Watch presenting that code. The window closes automatically
+    /// when a Watch pairs or after `pairingWindow` seconds.
+    func beginWatchPairing() {
+        if !AppSettings.shared.localServerEnabled {
+            AppSettings.shared.localServerEnabled = true
+        }
+        if localServer == nil { startLocalServer() }
+
+        let code = String(format: "%05d", Int.random(in: 0...99_999))
+        pairingCode = code
+        pairingEndsAt = Date().addingTimeInterval(pairingWindow)
+        lastPairedWatch = nil
+        localServer?.beginPairing(code: code, token: AppSettings.shared.pairingSecret,
+                                  duration: pairingWindow)
+        wwLog("Watch pairing window opened (code \(code))", .transfer)
+
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(pairingWindow * 1_000_000_000))
+            guard let self, self.pairingCode == code else { return }
+            self.cancelWatchPairing()
+            wwLog("Watch pairing window expired", .transfer)
+        }
+    }
+
+    func cancelWatchPairing() {
+        pairingCode = nil
+        pairingEndsAt = nil
+        localServer?.endPairing()
     }
 
     /// A recording arrived from the Watch: file it in the Inbox document and auto-transcribe.

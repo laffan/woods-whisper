@@ -40,8 +40,10 @@ the rest of the app depends on.
    known WiFi network even without its paired iPhone. So:
    - the **iPad** runs a small local server (`LocalNetworkServer`, `NWListener`),
    - the **Watch** sends recordings to it (`LocalNetworkClient`, `NWConnection`),
-   - because the Watch can't auto-discover the iPad, you pair them **once** by entering the
-     iPad's address (shown in Settings → Watch Pairing). See `docs/CONNECTIVITY.md`.
+   - because the Watch can't auto-discover the iPad, you pair them **once** with a 5-digit code:
+     the iPad shows it (Settings → *Pair Watch*), you type it on the Watch, and the Watch finds
+     the iPad on the network itself. Works over WiFi *or* the iPad's Personal Hotspot when there's
+     no WiFi at all. See `docs/CONNECTIVITY.md`.
 
    The standard **Watch → iPhone** path uses WatchConnectivity and needs no configuration.
 

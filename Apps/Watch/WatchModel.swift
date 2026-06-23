@@ -1,6 +1,9 @@
 import Foundation
 import SwiftUI
 import WoodsWhisperKit
+#if canImport(WatchKit)
+import WatchKit
+#endif
 
 /// Coordinator for the Watch app: records audio, stores it locally, and sends it to the paired
 /// iOS device using the configured transport (paired iPhone via WatchConnectivity, or directly
@@ -11,6 +14,10 @@ final class WatchModel: ObservableObject {
 
     @Published var statusMessage: String?
     @Published var pendingSends: Set<UUID> = []
+
+    /// True while a pairing scan is running; `scanProgress` is `(hostsTried, hostsTotal)`.
+    @Published var pairingInProgress = false
+    @Published var scanProgress: (Int, Int)?
 
     #if canImport(WatchConnectivity)
     private let phone = PhoneSessionTransport()
@@ -34,6 +41,39 @@ final class WatchModel: ObservableObject {
             guard let link = WatchSettings.shared.deviceLink else { return nil }
             return LocalNetworkClient(link: link)
         }
+    }
+
+    // MARK: Pairing
+
+    /// Find the iPad showing `code` on the local network and save it as the paired device.
+    /// Returns true on success. On success the transport is switched to `.localNetwork`.
+    func pair(code: String) async -> Bool {
+        pairingInProgress = true
+        scanProgress = nil
+        statusMessage = "Searching for iPad…"
+        defer { pairingInProgress = false; scanProgress = nil }
+
+        do {
+            let link = try await PairingClient.pair(code: code, deviceName: Self.deviceName) { tried, total in
+                Task { @MainActor in self.scanProgress = (tried, total) }
+            }
+            WatchSettings.shared.deviceLink = link
+            WatchSettings.shared.transport = .localNetwork
+            statusMessage = "Paired with \(link.displayName)."
+            return true
+        } catch {
+            statusMessage = "Pairing failed: \(error.localizedDescription)"
+            return false
+        }
+    }
+
+    /// This Watch's name, sent to the iPad so it can confirm which Watch paired.
+    static var deviceName: String {
+        #if canImport(WatchKit)
+        return WKInterfaceDevice.current().name
+        #else
+        return "Apple Watch"
+        #endif
     }
 
     /// Persist a freshly recorded clip and attempt to send it to the paired device.
