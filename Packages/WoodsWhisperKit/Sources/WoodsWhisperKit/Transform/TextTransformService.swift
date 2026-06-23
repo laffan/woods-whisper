@@ -11,7 +11,8 @@ public protocol TextTransformService: AnyObject {
     func setModel(_ model: GemmaModel) async throws
 
     /// Download/prepare the active model's weights. Call once during setup; offline after.
-    func prepare() async throws
+    /// Re-running resumes partial downloads. `progress` reports a 0...1 download fraction.
+    func prepare(progress: (@Sendable (Double) -> Void)?) async throws
 
     /// Run a preset against a transcript, streaming tokens via `onToken`. Returns the full text.
     @discardableResult

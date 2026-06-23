@@ -66,7 +66,7 @@ struct DocumentDetailView: View {
                         onTap: { if selectionMode { toggle(recording.id) } },
                         onLongPress: { enterSelection(with: recording.id) },
                         onPlay: { togglePlayback(recording) },
-                        onRetry: { Task { await model.transcribe(recordingID: recording.id, inDocument: documentID) } },
+                        onRetranscribe: { Task { await model.transcribe(recordingID: recording.id, inDocument: documentID) } },
                         onCopy: { copyTranscript(recording) },
                         onRename: { startRename(recording) },
                         onDelete: { model.documents.deleteRecording(recording.id, fromDocument: documentID) },
@@ -335,7 +335,7 @@ private struct RecordingCard: View {
     let onTap: () -> Void
     let onLongPress: () -> Void
     let onPlay: () -> Void
-    let onRetry: () -> Void
+    let onRetranscribe: () -> Void
     let onCopy: () -> Void
     let onRename: () -> Void
     let onDelete: () -> Void
@@ -374,10 +374,11 @@ private struct RecordingCard: View {
                 Image(systemName: isPlaying ? "stop.fill" : "play.fill")
             }
             if recording.status == .failed {
-                Button(action: onRetry) { Image(systemName: "arrow.clockwise") }
+                Button(action: onRetranscribe) { Image(systemName: "arrow.clockwise") }
             }
             Spacer()
             Menu {
+                Button("Retranscribe", systemImage: "arrow.clockwise", action: onRetranscribe)
                 if recording.transcript?.isEmpty == false {
                     Button("Copy Transcript", systemImage: "doc.on.doc", action: onCopy)
                 }

@@ -6,19 +6,34 @@ struct DocumentsView: View {
     @State private var renameTarget: Document?
     @State private var renameText = ""
 
-    private var documents: [Document] { model.documents.documents }
+    private var allDocuments: [Document] { model.documents.documents }
+    private var inbox: Document? { allDocuments.first { $0.title == DocumentStore.inboxTitle } }
+    private var userDocuments: [Document] { allDocuments.filter { $0.title != DocumentStore.inboxTitle } }
 
     var body: some View {
         NavigationStack {
             List {
-                ForEach(documents) { doc in
-                    NavigationLink(value: doc) {
-                        DocumentRow(document: doc)
+                // Inbox is pinned at the top in its own section (Watch recordings land here).
+                if let inbox {
+                    Section {
+                        NavigationLink(value: inbox) {
+                            Label { DocumentRow(document: inbox) } icon: {
+                                Image(systemName: "tray.and.arrow.down")
+                            }
+                        }
                     }
-                    .swipeActions(edge: .trailing) {
-                        Button("Delete", role: .destructive) { model.documents.delete(doc) }
-                        Button("Rename") { startRename(doc) }.tint(.blue)
+                }
+
+                Section {
+                    ForEach(userDocuments) { doc in
+                        NavigationLink(value: doc) { DocumentRow(document: doc) }
+                            .swipeActions(edge: .trailing) {
+                                Button("Delete", role: .destructive) { model.documents.delete(doc) }
+                                Button("Rename") { startRename(doc) }.tint(.blue)
+                            }
                     }
+                } header: {
+                    if inbox != nil && !userDocuments.isEmpty { Text("Documents") }
                 }
             }
             .navigationTitle("Documents")
@@ -32,7 +47,7 @@ struct DocumentsView: View {
                 }
             }
             .overlay {
-                if documents.isEmpty {
+                if allDocuments.isEmpty {
                     ContentUnavailableView("No documents yet",
                                            systemImage: "doc.text",
                                            description: Text("Tap ✎ to start a document, then record into it. Recordings from your Watch land in “Inbox.”"))

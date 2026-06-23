@@ -47,22 +47,23 @@ public final class GemmaTransformService: TextTransformService {
         activeModel = model
         #if canImport(MLXLLM)
         container = nil          // force reload of the new weights on next prepare()
-        try await prepare()
+        try await prepare(progress: nil)
         #else
         throw TextTransformError.unsupportedPlatform
         #endif
     }
 
-    public func prepare() async throws {
+    public func prepare(progress: (@Sendable (Double) -> Void)? = nil) async throws {
         #if canImport(MLXLLM)
         do {
-            // Downloads weights on first run, then loads from the local HF cache (offline).
-            // The macro injects the HuggingFace hub downloader + tokenizer loader; the variant
-            // with a progressHandler lets us stream download progress to the Log.
+            // Downloads weights on first run (re-running resumes via the HF cache), then loads
+            // from the local cache (offline). The macro injects the HuggingFace hub downloader
+            // + tokenizer loader; its progressHandler variant streams download progress.
             let configuration = ModelConfiguration(id: activeModel.rawValue)
             let throttle = ProgressThrottle(label: "Gemma weights")
-            container = try await #huggingFaceLoadModelContainer(configuration: configuration) { progress in
-                throttle.report(progress)
+            container = try await #huggingFaceLoadModelContainer(configuration: configuration) { p in
+                throttle.report(p)
+                progress?(p.fractionCompleted)
             }
         } catch {
             throw TextTransformError.underlying(error)

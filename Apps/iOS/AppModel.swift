@@ -22,6 +22,11 @@ final class AppModel: ObservableObject {
     @Published var setupError: String?
     @Published var busyMessage: String?
 
+    /// 0...1 download progress per model while preparing; nil when idle/ready (the last value
+    /// is retained on failure so the Settings bar shows where a download stalled).
+    @Published var speechProgress: Double?
+    @Published var llmProgress: Double?
+
     #if canImport(WatchConnectivity)
     private let phone = PhoneSessionTransport()
     #endif
@@ -159,25 +164,37 @@ final class AppModel: ObservableObject {
         busyMessage = "Preparing speech model…"
         wwLog("Preparing speech model (Parakeet TDT v3)… downloading on first run", .model)
         let speechStart = Date()
-        do {
-            try await transcription.prepare()
-            transcriptionReady = await transcription.isReady
-            wwLog(String(format: "Speech model ready in %.1fs", Date().timeIntervalSince(speechStart)), .model)
-        } catch {
-            setupError = error.localizedDescription
-            wwLog("Speech model failed: \(error.localizedDescription)", .error)
+        if !transcriptionReady {
+            speechProgress = 0
+            do {
+                try await transcription.prepare { [weak self] frac in
+                    Task { @MainActor in self?.speechProgress = frac }
+                }
+                transcriptionReady = await transcription.isReady
+                speechProgress = nil
+                wwLog(String(format: "Speech model ready in %.1fs", Date().timeIntervalSince(speechStart)), .model)
+            } catch {
+                setupError = error.localizedDescription      // keep speechProgress to show stall point
+                wwLog("Speech model failed: \(error.localizedDescription)", .error)
+            }
         }
 
         busyMessage = "Preparing language model… (this can take a while)"
         wwLog("Preparing language model (\(AppSettings.shared.model.displayName))… downloading on first run", .model)
         let llmStart = Date()
-        do {
-            try await transform.prepare()
-            modelReady = await transform.isReady
-            wwLog(String(format: "Language model ready in %.1fs", Date().timeIntervalSince(llmStart)), .model)
-        } catch {
-            setupError = error.localizedDescription
-            wwLog("Language model failed: \(error.localizedDescription)", .error)
+        if !modelReady {
+            llmProgress = 0
+            do {
+                try await transform.prepare { [weak self] frac in
+                    Task { @MainActor in self?.llmProgress = frac }
+                }
+                modelReady = await transform.isReady
+                llmProgress = nil
+                wwLog(String(format: "Language model ready in %.1fs", Date().timeIntervalSince(llmStart)), .model)
+            } catch {
+                setupError = error.localizedDescription      // keep llmProgress to show stall point
+                wwLog("Language model failed: \(error.localizedDescription)", .error)
+            }
         }
         busyMessage = nil
 

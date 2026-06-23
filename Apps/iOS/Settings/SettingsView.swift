@@ -23,25 +23,27 @@ struct SettingsView: View {
 
     private var setupSection: some View {
         Section {
-            HStack {
-                Label("Speech model (Parakeet)", systemImage: "waveform")
-                Spacer()
-                StatusDot(ready: model.transcriptionReady)
-            }
-            HStack {
-                Label("Language model (Gemma)", systemImage: "brain")
-                Spacer()
-                StatusDot(ready: model.modelReady)
-            }
-            Button("Download / Prepare Models") {
+            ModelSetupRow(title: "Speech model (Parakeet)", systemImage: "waveform",
+                          ready: model.transcriptionReady, progress: model.speechProgress)
+            ModelSetupRow(title: "Language model (Gemma)", systemImage: "brain",
+                          ready: model.modelReady, progress: model.llmProgress)
+            Button(buttonTitle) {
                 Task { await model.prepareModels() }
             }
             .disabled(model.busyMessage != nil)
         } header: {
             Text("Setup")
         } footer: {
-            Text("Run once while connected to the internet. Everything works offline afterward.")
+            Text("Run once while connected to the internet. Everything works offline afterward. "
+                 + "If a download is interrupted, tap again to resume where it left off.")
         }
+    }
+
+    private var buttonTitle: String {
+        if model.busyMessage != nil { return "Downloading…" }
+        let interrupted = (model.speechProgress != nil && !model.transcriptionReady)
+            || (model.llmProgress != nil && !model.modelReady)
+        return interrupted ? "Resume Download" : "Download / Prepare Models"
     }
 
     // MARK: Model selection
@@ -117,6 +119,32 @@ struct StatusDot: View {
         HStack(spacing: 6) {
             Circle().fill(ready ? .green : .orange).frame(width: 10, height: 10)
             Text(ready ? "Ready" : "Not ready").font(.caption).foregroundStyle(.secondary)
+        }
+    }
+}
+
+/// A model row that shows a status dot normally, or a determinate download bar while preparing.
+struct ModelSetupRow: View {
+    let title: String
+    let systemImage: String
+    let ready: Bool
+    let progress: Double?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Label(title, systemImage: systemImage)
+                Spacer()
+                if let progress {
+                    Text("\(Int(progress * 100))%").font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                } else {
+                    StatusDot(ready: ready)
+                }
+            }
+            if let progress {
+                ProgressView(value: progress)
+            }
         }
     }
 }

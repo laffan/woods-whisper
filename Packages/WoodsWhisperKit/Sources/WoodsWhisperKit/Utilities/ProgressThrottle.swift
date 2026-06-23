@@ -13,23 +13,32 @@ public final class ProgressThrottle: @unchecked Sendable {
         self.category = category
     }
 
+    /// Report a `Foundation.Progress` (e.g. a byte download). Formats counts as data sizes.
     public func report(_ progress: Progress) {
-        report(fraction: progress.fractionCompleted,
-               completed: progress.completedUnitCount,
-               total: progress.totalUnitCount)
+        let detail: String? = progress.totalUnitCount > 0
+            ? "\(Self.bytes(progress.completedUnitCount)) / \(Self.bytes(progress.totalUnitCount))"
+            : nil
+        report(fraction: progress.fractionCompleted, detail: detail)
     }
 
-    public func report(fraction: Double, completed: Int64 = 0, total: Int64 = 0) {
+    /// Report a fraction in [0,1] with an optional preformatted detail string (e.g. "files 3/12").
+    public func report(fraction: Double, detail: String? = nil) {
+        guard fraction.isFinite else { return }
         lock.lock()
         let crossed = (fraction - lastLogged >= 0.05) || (fraction >= 1.0 && lastLogged < 1.0)
         if crossed { lastLogged = fraction }
         lock.unlock()
-        guard crossed, fraction.isFinite else { return }
+        guard crossed else { return }
 
-        if total > 0 {
-            wwLog(String(format: "%@: %.0f%% (%lld/%lld)", label, fraction * 100, completed, total), category)
+        let pct = String(format: "%.0f%%", fraction * 100)
+        if let detail {
+            wwLog("\(label): \(pct) — \(detail)", category)
         } else {
-            wwLog(String(format: "%@: %.0f%%", label, fraction * 100), category)
+            wwLog("\(label): \(pct)", category)
         }
+    }
+
+    private static func bytes(_ count: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: count, countStyle: .file)
     }
 }

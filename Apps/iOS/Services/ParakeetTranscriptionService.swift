@@ -34,11 +34,16 @@ public final class ParakeetTranscriptionService: TranscriptionService {
         }
     }
 
-    public func prepare() async throws {
+    public func prepare(progress: (@Sendable (Double) -> Void)? = nil) async throws {
         #if canImport(FluidAudio)
         do {
-            // Downloads on first run, then loads from local cache thereafter (offline).
-            let models = try await AsrModels.downloadAndLoad(version: .v3)
+            // Downloads on first run (re-running resumes already-fetched files), then loads
+            // from local cache (offline). Progress reports file-count phases.
+            let throttle = ProgressThrottle(label: "Speech model")
+            let models = try await AsrModels.downloadAndLoad(version: .v3) { dp in
+                throttle.report(fraction: dp.fractionCompleted, detail: Self.detail(for: dp.phase))
+                progress?(dp.fractionCompleted)
+            }
             let manager = AsrManager(config: .default)
             try await manager.loadModels(models)
             self.manager = manager
@@ -49,6 +54,17 @@ public final class ParakeetTranscriptionService: TranscriptionService {
         throw TranscriptionError.unsupportedPlatform
         #endif
     }
+
+    #if canImport(FluidAudio)
+    private static func detail(for phase: DownloadUtils.DownloadPhase) -> String? {
+        switch phase {
+        case .listing: return "listing files"
+        case .downloading(let completed, let total): return total > 0 ? "files \(completed)/\(total)" : "downloading"
+        case .compiling(let name): return name.isEmpty ? "compiling" : "compiling \(name)"
+        @unknown default: return nil
+        }
+    }
+    #endif
 
     public func transcribe(audioFileAt url: URL) async throws -> TranscriptionResult {
         #if canImport(FluidAudio)
