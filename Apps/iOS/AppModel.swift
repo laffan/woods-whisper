@@ -40,6 +40,7 @@ final class AppModel: ObservableObject {
     private let phone = PhoneSessionTransport()
     #endif
     private var localServer: LocalNetworkServer?
+    private var bluetoothServer: BluetoothRecordingServer?
     private var cancellables = Set<AnyCancellable>()
 
     init() {
@@ -67,18 +68,22 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Start both direct-from-Watch receivers: WiFi (`LocalNetworkServer`) and Bluetooth
+    /// (`BluetoothRecordingServer`). A Watch with no network reaches the iPad over Bluetooth;
+    /// on a shared WiFi it uses the faster local-network path. Whichever the Watch picked at
+    /// pairing time is the one it uses.
     func startLocalServer() {
-        let server = LocalNetworkServer(port: AppSettings.shared.localServerPort,
-                                        serviceName: AppSettings.shared.deviceDisplayName)
-        server.expectedSecret = AppSettings.shared.pairingSecret
-        server.onReceive = { [weak self] transfer, data in
-            self?.ingest(transfer: transfer, data: data)
-        }
-        server.onPairSuccess = { [weak self] watchName in
+        let onPaired: @MainActor (String) -> Void = { [weak self] watchName in
             self?.lastPairedWatch = watchName
             self?.cancelWatchPairing()
             wwLog("Watch “\(watchName)” paired with this iPad", .transfer)
         }
+
+        let server = LocalNetworkServer(port: AppSettings.shared.localServerPort,
+                                        serviceName: AppSettings.shared.deviceDisplayName)
+        server.expectedSecret = AppSettings.shared.pairingSecret
+        server.onReceive = { [weak self] transfer, data in self?.ingest(transfer: transfer, data: data) }
+        server.onPairSuccess = onPaired
         do {
             try server.start()
             localServer = server
@@ -87,12 +92,22 @@ final class AppModel: ObservableObject {
             setupError = "Couldn't start local server: \(error.localizedDescription)"
             wwLog("Local server failed to start: \(error.localizedDescription)", .error)
         }
+
+        let ble = BluetoothRecordingServer(serviceName: AppSettings.shared.deviceDisplayName)
+        ble.expectedSecret = AppSettings.shared.pairingSecret
+        ble.onReceive = { [weak self] transfer, data in self?.ingest(transfer: transfer, data: data) }
+        ble.onPairSuccess = onPaired
+        try? ble.start()
+        bluetoothServer = ble
+        wwLog("Bluetooth receive server started", .transfer)
     }
 
     func stopLocalServer() {
         localServer?.stop()
         localServer = nil
-        wwLog("Local receive server stopped", .transfer)
+        bluetoothServer?.stop()
+        bluetoothServer = nil
+        wwLog("Receive servers stopped", .transfer)
     }
 
     // MARK: Watch pairing
@@ -110,8 +125,9 @@ final class AppModel: ObservableObject {
         pairingCode = code
         pairingEndsAt = Date().addingTimeInterval(pairingWindow)
         lastPairedWatch = nil
-        localServer?.beginPairing(code: code, token: AppSettings.shared.pairingSecret,
-                                  duration: pairingWindow)
+        let token = AppSettings.shared.pairingSecret
+        localServer?.beginPairing(code: code, token: token, duration: pairingWindow)
+        bluetoothServer?.beginPairing(code: code, token: token, duration: pairingWindow)
         wwLog("Watch pairing window opened (code \(code))", .transfer)
 
         Task { [weak self] in
@@ -126,6 +142,7 @@ final class AppModel: ObservableObject {
         pairingCode = nil
         pairingEndsAt = nil
         localServer?.endPairing()
+        bluetoothServer?.endPairing()
     }
 
     /// A recording arrived from the Watch: file it in the Inbox document and auto-transcribe.

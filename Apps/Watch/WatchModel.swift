@@ -40,31 +40,49 @@ final class WatchModel: ObservableObject {
         case .localNetwork:
             guard let link = WatchSettings.shared.deviceLink else { return nil }
             return LocalNetworkClient(link: link)
+        case .bluetooth:
+            guard let link = WatchSettings.shared.deviceLink else { return nil }
+            return BluetoothRecordingClient(link: link)
         }
     }
 
     // MARK: Pairing
 
-    /// Find the iPad showing `code` on the local network and save it as the paired device.
-    /// Returns true on success. On success the transport is switched to `.localNetwork`.
+    /// Find the iPad showing `code` and save it as the paired device. Races the two direct
+    /// transports — WiFi (subnet scan) and Bluetooth — so it works whether or not a network is
+    /// available; the first to answer wins and its transport is stored. Returns true on success.
     func pair(code: String) async -> Bool {
         pairingInProgress = true
         scanProgress = nil
         statusMessage = "Searching for iPad…"
         defer { pairingInProgress = false; scanProgress = nil }
 
-        do {
-            let link = try await PairingClient.pair(code: code, deviceName: Self.deviceName) { tried, total in
-                Task { @MainActor in self.scanProgress = (tried, total) }
+        let name = Self.deviceName
+        let link = await withTaskGroup(of: DeviceLink?.self) { group -> DeviceLink? in
+            group.addTask {
+                try? await PairingClient.pair(code: code, deviceName: name) { tried, total in
+                    Task { @MainActor in self.scanProgress = (tried, total) }
+                }
             }
-            WatchSettings.shared.deviceLink = link
-            WatchSettings.shared.transport = .localNetwork
-            statusMessage = "Paired with \(link.displayName)."
-            return true
-        } catch {
-            statusMessage = "Pairing failed: \(error.localizedDescription)"
+            group.addTask {
+                try? await BluetoothPairing.pair(code: code, deviceName: name)
+            }
+            var winner: DeviceLink?
+            for await result in group {
+                if let result { winner = result; group.cancelAll(); break }
+            }
+            return winner
+        }
+
+        guard let link else {
+            statusMessage = "Couldn't find the iPad. Make sure it's showing the pairing code."
             return false
         }
+        WatchSettings.shared.deviceLink = link
+        WatchSettings.shared.transport = link.transport
+        let how = link.transport == .bluetooth ? "Bluetooth" : "WiFi"
+        statusMessage = "Paired with \(link.displayName) over \(how)."
+        return true
     }
 
     /// This Watch's name, sent to the iPad so it can confirm which Watch paired.

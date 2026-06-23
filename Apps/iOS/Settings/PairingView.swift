@@ -39,8 +39,9 @@ struct PairingView: View {
             Text("Pair a Watch")
         } footer: {
             Text("Tap Start Pairing, then on the Watch open Woods Whisper → Settings → "
-                 + "“Pair with iPad” and enter the code shown here. Both devices must be on the "
-                 + "same WiFi network — or the iPad's Personal Hotspot when there's no WiFi.")
+                 + "“Pair with iPad” and enter the code shown here. Connects over WiFi if both "
+                 + "devices share a network, otherwise over Bluetooth — so it works off-grid with "
+                 + "no WiFi at all. Keep the two devices close while pairing.")
         }
     }
 

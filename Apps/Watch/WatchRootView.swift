@@ -84,9 +84,11 @@ struct WatchRootView: View {
     }
 
     private var destinationLabel: String {
+        let iPad = WatchSettings.shared.deviceLink?.displayName ?? "iPad"
         switch WatchSettings.shared.transport {
         case .phoneSession: return "Sending to paired iPhone"
-        case .localNetwork: return "Sending to \(WatchSettings.shared.deviceLink?.displayName ?? "iPad")"
+        case .localNetwork: return "Sending to \(iPad) over WiFi"
+        case .bluetooth:    return "Sending to \(iPad) over Bluetooth"
         }
     }
 

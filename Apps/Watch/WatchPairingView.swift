@@ -32,35 +32,28 @@ struct WatchPairingView: View {
     // MARK: Code entry
 
     private var entryView: some View {
-        ScrollView {
-            VStack(spacing: 10) {
-                Text("Enter the code from the iPad")
-                    .font(.caption2).foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-
-                codeDisplay
-
-                keypad
-            }
-            .padding(.horizontal, 4)
+        VStack(spacing: 5) {
+            codeDisplay
+            keypad
         }
+        .padding(.horizontal, 2)
     }
 
     private var codeDisplay: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 4) {
             ForEach(0..<codeLength, id: \.self) { index in
                 Text(index < entered.count ? String(Array(entered)[index]) : "•")
-                    .font(.title3.monospacedDigit())
-                    .frame(width: 22, height: 30)
-                    .background(.gray.opacity(0.25), in: RoundedRectangle(cornerRadius: 5))
+                    .font(.callout.monospacedDigit())
+                    .frame(width: 17, height: 20)
+                    .background(.gray.opacity(0.25), in: RoundedRectangle(cornerRadius: 4))
                     .foregroundStyle(index < entered.count ? .primary : .secondary)
             }
         }
     }
 
     private var keypad: some View {
-        let columns = Array(repeating: GridItem(.flexible(), spacing: 6), count: 3)
-        return LazyVGrid(columns: columns, spacing: 6) {
+        let columns = Array(repeating: GridItem(.flexible(), spacing: 4), count: 3)
+        return LazyVGrid(columns: columns, spacing: 4) {
             ForEach(1...9, id: \.self) { digit in
                 keyButton("\(digit)") { append("\(digit)") }
             }
@@ -74,8 +67,8 @@ struct WatchPairingView: View {
     private func keyButton(_ label: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(label)
-                .font(.title3)
-                .frame(maxWidth: .infinity, minHeight: 38)
+                .font(.body)
+                .frame(maxWidth: .infinity, minHeight: 26)
         }
         .buttonStyle(.bordered)
     }

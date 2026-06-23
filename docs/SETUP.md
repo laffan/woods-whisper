@@ -49,18 +49,18 @@ Pairing is a 5-digit code — no IP to type, no QR (a Watch can't scan one anywa
    **Pair Watch** → **Start Pairing**. A 5-digit code appears for ~2 minutes.
 2. On the **Watch**: open Woods Whisper → swipe to **Settings** → **Pair with iPad** → type the
    5 digits. The Watch finds the iPad on the network by itself and confirms when paired.
-3. Both devices must share a network: the **same WiFi**, or — off-grid — the iPad's **Personal
-   Hotspot** (cellular iPad; works with no internet). A DHCP reservation keeps a home address
-   stable, but re-pairing is just the code again if it changes.
+3. No WiFi needed. Pairing connects over **WiFi** if both devices share a network, otherwise over
+   **Bluetooth** — so it works off-grid in the woods with a WiFi-only iPad. Keep the two devices
+   close, and keep the iPad app foregrounded.
 
-> The first time the Watch reaches the network it asks for **Local Network** permission — allow
-> it, or the scan can't see the iPad.
+> The first time, the Watch asks for **Local Network** and/or **Bluetooth** permission — allow
+> them, or it can't see the iPad. Bluetooth transfers are slower than WiFi but need no network.
 
 ## Troubleshooting
 
 - **"Model isn't ready"** — re-run *Download / Prepare Models* while online.
 - **API mismatch when building** — the FluidAudio / MLX SDKs changed; adjust the lines marked
   `(1)/(2)/(3)` in `ParakeetTranscriptionService.swift` / `GemmaTransformService.swift`.
-- **Watch can't reach iPad** — confirm both are on the same network (WiFi or the iPad's Personal
-  Hotspot), the iPad app is foregrounded with the server enabled, and the Watch was granted Local
-  Network permission. If pairing times out, tap **Pair Watch** again for a fresh code.
+- **Watch can't reach iPad** — confirm the iPad app is foregrounded with *Receive directly from
+  Watch* enabled, the devices are close (for Bluetooth), and the Watch was granted Local Network
+  and Bluetooth permission. If pairing times out, tap **Pair Watch** again for a fresh code.

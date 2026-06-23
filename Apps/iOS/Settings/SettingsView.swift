@@ -99,9 +99,9 @@ struct SettingsView: View {
         } header: {
             Text("Connectivity")
         } footer: {
-            Text("On iPad, enable this to let an iPhone-free Watch send recordings over WiFi "
-                 + "(or the iPad's Personal Hotspot when off-grid). On iPhone, the paired Watch "
-                 + "connects automatically.")
+            Text("On iPad, enable this to let an iPhone-free Watch send recordings — over WiFi "
+                 + "when both share a network, or Bluetooth when off-grid with no WiFi. On iPhone, "
+                 + "the paired Watch connects automatically.")
         }
     }
 

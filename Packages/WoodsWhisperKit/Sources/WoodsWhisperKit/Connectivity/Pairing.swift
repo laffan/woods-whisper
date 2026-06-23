@@ -67,6 +67,7 @@ public enum PairingClient {
 
         var index = 0
         while index < hosts.count {
+            try Task.checkCancellation()   // a racing transport (BLE) may have already won
             let batch = Array(hosts[index ..< min(index + batchSize, hosts.count)])
             let outcomes = await withTaskGroup(of: AttemptOutcome.self) { group -> [AttemptOutcome] in
                 for host in batch {

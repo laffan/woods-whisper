@@ -71,4 +71,44 @@ final class WoodsWhisperKitTests: XCTestCase {
         let hosts = NetworkInterface.hostsInSubnet(ip: "10.0.0.5", mask: "255.255.0.0", cap: 256)
         XCTAssertEqual(hosts.count, 256)
     }
+
+    // MARK: BLE framing / reassembly
+
+    #if canImport(CoreBluetooth)
+    func testReassemblerReconstructsAcrossArbitraryChunks() {
+        // Two messages of different types/sizes, concatenated as they'd stream over a characteristic.
+        let first = bleEnvelope(type: 0x02, body: Data("hello".utf8))
+        let second = bleEnvelope(type: 0x01, body: Data((0..<1000).map { UInt8($0 % 256) }))
+        var stream = first
+        stream.append(second)
+
+        var reassembler = MessageReassembler()
+        var got: [(type: UInt8, body: Data)] = []
+        // Feed it in awkward 7-byte chunks to exercise partial-header/partial-body handling.
+        var offset = 0
+        while offset < stream.count {
+            let end = min(offset + 7, stream.count)
+            got += reassembler.append(stream.subdata(in: offset..<end))
+            offset = end
+        }
+
+        XCTAssertEqual(got.count, 2)
+        XCTAssertEqual(got.first?.type, 0x02)
+        XCTAssertEqual(got.first?.body, Data("hello".utf8))
+        XCTAssertEqual(got.last?.type, 0x01)
+        XCTAssertEqual(got.last?.body.count, 1000)
+    }
+
+    func testReassemblerHoldsIncompleteMessage() {
+        let message = bleEnvelope(type: 0x11, body: Data([1]))
+        var reassembler = MessageReassembler()
+        // Only the first 3 bytes (partial header) — nothing should emerge yet.
+        XCTAssertTrue(reassembler.append(message.subdata(in: 0..<3)).isEmpty)
+        // The remainder completes it.
+        let done = reassembler.append(message.subdata(in: 3..<message.count))
+        XCTAssertEqual(done.count, 1)
+        XCTAssertEqual(done.first?.type, 0x11)
+        XCTAssertEqual(done.first?.body, Data([1]))
+    }
+    #endif
 }

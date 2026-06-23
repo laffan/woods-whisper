@@ -10,8 +10,10 @@ public struct DeviceLink: Codable, Hashable, Sendable {
     public enum Transport: String, Codable, Sendable {
         /// WatchConnectivity (WCSession) to the Watch's paired iPhone.
         case phoneSession
-        /// Direct local-network connection to an iPad running the local server.
+        /// Direct local-network (WiFi) connection to an iPad running the local server.
         case localNetwork
+        /// Direct Bluetooth LE connection to an iPad — needs no WiFi/router at all.
+        case bluetooth
     }
 
     public var transport: Transport

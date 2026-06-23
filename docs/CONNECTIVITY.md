@@ -1,6 +1,15 @@
 # Connectivity: how recordings move between devices
 
-There are two transports. The app picks one per the Watch's `transport` setting.
+There are three transports. The app picks one per the Watch's `transport` setting.
+
+| Transport      | Watch → … | Needs | Speed | Where used |
+|----------------|-----------|-------|-------|------------|
+| `phoneSession` | paired iPhone (WCSession) | nothing | fast | default with an iPhone |
+| `localNetwork` | iPad over WiFi | a shared WiFi/LAN | fast | home / any network |
+| `bluetooth`    | iPad over BLE | nothing but the two radios | modest | **off-grid, no WiFi** |
+
+Pairing a Watch directly to an iPad **races `localNetwork` and `bluetooth`** — you type one code
+and whichever answers first is saved. So it "just works" on WiFi *and* with no network at all.
 
 ## 1. Watch → iPhone (WatchConnectivity)
 
@@ -71,30 +80,52 @@ on the WiFi can't push recordings to your iPad. The Watch only learns it by pres
 short-lived 5-digit code during the pairing window. This is a **personal, sideloaded app**, so
 the threat model is deliberately light; everything stays on the LAN and nothing leaves it.
 
-### Working with no WiFi at all (off-grid)
-The Watch finds the iPad by scanning whatever subnet the two devices share — it doesn't care
-*how* that link exists. So in the woods, with no router and no signal:
+## 3. Watch → iPad over Bluetooth (off-grid, no WiFi at all)
 
-- Turn on the iPad's **Personal Hotspot** (needs a cellular iPad; the hotspot's WiFi radio comes
-  up and provides a local network even with no upstream internet). Join it from the Watch.
-- The iPad is the hotspot gateway (`172.20.10.1`), which the scan tries **first**, so pairing and
-  every later transfer are fast.
-- A WiFi-only iPad can't create an access point (no public API for that). For that case bring a
-  tiny battery travel router, or use a cellular iPad.
+This is the answer for the woods: no router, no signal, and a **WiFi-only iPad** (which can't
+create a Personal Hotspot — that needs cellular, and there's no public API to make an iPad a WiFi
+access point). The only Apple-supported way to move app data between *these two* devices with no
+network is **Bluetooth LE** via Core Bluetooth, which both watchOS and iOS support.
+
+### Role split (the only one that works for this pair)
+- **iPad** = BLE **peripheral** (`BluetoothRecordingServer` / `CBPeripheralManager`): advertises
+  the `WoodsWhisperBLE` service, hosts an **RX** characteristic the Watch writes to and a **TX**
+  characteristic it notifies on.
+- **Watch** = BLE **central** (`BluetoothRecordingClient` / `CBCentralManager`): scans for the
+  service, connects, writes the recording, waits for an ack. (Multipeer Connectivity and
+  `WCSession` aren't options — the former isn't on watchOS, the latter only targets the paired
+  iPhone. Core Bluetooth is.)
+
+### Wire format over GATT
+The same logical envelope as the WiFi path — `[1-byte type][4-byte BE length][body]` — but
+chunked across the characteristic (each side reassembles with `MessageReassembler`). Writes use
+`.withResponse` for reliable, ordered delivery; the iPad replies with an `ack` (or a
+`PairingResponse` during pairing) as a TX notification.
+
+### Throughput
+Modest by design — reliable chunked writes run at roughly a connection-interval per chunk. That's
+fine for this app's small **16 kHz mono AAC** clips (a short whisper is tens of KB → a few
+seconds; a minute-plus clip takes longer). For bulk transfer use WiFi when a network exists.
+
+### Pairing is unified
+You don't choose Bluetooth vs WiFi up front. Enter the 5-digit code once and the Watch races a
+WiFi subnet scan and a BLE scan; the first to validate the code wins and its transport is saved in
+the `DeviceLink`. Off-grid, WiFi fails fast (no shared subnet) and Bluetooth wins.
 
 ### Practical tips
-- Same network on both devices (shared WiFi, or the iPad's hotspot).
-- On a home network, a **DHCP reservation** keeps the iPad's address stable (re-pairing is cheap
-  regardless — it's just the 5-digit code again).
-- Keep the iPad app foregrounded when sending; background networking on iPad is best-effort.
+- Keep the two devices **close** during pairing and transfer (BLE range).
+- Keep the **iPad app foregrounded** — advertising and receiving are most reliable in the
+  foreground (the iPad also keeps a `bluetooth-peripheral` background mode as a fallback).
+- First use prompts for **Bluetooth** permission on both devices — allow it.
 
 ## Limits / honest caveats
 
-- There is **no** Apple-sanctioned way for the Watch to send straight to an iPad *without* a
-  shared IP network (e.g. pure Bluetooth) — `WCSession` and Multipeer Connectivity aren't
-  available for that pair. The off-grid answer is the iPad's Personal Hotspot (see above).
-- If the iPad's IP changes and there's no reservation, just re-pair — tap **Pair Watch** on the
-  iPad and re-enter the new 5-digit code on the Watch.
+- With a WiFi-only iPad and no router, **Bluetooth is the only software path** — there's no way to
+  put the two on a shared IP network without extra hardware (a battery travel router) or a
+  cellular iPad's Personal Hotspot.
+- BLE is **slower** than WiFi; it's meant for short field clips, not bulk sync.
+- If the iPad's WiFi IP changes (no DHCP reservation) on the `localNetwork` path, just re-pair —
+  tap **Pair Watch** on the iPad and re-enter the new 5-digit code on the Watch.
 - This needs a **personal/sideloaded build**; the manual pairing UX wouldn't pass App Review,
   but that's irrelevant here. It uses only public APIs (no private/entitlement tricks), so it
   works on a normal developer-signed install.
