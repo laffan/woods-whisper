@@ -79,6 +79,11 @@ struct MessageReassembler {
 
 // MARK: - iPad side: peripheral
 
+// The BLE *peripheral* role (CBPeripheralManager / CBMutableService / CBMutableCharacteristic)
+// is unavailable on watchOS — only iOS can advertise/host the service. The Watch is always the
+// central, so this whole receiver is iOS-only.
+#if os(iOS)
+
 /// Runs on the **iPad**: advertises the Woods Whisper BLE service and receives recordings (and
 /// pairing requests) from a Watch acting as central. Mirrors `LocalNetworkServer`'s contract.
 public final class BluetoothRecordingServer: NSObject, RecordingReceiver {
@@ -263,6 +268,8 @@ extension BluetoothRecordingServer: CBPeripheralManagerDelegate {
     }
 }
 
+#endif  // os(iOS) — peripheral role
+
 // MARK: - Watch side: central
 
 /// Runs on the **Watch**: sends one recording to the iPad over BLE. A fresh `BLECentralSession`
@@ -319,7 +326,7 @@ public enum BluetoothPairing {
 /// return the first reply message it notifies back. Bridges Core Bluetooth's delegate callbacks
 /// to an async result. Retains itself for the duration (CBCentralManager holds its delegate
 /// weakly), and honours Task cancellation so a racing transport can stop it promptly.
-final class BLECentralSession: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
+final class BLECentralSession: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, @unchecked Sendable {
 
     struct Reply { let type: UInt8; let body: Data }
 
