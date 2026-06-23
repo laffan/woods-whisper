@@ -59,6 +59,16 @@ public struct DownloadProgress: Sendable, Equatable {
     }
 }
 
+/// A debugging-friendly description of a download failure that pulls a connection diagnosis out
+/// of a `URLError` (which otherwise reads as a generic "operation couldn't be completed").
+public func describeDownloadError(_ error: Error) -> String {
+    if let urlError = error as? URLError {
+        return "connection error (\(urlError.code)): \(urlError.localizedDescription)"
+    }
+    let ns = error as NSError
+    return "\(ns.domain) \(ns.code): \(ns.localizedDescription)"
+}
+
 /// Watches a long-running download and logs a warning when no forward progress arrives for
 /// `interval` seconds. This makes a silently-stalled connection visible in the session log —
 /// the symptom being a download that "starts but never gets past 0%, with nothing in the log".

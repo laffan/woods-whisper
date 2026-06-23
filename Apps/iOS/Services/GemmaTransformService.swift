@@ -76,21 +76,12 @@ public final class GemmaTransformService: TextTransformService {
         } catch {
             // Surface the real cause — a wrapped URLError reads as a generic "operation couldn't
             // be completed", which is exactly the unhelpful output the log was missing.
-            wwLog("Language model download failed: \(Self.describe(error))", .error)
+            wwLog("Language model download failed: \(describeDownloadError(error))", .error)
             throw TextTransformError.underlying(error)
         }
         #else
         throw TextTransformError.unsupportedPlatform
         #endif
-    }
-
-    /// A debugging-friendly description that pulls a connection diagnosis out of a `URLError`.
-    static func describe(_ error: Error) -> String {
-        if let urlError = error as? URLError {
-            return "connection error (\(urlError.code)): \(urlError.localizedDescription)"
-        }
-        let ns = error as NSError
-        return "\(ns.domain) \(ns.code): \(ns.localizedDescription)"
     }
 
     @discardableResult

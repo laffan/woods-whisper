@@ -23,7 +23,9 @@ iPhone or iPad. The watch app installs alongside it; you can also run the watch 
 On the phone/iPad, open **Settings**. There are two model sections, each with its own
 **Download** button and a progress bar that shows megabytes downloaded over the total:
 
-- **Speech Model** — Parakeet TDT v3 (~a few hundred MB) via FluidAudio.
+- **Speech Model** — Parakeet TDT v3 (~600 MB) via FluidAudio by default, or pick a smaller
+  **Whisper** variant (tiny ~75 MB / base ~145 MB / small ~480 MB) via WhisperKit in the same
+  section first, then tap Download. Switching model requires downloading it.
 - **Language Model** — Gemma 3 4B (default; ~2.5–3 GB quantized) via MLX. Pick a different
   size in the same section first if you want 1B (smaller/faster) or 12B (high-RAM devices
   only), then tap Download. Switching size requires downloading that model.
@@ -59,7 +61,8 @@ See **`docs/CONNECTIVITY.md`** for the full walkthrough. In short:
 - **Download stuck at 0%** — open the **Log** tab. It records when each download starts, byte
   progress, a warning if no progress arrives for ~20s (slow/stalled connection), and the
   underlying connection error if one occurs. Copy the log to diagnose.
-- **API mismatch when building** — the FluidAudio / MLX SDKs changed; adjust the lines marked
-  `(1)/(2)/(3)` in `ParakeetTranscriptionService.swift` / `GemmaTransformService.swift`.
+- **API mismatch when building** — the FluidAudio / WhisperKit / MLX SDKs changed; adjust the
+  lines marked `(1)/(2)/(3)` in `ParakeetTranscriptionService.swift`,
+  `WhisperTranscriptionService.swift`, or `GemmaTransformService.swift`.
 - **Watch can't reach iPad** — confirm same WiFi, correct IP (it changes without a DHCP
   reservation), and that the iPad app is foregrounded with the server enabled.

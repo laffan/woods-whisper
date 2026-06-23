@@ -14,7 +14,7 @@ import WoodsWhisperKit
 final class AppModel: ObservableObject {
     let documents = DocumentStore()
 
-    let transcription: TranscriptionService = ParakeetTranscriptionService()
+    let transcription: TranscriptionService = SpeechTranscriptionCoordinator(model: AppSettings.shared.speechModel)
     let transform: TextTransformService = GemmaTransformService(model: AppSettings.shared.model)
 
     @Published var transcriptionReady = false
@@ -176,7 +176,7 @@ final class AppModel: ObservableObject {
         isPreparingSpeech = true
         busyMessage = "Preparing speech model…"
         speechProgress = DownloadProgress(fractionCompleted: 0)
-        wwLog("Speech model (Parakeet TDT v3): preparing — downloads on first run", .model)
+        wwLog("Speech model (\(AppSettings.shared.speechModel.displayName)): preparing — downloads on first run", .model)
         let start = Date()
         do {
             try await transcription.prepare { [weak self] p in

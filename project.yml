@@ -17,6 +17,10 @@ packages:
   FluidAudio:
     url: https://github.com/FluidInference/FluidAudio.git
     branch: main
+  # Whisper (CoreML) speech models — the smaller variants, selectable alongside Parakeet.
+  WhisperKit:
+    url: https://github.com/argmaxinc/WhisperKit.git
+    branch: main
   # The reusable LLM/VLM libraries (MLXLLM, MLXLMCommon, MLXHuggingFace, ...) moved out
   # of mlx-swift-examples into this dedicated repo.
   MLXSwiftLM:
@@ -49,6 +53,8 @@ targets:
       - package: WoodsWhisperKit
       - package: FluidAudio
         product: FluidAudio
+      - package: WhisperKit
+        product: WhisperKit
       - package: MLXSwiftLM
         product: MLXLLM
       - package: MLXSwiftLM

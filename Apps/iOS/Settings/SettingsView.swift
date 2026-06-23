@@ -4,6 +4,7 @@ import WoodsWhisperKit
 struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
     @State private var selectedModel = AppSettings.shared.model
+    @State private var selectedSpeechModel = AppSettings.shared.speechModel
     @State private var localServerEnabled = AppSettings.shared.localServerEnabled
 
     var body: some View {
@@ -23,7 +24,23 @@ struct SettingsView: View {
 
     private var speechModelSection: some View {
         Section {
-            ModelSetupRow(title: "Parakeet TDT v3", systemImage: "waveform",
+            Picker("Model", selection: $selectedSpeechModel) {
+                ForEach(SpeechModel.allCases) { m in
+                    Text(m.displayName).tag(m)
+                }
+            }
+            .onChange(of: selectedSpeechModel) { _, newValue in
+                AppSettings.shared.speechModel = newValue
+                Task {
+                    do { try await model.transcription.setModel(newValue) }
+                    catch { model.setupError = error.localizedDescription }
+                    await model.refreshReadiness()
+                }
+            }
+            Text(selectedSpeechModel.approxDownloadNote)
+                .font(.caption).foregroundStyle(.secondary)
+
+            ModelSetupRow(title: "Speech weights", systemImage: "waveform",
                           ready: model.transcriptionReady, progress: model.speechProgress)
             if !model.transcriptionReady {
                 Button(downloadTitle(preparing: model.isPreparingSpeech,
@@ -35,8 +52,9 @@ struct SettingsView: View {
         } header: {
             Text("Speech Model")
         } footer: {
-            Text("Transcribes recordings to text on-device. Download once while online "
-                 + "(~a few hundred MB); works offline afterward. If interrupted, tap to resume.")
+            Text("Transcribes recordings to text on-device. Parakeet is the most accurate; the "
+                 + "smaller Whisper models are lighter, faster downloads. Download once while "
+                 + "online; works offline afterward. Switching model requires downloading it.")
         }
     }
 

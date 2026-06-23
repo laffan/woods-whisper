@@ -16,7 +16,12 @@ import FluidAudio
 ///
 /// Runs only on iOS/iPadOS; on the Watch the methods throw `.unsupportedPlatform`, so this
 /// type compiles everywhere without pulling in the models.
-public final class ParakeetTranscriptionService: TranscriptionService {
+///
+/// One of the engines behind `SpeechTranscriptionCoordinator`; conforms to the internal
+/// `SpeechModelBackend` rather than the public `TranscriptionService` (the coordinator presents
+/// the switchable public surface). Only handles the Parakeet variant, so it ignores the model
+/// argument beyond the coordinator already having routed Parakeet selections here.
+public final class ParakeetTranscriptionService: SpeechModelBackend {
 
     #if canImport(FluidAudio)
     private var manager: AsrManager?
@@ -34,14 +39,26 @@ public final class ParakeetTranscriptionService: TranscriptionService {
         }
     }
 
-    public func prepare(progress: (@Sendable (DownloadProgress) -> Void)? = nil) async throws {
+    public func unload() {
         #if canImport(FluidAudio)
+        manager = nil
+        #endif
+    }
+
+    public func prepare(model: SpeechModel,
+                        progress: (@Sendable (DownloadProgress) -> Void)? = nil) async throws {
+        #if canImport(FluidAudio)
+        wwLog("Speech model download starting: \(model.rawValue)", .model)
+        let throttle = ProgressThrottle(label: "Speech model")
+        let stall = DownloadStallMonitor(label: "Speech model")
+        stall.start()
+        defer { stall.stop() }
         do {
             // Downloads on first run (re-running resumes already-fetched files), then loads
             // from local cache (offline). Progress reports file-count phases.
-            let throttle = ProgressThrottle(label: "Speech model")
             let models = try await AsrModels.downloadAndLoad(version: .v3) { dp in
                 let detail = Self.detail(for: dp.phase)
+                stall.update(dp.fractionCompleted)
                 throttle.report(fraction: dp.fractionCompleted, detail: detail)
                 progress?(DownloadProgress(fractionCompleted: dp.fractionCompleted, detail: detail))
             }
@@ -49,7 +66,9 @@ public final class ParakeetTranscriptionService: TranscriptionService {
             let manager = AsrManager(config: .default)
             try await manager.loadModels(models)
             self.manager = manager
+            wwLog("Speech model (Parakeet TDT v3) loaded into memory", .model)
         } catch {
+            wwLog("Speech model download failed: \(describeDownloadError(error))", .error)
             throw TranscriptionError.underlying(error)
         }
         #else

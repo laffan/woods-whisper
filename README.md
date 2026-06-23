@@ -60,10 +60,11 @@ open WoodsWhisper.xcodeproj
 Then in Xcode: select the **WoodsWhisper** scheme, set your signing team, and run on a device
 (the ML models need real hardware; the Simulator can't use the ANE).
 
-> ⚠️ **The Swift package versions for FluidAudio and MLX move quickly.** Two files —
-> `ParakeetTranscriptionService.swift` and `GemmaTransformService.swift` — call those SDKs and
-> have their version-sensitive lines marked `(1)/(2)/(3)`. If Xcode flags an API mismatch after
-> resolving packages, adjust those lines; nothing else in the app depends on the SDK surface.
+> ⚠️ **The Swift package versions for FluidAudio, WhisperKit, and MLX move quickly.** Three
+> files — `ParakeetTranscriptionService.swift`, `WhisperTranscriptionService.swift`, and
+> `GemmaTransformService.swift` — call those SDKs and have their version-sensitive lines marked
+> `(1)/(2)/(3)`. If Xcode flags an API mismatch after resolving packages, adjust those lines;
+> nothing else in the app depends on the SDK surface.
 
 First launch: open **Settings** while online once and tap **Download** under both the
 **Speech Model** and **Language Model** sections.
@@ -75,10 +76,15 @@ how the pieces fit together.
 
 | Role          | Model                         | Package    | Runs on            |
 |---------------|-------------------------------|------------|--------------------|
-| Speech → text | Parakeet TDT 0.6b **v3**      | FluidAudio | iPhone / iPad (ANE)|
+| Speech → text | Parakeet TDT 0.6b **v3** (default) | FluidAudio | iPhone / iPad (ANE)|
+|               | Whisper tiny / base / small (selectable) | WhisperKit | iPhone / iPad |
 | Text rewrite  | **Gemma 3** 4B (default)      | MLX Swift  | iPhone / iPad      |
 |               | Gemma 3 1B / 12B (selectable) |            |                    |
 
-There is no "Gemma 4"; the current line is Gemma 3 (1B/4B/12B/27B). The default is **4B** for
-broad device support; **12B** is selectable on high-RAM devices (iPad Pro M-series, iPhone Pro
-8 GB+). Change it in **Settings → Language Model**.
+**Speech model.** Parakeet TDT v3 is the default — most accurate and multilingual. The smaller
+**Whisper** variants (tiny/base/small) are lighter, faster downloads; pick one in
+**Settings → Speech Model** if you prefer Whisper or want a smaller footprint.
+
+**Language model.** There is no "Gemma 4"; the current line is Gemma 3 (1B/4B/12B/27B). The
+default is **4B** for broad device support; **12B** is selectable on high-RAM devices (iPad Pro
+M-series, iPhone Pro 8 GB+). Change it in **Settings → Language Model**.

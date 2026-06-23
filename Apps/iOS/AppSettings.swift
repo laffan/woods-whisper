@@ -9,6 +9,7 @@ final class AppSettings {
 
     private enum Key {
         static let model = "model"
+        static let speechModel = "speechModel"
         static let localServerEnabled = "localServerEnabled"
         static let localServerPort = "localServerPort"
         static let pairingSecret = "pairingSecret"
@@ -19,6 +20,11 @@ final class AppSettings {
     var model: GemmaModel {
         get { (defaults.string(forKey: Key.model)).flatMap(GemmaModel.init(rawValue:)) ?? .default }
         set { defaults.set(newValue.rawValue, forKey: Key.model) }
+    }
+
+    var speechModel: SpeechModel {
+        get { (defaults.string(forKey: Key.speechModel)).flatMap(SpeechModel.init(rawValue:)) ?? .default }
+        set { defaults.set(newValue.rawValue, forKey: Key.speechModel) }
     }
 
     var localServerEnabled: Bool {

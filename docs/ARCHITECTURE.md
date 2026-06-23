@@ -25,14 +25,14 @@ don't support watchOS. SPM resolves a package's *entire* dependency graph for ev
 consumer targets, so if the shared package (which supports watchOS) depended on them — even
 conditionally — watchOS resolution would fail. Instead the shared package is dependency-free and
 defines only the protocols (`TranscriptionService`, `TextTransformService`); the concrete
-implementations and the FluidAudio/MLX packages are attached to the iOS app target in
+implementations and the FluidAudio/WhisperKit/MLX packages are attached to the iOS app target in
 `project.yml`. The implementations still guard SDK calls with `#if canImport(...)`.
 
 ## Key abstractions
 
 | Protocol               | iOS implementation              | Purpose                                |
 |------------------------|---------------------------------|----------------------------------------|
-| `TranscriptionService` | `ParakeetTranscriptionService`  | audio file → text (Parakeet/CoreML)    |
+| `TranscriptionService` | `SpeechTranscriptionCoordinator` → `ParakeetTranscriptionService` (FluidAudio) / `WhisperTranscriptionService` (WhisperKit) | audio file → text; coordinator routes to the engine for the selected `SpeechModel` |
 | `TextTransformService` | `GemmaTransformService`         | transcript + preset → text (Gemma/MLX) |
 | `RecordingSender`      | `PhoneSessionTransport`, `LocalNetworkClient` | send a recording to a host |
 | `RecordingReceiver`    | `PhoneSessionTransport`, `LocalNetworkServer` | receive recordings on a host |
@@ -60,7 +60,8 @@ storage, and connectivity code without the model dependencies.
 `RecordingTransfer` + audio bytes. The host's receiver calls `RecordingStore.ingest`.
 
 **Transcribe (iOS):** `AppModel.transcribeToDocument` → `TranscriptionService.transcribe`
-(decodes to 16 kHz `[Float]`, runs Parakeet) → new `Document`.
+(`SpeechTranscriptionCoordinator` routes to Parakeet — decoding to 16 kHz `[Float]` — or to
+WhisperKit by file path) → new `Document`.
 
 **Transform (iOS):** `AppModel.runTransformation` → `TextTransformService.transform` streams
 Gemma output token-by-token into a new `Transformation` appended to the document.
