@@ -52,6 +52,10 @@ public struct Document: Identifiable, Codable, Hashable, Sendable {
         public var presetName: String
         public var presetID: UUID?
         public var output: String
+        /// The model's reasoning (`<think>` block), if it emitted one. Shown collapsibly in the UI;
+        /// deliberately separate from `output` so it's never copied or fed into further work.
+        /// Optional with a default so older saved documents (no key) decode fine.
+        public var reasoning: String?
         public let createdAt: Date
 
         public init(
@@ -59,12 +63,14 @@ public struct Document: Identifiable, Codable, Hashable, Sendable {
             presetName: String,
             presetID: UUID? = nil,
             output: String,
+            reasoning: String? = nil,
             createdAt: Date = Date()
         ) {
             self.id = id
             self.presetName = presetName
             self.presetID = presetID
             self.output = output
+            self.reasoning = reasoning
             self.createdAt = createdAt
         }
     }

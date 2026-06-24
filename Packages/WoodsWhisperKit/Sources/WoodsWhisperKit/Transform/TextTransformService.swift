@@ -1,10 +1,10 @@
 import Foundation
 
-/// Abstracts the on-device LLM (Gemma 3) so the UI depends on a protocol, not MLX directly.
+/// Abstracts the on-device LLM so the UI depends on a protocol, not MLX directly.
 public protocol TextTransformService: AnyObject {
     var isReady: Bool { get async }
 
-    /// Which model is currently selected (e.g. "Qwen3-4B-4bit").
+    /// Which model is currently selected (e.g. "gemma-3-4b-it-4bit").
     var activeModel: LanguageModelChoice { get }
 
     /// Switch the active model. Does not download — it only selects the model and drops any
@@ -15,30 +15,55 @@ public protocol TextTransformService: AnyObject {
     /// Re-running resumes partial downloads. `progress` reports download fraction and byte counts.
     func prepare(progress: (@Sendable (DownloadProgress) -> Void)?) async throws
 
-    /// Run a preset against a transcript, streaming tokens via `onToken`. Returns the full text.
+    /// Run a preset against a transcript, streaming tokens via `onToken` (tagged as the final
+    /// answer or the model's reasoning). Returns the split result; the reasoning is *not* part of
+    /// the answer.
     @discardableResult
     func transform(
         transcript: String,
         with preset: PromptPreset,
-        onToken: (@Sendable (String) -> Void)?
-    ) async throws -> String
+        onToken: (@Sendable (TransformToken) -> Void)?
+    ) async throws -> TransformResult
 }
 
-/// Available on-device language models. Qwen3 4B is the default; Llama 3.2 3B and the two Gemma
-/// sizes are selectable alternatives. All run 4-bit quantized via MLX on iPhone/iPad.
+/// A streamed piece of a transformation, tagged by where it belongs.
+public enum TransformToken: Sendable {
+    /// Part of the model's hidden reasoning (a `<think>…</think>` block). Shown collapsibly in the
+    /// UI but excluded from the saved output.
+    case reasoning(String)
+    /// Part of the final answer — the text the user actually wants.
+    case answer(String)
+}
+
+/// The outcome of a transformation: the final `answer`, plus any `reasoning` the model emitted in a
+/// `<think>` block (nil when there was none). Reasoning is kept separate so it can be shown but
+/// never becomes part of the answer that's saved, copied, or fed into further transforms.
+public struct TransformResult: Sendable, Equatable {
+    public var answer: String
+    public var reasoning: String?
+
+    public init(answer: String, reasoning: String? = nil) {
+        self.answer = answer
+        self.reasoning = reasoning
+    }
+}
+
+/// Available on-device language models. Gemma 3 4B is the default; Qwen3 4B (which shows its
+/// reasoning), Llama 3.2 3B, and Gemma 3 1B are selectable alternatives. All run 4-bit quantized
+/// via MLX on iPhone/iPad.
 public enum LanguageModelChoice: String, CaseIterable, Codable, Sendable, Identifiable {
+    case gemma3_4B = "mlx-community/gemma-3-4b-it-4bit"
     case qwen3_4B = "mlx-community/Qwen3-4B-4bit"
     case llama3_2_3B = "mlx-community/Llama-3.2-3B-Instruct-4bit"
-    case gemma3_4B = "mlx-community/gemma-3-4b-it-4bit"
     case gemma3_1B = "mlx-community/gemma-3-1b-it-4bit"
 
     public var id: String { rawValue }
 
     public var displayName: String {
         switch self {
-        case .qwen3_4B:    return "Qwen3 · 4B (default)"
+        case .gemma3_4B:   return "Gemma 3 · 4B (default)"
+        case .qwen3_4B:    return "Qwen3 · 4B (shows reasoning)"
         case .llama3_2_3B: return "Llama 3.2 · 3B"
-        case .gemma3_4B:   return "Gemma 3 · 4B"
         case .gemma3_1B:   return "Gemma 3 · 1B (fastest)"
         }
     }
@@ -46,9 +71,9 @@ public enum LanguageModelChoice: String, CaseIterable, Codable, Sendable, Identi
     /// Rough minimum device RAM advisory, surfaced in Settings.
     public var approxRAMNote: String {
         switch self {
+        case .gemma3_4B:   return "~3.5 GB"
         case .qwen3_4B:    return "~3 GB"
         case .llama3_2_3B: return "~2.5 GB"
-        case .gemma3_4B:   return "~3.5 GB"
         case .gemma3_1B:   return "~1.5 GB"
         }
     }
@@ -68,7 +93,16 @@ public enum LanguageModelChoice: String, CaseIterable, Codable, Sendable, Identi
         }
     }
 
-    public static let `default`: LanguageModelChoice = .qwen3_4B
+    /// Whether this model wraps its reasoning in a `<think>…</think>` block that should be split
+    /// out of the answer. Only the Qwen3 "thinking" model does.
+    public var usesThinkTags: Bool {
+        switch self {
+        case .qwen3_4B:                            return true
+        case .gemma3_4B, .llama3_2_3B, .gemma3_1B: return false
+        }
+    }
+
+    public static let `default`: LanguageModelChoice = .gemma3_4B
 }
 
 public enum TextTransformError: Error, LocalizedError {
