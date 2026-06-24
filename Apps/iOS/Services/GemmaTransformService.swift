@@ -61,7 +61,18 @@ public final class GemmaTransformService: TextTransformService {
         // the local cache (offline). The macro injects the HuggingFace hub downloader + tokenizer
         // loader; its progressHandler variant streams download progress as a `Foundation.Progress`.
         let configuration = ModelConfiguration(id: activeModel.rawValue)
-        wwLog("Language model download starting: \(activeModel.rawValue)", .model)
+        let repo = activeModel.rawValue
+        wwLog("Language model download starting: \(repo)", .model)
+
+        // Diagnostic: probe HuggingFace directly, concurrently. If this reports HTTP 200 quickly
+        // while the macro download stays at 0%, the network is fine and MLX's downloader is stuck
+        // (likely the metadata/listing phase before the first byte). If the probe also fails, the
+        // app can't reach that endpoint. Independent of the download; cancelled when prepare ends.
+        let probe = Task.detached(priority: .utility) {
+            await NetworkProbe.logHuggingFaceReachability(repo: repo)
+        }
+        defer { probe.cancel() }
+
         let throttle = ProgressThrottle(label: "Gemma weights")
         let stall = DownloadStallMonitor(label: "Gemma weights")
         stall.start()
