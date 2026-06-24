@@ -5,11 +5,6 @@ import WoodsWhisperKit
 import WhisperKit
 #endif
 
-// WhisperKit also declares a `TranscriptionResult`. Disambiguate every unqualified use in this
-// file to our kit's result type (what `SpeechModelBackend` returns); WhisperKit's own results
-// stay accessed through type inference on its API.
-private typealias TranscriptionResult = WoodsWhisperKit.TranscriptionResult
-
 /// Whisper (CoreML) transcription via the WhisperKit package — the smaller variants
 /// (tiny / base / small) for users who prefer Whisper over Parakeet or want a lighter download.
 ///
@@ -83,7 +78,7 @@ final class WhisperTranscriptionService: SpeechModelBackend {
         #endif
     }
 
-    func transcribe(audioFileAt url: URL) async throws -> TranscriptionResult {
+    func transcribe(audioFileAt url: URL) async throws -> WoodsWhisperKit.TranscriptionResult {
         #if canImport(WhisperKit)
         guard let kit else { throw TranscriptionError.modelsNotPrepared }
         let started = Date()
@@ -93,7 +88,7 @@ final class WhisperTranscriptionService: SpeechModelBackend {
             let text = results.map { $0.text }
                 .joined(separator: " ")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            return TranscriptionResult(
+            return WoodsWhisperKit.TranscriptionResult(
                 text: text,
                 detectedLanguage: results.first?.language,
                 duration: Date().timeIntervalSince(started)
