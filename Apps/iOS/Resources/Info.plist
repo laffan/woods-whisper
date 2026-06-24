@@ -33,10 +33,15 @@
         <string>_woodswhisper._tcp</string>
     </array>
 
-    <!-- Keep recording/transcribing when backgrounded -->
+    <!-- Direct Watch -> iPad transfer over Bluetooth (works with no WiFi at all) -->
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>Woods Whisper receives recordings directly from your Apple Watch over Bluetooth when no WiFi is available.</string>
+
+    <!-- Keep recording/transcribing and advertising over Bluetooth when backgrounded -->
     <key>UIBackgroundModes</key>
     <array>
         <string>audio</string>
+        <string>bluetooth-peripheral</string>
     </array>
 
     <key>UILaunchScreen</key>

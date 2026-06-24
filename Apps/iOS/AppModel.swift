@@ -31,10 +31,20 @@ final class AppModel: ObservableObject {
     @Published var isPreparingSpeech = false
     @Published var isPreparingLLM = false
 
+    /// Active Watch-pairing window: the 5-digit code shown on screen and when it expires. Nil
+    /// when not pairing. `lastPairedWatch` holds the name of the most recently paired Watch so
+    /// the UI can confirm success.
+    @Published var pairingCode: String?
+    @Published var pairingEndsAt: Date?
+    @Published var lastPairedWatch: String?
+
+    private let pairingWindow: TimeInterval = 120
+
     #if canImport(WatchConnectivity)
     private let phone = PhoneSessionTransport()
     #endif
     private var localServer: LocalNetworkServer?
+    private var bluetoothServer: BluetoothRecordingServer?
     private var cancellables = Set<AnyCancellable>()
 
     init() {
@@ -62,13 +72,22 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Start both direct-from-Watch receivers: WiFi (`LocalNetworkServer`) and Bluetooth
+    /// (`BluetoothRecordingServer`). A Watch with no network reaches the iPad over Bluetooth;
+    /// on a shared WiFi it uses the faster local-network path. Whichever the Watch picked at
+    /// pairing time is the one it uses.
     func startLocalServer() {
+        let onPaired: @MainActor (String) -> Void = { [weak self] watchName in
+            self?.lastPairedWatch = watchName
+            self?.cancelWatchPairing()
+            wwLog("Watch “\(watchName)” paired with this iPad", .transfer)
+        }
+
         let server = LocalNetworkServer(port: AppSettings.shared.localServerPort,
                                         serviceName: AppSettings.shared.deviceDisplayName)
         server.expectedSecret = AppSettings.shared.pairingSecret
-        server.onReceive = { [weak self] transfer, data in
-            self?.ingest(transfer: transfer, data: data)
-        }
+        server.onReceive = { [weak self] transfer, data in self?.ingest(transfer: transfer, data: data) }
+        server.onPairSuccess = onPaired
         do {
             try server.start()
             localServer = server
@@ -77,12 +96,57 @@ final class AppModel: ObservableObject {
             setupError = "Couldn't start local server: \(error.localizedDescription)"
             wwLog("Local server failed to start: \(error.localizedDescription)", .error)
         }
+
+        let ble = BluetoothRecordingServer(serviceName: AppSettings.shared.deviceDisplayName)
+        ble.expectedSecret = AppSettings.shared.pairingSecret
+        ble.onReceive = { [weak self] transfer, data in self?.ingest(transfer: transfer, data: data) }
+        ble.onPairSuccess = onPaired
+        try? ble.start()
+        bluetoothServer = ble
+        wwLog("Bluetooth receive server started", .transfer)
     }
 
     func stopLocalServer() {
         localServer?.stop()
         localServer = nil
-        wwLog("Local receive server stopped", .transfer)
+        bluetoothServer?.stop()
+        bluetoothServer = nil
+        wwLog("Receive servers stopped", .transfer)
+    }
+
+    // MARK: Watch pairing
+
+    /// Open a pairing window: ensure the local server is running, show a fresh 5-digit code, and
+    /// arm the server to accept a Watch presenting that code. The window closes automatically
+    /// when a Watch pairs or after `pairingWindow` seconds.
+    func beginWatchPairing() {
+        if !AppSettings.shared.localServerEnabled {
+            AppSettings.shared.localServerEnabled = true
+        }
+        if localServer == nil { startLocalServer() }
+
+        let code = String(format: "%05d", Int.random(in: 0...99_999))
+        pairingCode = code
+        pairingEndsAt = Date().addingTimeInterval(pairingWindow)
+        lastPairedWatch = nil
+        let token = AppSettings.shared.pairingSecret
+        localServer?.beginPairing(code: code, token: token, duration: pairingWindow)
+        bluetoothServer?.beginPairing(code: code, token: token, duration: pairingWindow)
+        wwLog("Watch pairing window opened (code \(code))", .transfer)
+
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(pairingWindow * 1_000_000_000))
+            guard let self, self.pairingCode == code else { return }
+            self.cancelWatchPairing()
+            wwLog("Watch pairing window expired", .transfer)
+        }
+    }
+
+    func cancelWatchPairing() {
+        pairingCode = nil
+        pairingEndsAt = nil
+        localServer?.endPairing()
+        bluetoothServer?.endPairing()
     }
 
     /// A recording arrived from the Watch: file it in the Inbox document and auto-transcribe.
@@ -102,8 +166,11 @@ final class AppModel: ObservableObject {
 
     /// Register a clip just recorded on this device (audio already written to `audioURL`) into
     /// `documentID`, then auto-transcribe it.
-    func addDeviceRecording(fileName: String, duration: TimeInterval, toDocument documentID: UUID) {
-        let recording = Recording(duration: duration, audioFileName: fileName, origin: deviceOrigin())
+    func addDeviceRecording(audioURL: URL, duration: TimeInterval, toDocument documentID: UUID) {
+        let name = Recording.defaultName(for: Date(), duration: duration,
+                                         byteCount: Recording.fileSize(at: audioURL))
+        let recording = Recording(name: name, duration: duration,
+                                  audioFileName: audioURL.lastPathComponent, origin: deviceOrigin())
         documents.addRecording(recording, toDocument: documentID)
         wwLog("Captured “\(recording.name)” on device", .general)
         autoTranscribe(recordingID: recording.id, inDocument: documentID)

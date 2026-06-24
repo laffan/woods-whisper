@@ -1,81 +1,118 @@
 import SwiftUI
-import CoreImage.CIFilterBuiltins
 import WoodsWhisperKit
 
-/// Shown on the iPad. Displays the address/port/secret the Watch needs to send recordings
-/// directly. The Watch can't browse Bonjour, so the user configures it once from this screen
-/// (type the values, or scan the QR if the Watch build adds a camera-import flow).
+/// Shown on the iPad. Drives the **pairing-mode** flow: tap *Start Pairing* and the iPad shows a
+/// large 5-digit code for a couple of minutes. On the Watch you open *Settings → Pair with iPad*
+/// and type that code — the Watch finds this iPad on the local network by itself (no IP to type,
+/// no QR to scan, which a Watch can't do anyway).
 struct PairingView: View {
+    @EnvironmentObject private var model: AppModel
     @State private var addresses: [String] = []
-    private let port = AppSettings.shared.localServerPort
-    private let secret = AppSettings.shared.pairingSecret
     private let name = AppSettings.shared.deviceDisplayName
 
     var body: some View {
         Form {
-            Section("This iPad") {
-                LabeledContent("Name", value: name)
-                LabeledContent("Port", value: port == 0 ? "auto (see app log)" : "\(port)")
-                ForEach(addresses, id: \.self) { ip in
-                    LabeledContent("WiFi address", value: ip)
+            if model.pairingCode != nil {
+                activePairingSection
+            } else if let paired = model.lastPairedWatch {
+                successSection(watch: paired)
+            } else {
+                startSection
+            }
+            networkSection
+        }
+        .navigationTitle("Pair Watch")
+        .onAppear { addresses = NetworkInterface.displayAddresses() }
+        .onDisappear { model.cancelWatchPairing() }
+    }
+
+    // MARK: Idle — ready to start
+
+    private var startSection: some View {
+        Section {
+            Button {
+                model.beginWatchPairing()
+            } label: {
+                Label("Start Pairing", systemImage: "antenna.radiowaves.left.and.right")
+            }
+        } header: {
+            Text("Pair a Watch")
+        } footer: {
+            Text("Tap Start Pairing, then on the Watch open Woods Whisper → Settings → "
+                 + "“Pair with iPad” and enter the code shown here. Connects over WiFi if both "
+                 + "devices share a network, otherwise over Bluetooth — so it works off-grid with "
+                 + "no WiFi at all. Keep the two devices close while pairing.")
+        }
+    }
+
+    // MARK: Active — code on screen
+
+    private var activePairingSection: some View {
+        Section {
+            VStack(spacing: 12) {
+                Text("Enter this code on your Watch")
+                    .font(.subheadline).foregroundStyle(.secondary)
+                Text(model.pairingCode ?? "")
+                    .font(.system(size: 56, weight: .bold, design: .rounded).monospacedDigit())
+                    .tracking(8)
+                    .textSelection(.enabled)
+                if let endsAt = model.pairingEndsAt, endsAt > Date() {
+                    HStack(spacing: 4) {
+                        Image(systemName: "timer")
+                        Text("Expires in ")
+                            + Text(timerInterval: Date()...endsAt, countsDown: true)
+                    }
+                    .font(.caption).foregroundStyle(.secondary)
                 }
             }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
 
-            Section("Pairing Secret") {
-                Text(secret).font(.footnote.monospaced()).textSelection(.enabled)
+            Button(role: .cancel) {
+                model.cancelWatchPairing()
+            } label: {
+                Label("Cancel", systemImage: "xmark.circle")
             }
+        } footer: {
+            Text("On the Watch: Settings → “Pair with iPad” → type these 5 digits. "
+                 + "The Watch searches the network for this iPad automatically.")
+        }
+    }
 
-            if let payload = pairingPayload, let qr = qrImage(from: payload) {
-                Section("Scan from Watch setup") {
-                    Image(uiImage: qr)
-                        .interpolation(.none)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxWidth: 240)
-                        .frame(maxWidth: .infinity)
-                }
+    // MARK: Success
+
+    private func successSection(watch: String) -> some View {
+        Section {
+            Label {
+                Text("Paired with \(watch)")
+            } icon: {
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
             }
+            Button {
+                model.beginWatchPairing()
+            } label: {
+                Label("Pair Another Watch", systemImage: "antenna.radiowaves.left.and.right")
+            }
+        } footer: {
+            Text("That Watch will now send recordings straight to this iPad whenever they're on "
+                 + "the same network.")
         }
-        .navigationTitle("Watch Pairing")
-        .onAppear { addresses = Self.wifiAddresses() }
     }
 
-    private var pairingPayload: String? {
-        guard let ip = addresses.first else { return nil }
-        let link = DeviceLink(transport: .localNetwork, displayName: name, deviceID: name,
-                              host: ip, port: port == 0 ? nil : port, pairingSecret: secret)
-        guard let data = try? JSONEncoder.iso.encode(link) else { return nil }
-        return String(data: data, encoding: .utf8)
-    }
+    // MARK: Network details (advanced / troubleshooting)
 
-    private func qrImage(from string: String) -> UIImage? {
-        let filter = CIFilter.qrCodeGenerator()
-        filter.message = Data(string.utf8)
-        guard let output = filter.outputImage else { return nil }
-        let scaled = output.transformed(by: CGAffineTransform(scaleX: 10, y: 10))
-        let context = CIContext()
-        guard let cg = context.createCGImage(scaled, from: scaled.extent) else { return nil }
-        return UIImage(cgImage: cg)
-    }
-
-    /// Best-effort enumeration of this device's IPv4 WiFi (en0) addresses.
-    static func wifiAddresses() -> [String] {
-        var result: [String] = []
-        var ifaddr: UnsafeMutablePointer<ifaddrs>?
-        guard getifaddrs(&ifaddr) == 0, let first = ifaddr else { return result }
-        defer { freeifaddrs(ifaddr) }
-        for ptr in sequence(first: first, next: { $0.pointee.ifa_next }) {
-            let flags = Int32(ptr.pointee.ifa_flags)
-            let addr = ptr.pointee.ifa_addr.pointee
-            guard (flags & (IFF_UP | IFF_RUNNING)) == (IFF_UP | IFF_RUNNING),
-                  addr.sa_family == UInt8(AF_INET) else { continue }
-            let name = String(cString: ptr.pointee.ifa_name)
-            guard name == "en0" else { continue }   // WiFi on iOS devices
-            var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
-            getnameinfo(ptr.pointee.ifa_addr, socklen_t(addr.sa_len),
-                        &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST)
-            result.append(String(cString: host))
+    private var networkSection: some View {
+        Section {
+            LabeledContent("This iPad", value: name)
+            LabeledContent("Port", value: "\(AppSettings.shared.localServerPort)")
+            ForEach(addresses, id: \.self) { ip in
+                LabeledContent("WiFi address", value: ip)
+            }
+        } header: {
+            Text("Network Details")
+        } footer: {
+            Text("For reference. You don't need to type any of this on the Watch — the code is "
+                 + "all that's required.")
         }
-        return result
     }
 }

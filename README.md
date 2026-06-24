@@ -35,13 +35,18 @@ the rest of the app depends on.
    Both download once during setup and load from local cache forever after. No telemetry, no
    cloud calls in the recording/transcription/transformation paths.
 
-2. **Watch → iPad with no phone in the loop.** Achievable, with one compromise. watchOS blocks
-   general Bonjour browsing, but an *independent* watchOS app **can** use the network over a
-   known WiFi network even without its paired iPhone. So:
-   - the **iPad** runs a small local server (`LocalNetworkServer`, `NWListener`),
-   - the **Watch** sends recordings to it (`LocalNetworkClient`, `NWConnection`),
-   - because the Watch can't auto-discover the iPad, you pair them **once** by entering the
-     iPad's address (shown in Settings → Watch Pairing). See `docs/CONNECTIVITY.md`.
+2. **Watch → iPad with no phone in the loop — and no WiFi either.** Two direct transports cover
+   both cases. On a shared network the Watch uses WiFi; with *nothing* but the two devices it
+   falls back to Bluetooth (the off-grid woods case, including a WiFi-only iPad). So:
+   - the **iPad** runs a local WiFi server (`LocalNetworkServer`, `NWListener`) **and** advertises
+     over Bluetooth (`BluetoothRecordingServer`, `CBPeripheralManager`),
+   - the **Watch** sends over WiFi (`LocalNetworkClient`, `NWConnection`) or Bluetooth
+     (`BluetoothRecordingClient`, `CBCentralManager`),
+   - you pair them **once** with a 5-digit code: the iPad shows it (Settings → *Pair Watch*), you
+     type it on the Watch, and the Watch finds the iPad itself. Pairing **races WiFi and
+     Bluetooth** — over WiFi when both share a network, or **Bluetooth (`CBPeripheralManager` on
+     the iPad, `CBCentralManager` on the Watch) when there's no WiFi at all**, so it works
+     off-grid even with a WiFi-only iPad. See `docs/CONNECTIVITY.md`.
 
    The standard **Watch → iPhone** path uses WatchConnectivity and needs no configuration.
 

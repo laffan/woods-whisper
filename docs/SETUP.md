@@ -46,14 +46,19 @@ If your Watch is paired to the iPhone running the app, nothing to do. Recordings
 WatchConnectivity automatically (even when the phone is backgrounded).
 
 ### B. Watch → iPad directly (no phone)
-See **`docs/CONNECTIVITY.md`** for the full walkthrough. In short:
+Pairing is a 5-digit code — no IP to type, no QR (a Watch can't scan one anyway). See
+**`docs/CONNECTIVITY.md`** for how it works. In short:
 
-1. On the **iPad**: Settings → enable *"Receive directly from Watch (no phone)"* → open
-   *"Watch Pairing Details"*. Note the **WiFi address**, **port**, and **pairing secret**
-   (also shown as a QR code).
-2. On the **Watch**: switch the transport to *local network* and enter those values.
-3. Make sure both devices are on the **same WiFi** network. A DHCP reservation for the iPad
-   keeps the address stable.
+1. On the **iPad**: Settings → enable *"Receive directly from Watch (no phone)"* → tap
+   **Pair Watch** → **Start Pairing**. A 5-digit code appears for ~2 minutes.
+2. On the **Watch**: open Woods Whisper → swipe to **Settings** → **Pair with iPad** → type the
+   5 digits. The Watch finds the iPad on the network by itself and confirms when paired.
+3. No WiFi needed. Pairing connects over **WiFi** if both devices share a network, otherwise over
+   **Bluetooth** — so it works off-grid in the woods with a WiFi-only iPad. Keep the two devices
+   close, and keep the iPad app foregrounded.
+
+> The first time, the Watch asks for **Local Network** and/or **Bluetooth** permission — allow
+> them, or it can't see the iPad. Bluetooth transfers are slower than WiFi but need no network.
 
 ## Troubleshooting
 
@@ -64,5 +69,6 @@ See **`docs/CONNECTIVITY.md`** for the full walkthrough. In short:
 - **API mismatch when building** — the FluidAudio / WhisperKit / MLX SDKs changed; adjust the
   lines marked `(1)/(2)/(3)` in `ParakeetTranscriptionService.swift`,
   `WhisperTranscriptionService.swift`, or `GemmaTransformService.swift`.
-- **Watch can't reach iPad** — confirm same WiFi, correct IP (it changes without a DHCP
-  reservation), and that the iPad app is foregrounded with the server enabled.
+- **Watch can't reach iPad** — confirm the iPad app is foregrounded with *Receive directly from
+  Watch* enabled, the devices are close (for Bluetooth), and the Watch was granted Local Network
+  and Bluetooth permission. If pairing times out, tap **Pair Watch** again for a fresh code.

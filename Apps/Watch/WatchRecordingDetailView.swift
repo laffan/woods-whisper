@@ -10,20 +10,56 @@ struct WatchRecordingDetailView: View {
     @State private var isRenaming = false
     @State private var newName = ""
 
+    /// The current stored recording (the captured value goes stale after a rename).
+    private var live: Recording {
+        model.recordings.recording(with: recording.id) ?? recording
+    }
+
+    private var isSending: Bool { model.pendingSends.contains(recording.id) }
+    private var isFailed: Bool { model.sendOutcome[recording.id] == .failed }
+
+    @ViewBuilder
+    private var sendStatus: some View {
+        if isSending {
+            VStack(alignment: .leading, spacing: 4) {
+                Label("Sending…", systemImage: "paperplane")
+                    .font(.caption).foregroundStyle(.secondary)
+                if let fraction = model.sendProgress[recording.id] {
+                    ProgressView(value: fraction)
+                }
+            }
+        } else {
+            switch model.sendOutcome[recording.id] {
+            case .sent:
+                Label("Sent", systemImage: "checkmark.circle.fill")
+                    .font(.caption).foregroundStyle(.green)
+            case .failed:
+                Label("Send failed — tap Retry", systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption).foregroundStyle(.orange)
+            case nil:
+                EmptyView()
+            }
+        }
+    }
+
     var body: some View {
         List {
             Section {
-                Text(recording.name).font(.headline)
-                Text(recording.createdAt, style: .date).font(.caption).foregroundStyle(.secondary)
-                Text(String(format: "%d:%02d", Int(recording.duration) / 60, Int(recording.duration) % 60))
+                Text(live.name).font(.headline)
+                Text(live.createdAt, style: .date).font(.caption).foregroundStyle(.secondary)
+                Text(Recording.durationLabel(live.duration))
                     .font(.caption).foregroundStyle(.secondary)
             }
+            if isSending || model.sendOutcome[recording.id] != nil {
+                Section { sendStatus }
+            }
             Section {
-                Button("Send Again", systemImage: "paperplane") {
+                Button(isFailed ? "Retry" : "Send Again", systemImage: "paperplane") {
                     Task { await model.send(recording) }
                 }
+                .disabled(isSending)
                 Button("Rename", systemImage: "pencil") {
-                    newName = recording.name; isRenaming = true
+                    newName = live.name; isRenaming = true
                 }
                 Button("Delete", systemImage: "trash", role: .destructive) {
                     model.recordings.delete(recording); dismiss()

@@ -127,14 +127,15 @@ struct SettingsView: View {
                 NavigationLink {
                     PairingView()
                 } label: {
-                    Label("Watch Pairing Details", systemImage: "qrcode")
+                    Label("Pair Watch", systemImage: "applewatch.radiowaves.left.and.right")
                 }
             }
         } header: {
             Text("Connectivity")
         } footer: {
-            Text("On iPad, enable this to let an iPhone-free Watch send recordings over WiFi. "
-                 + "On iPhone, the paired Watch connects automatically.")
+            Text("On iPad, enable this to let an iPhone-free Watch send recordings — over WiFi "
+                 + "when both share a network, or Bluetooth when off-grid with no WiFi. On iPhone, "
+                 + "the paired Watch connects automatically.")
         }
     }
 

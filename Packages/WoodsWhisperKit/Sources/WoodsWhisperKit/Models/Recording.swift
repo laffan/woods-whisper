@@ -62,7 +62,7 @@ public struct Recording: Identifiable, Codable, Hashable, Sendable {
         status: Status = .pending
     ) {
         self.id = id
-        self.name = name ?? Recording.defaultName(for: createdAt)
+        self.name = name ?? Recording.defaultName(for: createdAt, duration: duration, byteCount: nil)
         self.createdAt = createdAt
         self.duration = duration
         self.audioFileName = audioFileName
@@ -73,9 +73,31 @@ public struct Recording: Identifiable, Codable, Hashable, Sendable {
         self.status = status
     }
 
-    public static func defaultName(for date: Date) -> String {
+    /// The default, two-line display name:
+    ///
+    ///     Jun 24, 2026, 3:45 PM
+    ///     0:07 - 28 KB
+    ///
+    /// `byteCount` (the audio file size) is included when known at capture time.
+    public static func defaultName(for date: Date, duration: TimeInterval, byteCount: Int?) -> String {
         let formatter = DateFormatter()
-        formatter.dateFormat = "MMM d, h:mm a"
-        return "Recording \(formatter.string(from: date))"
+        formatter.dateFormat = "MMM d, yyyy, h:mm a"
+        var second = durationLabel(duration)
+        if let byteCount {
+            second += " - " + ByteCountFormatter.string(fromByteCount: Int64(byteCount), countStyle: .file)
+        }
+        return formatter.string(from: date) + "\n" + second
+    }
+
+    /// `m:ss` for a duration in seconds.
+    public static func durationLabel(_ seconds: TimeInterval) -> String {
+        let total = Int(seconds.rounded())
+        return String(format: "%d:%02d", total / 60, total % 60)
+    }
+
+    /// Size in bytes of the file at `url`, if it exists.
+    public static func fileSize(at url: URL) -> Int? {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path) else { return nil }
+        return (attributes[.size] as? NSNumber)?.intValue
     }
 }

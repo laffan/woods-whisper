@@ -35,7 +35,10 @@ public final class PhoneSessionTransport: NSObject, RecordingSender, RecordingRe
 
     // MARK: RecordingSender (Watch side)
 
-    public func send(_ transfer: RecordingTransfer, audioURL: URL) async throws {
+    public func send(_ transfer: RecordingTransfer, audioURL: URL,
+                     progress: (@Sendable (Double) -> Void)?) async throws {
+        // WCSession queues the file and delivers it in the background, so there's no live
+        // byte-progress to report; `progress` is intentionally unused here.
         guard let session else { throw ConnectivityError.notAuthorized }
         guard let metadataData = try? JSONEncoder.iso.encode(transfer),
               let metadata = try? JSONSerialization.jsonObject(with: metadataData) as? [String: Any]

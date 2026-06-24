@@ -36,6 +36,10 @@
     <key>NSLocalNetworkUsageDescription</key>
     <string>Woods Whisper sends your recordings directly to your paired iPad over WiFi, with no internet involved.</string>
 
+    <!-- Direct Watch -> iPad over Bluetooth, for when there is no WiFi at all -->
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>Woods Whisper sends your recordings directly to your paired iPad over Bluetooth when no WiFi is available.</string>
+
     <key>WKBackgroundModes</key>
     <array>
         <string>audio</string>

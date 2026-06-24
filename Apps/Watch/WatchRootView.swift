@@ -10,6 +10,7 @@ struct WatchRootView: View {
             TabView {
                 recordTab
                 recordingsTab
+                settingsTab
             }
             .tabViewStyle(.verticalPage)
             .navigationTitle("Woods Whisper")
@@ -32,7 +33,17 @@ struct WatchRootView: View {
                     .foregroundStyle(recorder.isRecording ? .red : .accentColor)
             }
             .buttonStyle(.plain)
-            if let status = model.statusMessage {
+            if !model.pendingSends.isEmpty {
+                VStack(spacing: 3) {
+                    Text("Sending…").font(.caption2).foregroundStyle(.secondary)
+                    if let fraction = model.sendProgress.values.max() {
+                        ProgressView(value: fraction)
+                    } else {
+                        ProgressView()
+                    }
+                }
+                .padding(.horizontal)
+            } else if let status = model.statusMessage {
                 Text(status).font(.caption2).foregroundStyle(.secondary).lineLimit(2)
             }
         }
@@ -45,17 +56,25 @@ struct WatchRootView: View {
                 NavigationLink {
                     WatchRecordingDetailView(recording: recording)
                 } label: {
-                    HStack {
-                        VStack(alignment: .leading) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(alignment: .top) {
                             Text(recording.name).font(.caption)
-                            Text(recording.createdAt, style: .time)
-                                .font(.caption2).foregroundStyle(.secondary)
+                            Spacer()
+                            sendStatusIcon(for: recording.id)
                         }
-                        Spacer()
-                        if model.pendingSends.contains(recording.id) {
-                            ProgressView()
+                        if let fraction = model.sendProgress[recording.id] {
+                            ProgressView(value: fraction)   // full-width bar beneath the item
                         }
                     }
+                }
+                .swipeActions(edge: .leading) {
+                    Button {
+                        Task { await model.send(recording) }
+                    } label: {
+                        Label(model.sendOutcome[recording.id] == .failed ? "Retry" : "Send",
+                              systemImage: "paperplane")
+                    }
+                    .tint(.blue)
                 }
                 .swipeActions {
                     Button("Delete", role: .destructive) { model.recordings.delete(recording) }
@@ -66,6 +85,48 @@ struct WatchRootView: View {
             if model.recordings.recordings.isEmpty {
                 Text("No recordings").font(.caption).foregroundStyle(.secondary)
             }
+        }
+    }
+
+    /// Trailing send status for a row: spinner while in flight (no byte progress), ✓ when sent,
+    /// ⚠︎ when the last attempt failed. When a determinate bar is showing it renders below instead.
+    @ViewBuilder
+    private func sendStatusIcon(for id: UUID) -> some View {
+        if model.sendProgress[id] != nil {
+            EmptyView()
+        } else if model.pendingSends.contains(id) {
+            ProgressView()
+        } else {
+            switch model.sendOutcome[id] {
+            case .sent:
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+            case .failed:
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+            case nil:
+                EmptyView()
+            }
+        }
+    }
+
+    private var settingsTab: some View {
+        VStack(spacing: 12) {
+            Text(destinationLabel)
+                .font(.caption2).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            NavigationLink {
+                WatchSettingsView()
+            } label: {
+                Label("Settings & Pairing", systemImage: "gear")
+            }
+        }
+        .padding()
+    }
+
+    private var destinationLabel: String {
+        let iPad = WatchSettings.shared.deviceLink?.displayName ?? "iPad"
+        switch WatchSettings.shared.transport {
+        case .phoneSession: return "Sending to paired iPhone"
+        case .localNetwork: return "Sending to \(iPad) over WiFi"
+        case .bluetooth:    return "Sending to \(iPad) over Bluetooth"
         }
     }
 

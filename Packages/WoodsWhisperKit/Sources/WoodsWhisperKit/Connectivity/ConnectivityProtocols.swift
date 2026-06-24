@@ -21,7 +21,17 @@ public struct RecordingTransfer: Codable, Sendable {
 public protocol RecordingSender: AnyObject {
     var isReachable: Bool { get }
     /// Send a recording (metadata + audio file at `audioURL`) to the paired host.
-    func send(_ transfer: RecordingTransfer, audioURL: URL) async throws
+    /// `progress`, if given, is called with a 0...1 fraction as bytes go out (transports that
+    /// can't report granularly — WCSession, a single WiFi write — simply don't call it).
+    func send(_ transfer: RecordingTransfer, audioURL: URL,
+              progress: (@Sendable (Double) -> Void)?) async throws
+}
+
+public extension RecordingSender {
+    /// Convenience for callers that don't need progress.
+    func send(_ transfer: RecordingTransfer, audioURL: URL) async throws {
+        try await send(transfer, audioURL: audioURL, progress: nil)
+    }
 }
 
 /// Receives recordings on a host device. The host persists them via `RecordingStore`.

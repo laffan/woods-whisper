@@ -34,8 +34,8 @@ implementations and the FluidAudio/WhisperKit/MLX packages are attached to the i
 |------------------------|---------------------------------|----------------------------------------|
 | `TranscriptionService` | `SpeechTranscriptionCoordinator` → `ParakeetTranscriptionService` (FluidAudio) / `WhisperTranscriptionService` (WhisperKit) | audio file → text; coordinator routes to the engine for the selected `SpeechModel` |
 | `TextTransformService` | `GemmaTransformService`         | transcript + preset → text (Gemma/MLX) |
-| `RecordingSender`      | `PhoneSessionTransport`, `LocalNetworkClient` | send a recording to a host |
-| `RecordingReceiver`    | `PhoneSessionTransport`, `LocalNetworkServer` | receive recordings on a host |
+| `RecordingSender`      | `PhoneSessionTransport`, `LocalNetworkClient`, `BluetoothRecordingClient` | send a recording to a host |
+| `RecordingReceiver`    | `PhoneSessionTransport`, `LocalNetworkServer`, `BluetoothRecordingServer` | receive recordings on a host |
 
 Depending on protocols (not the SDKs) keeps the UI testable and lets the Watch reuse the audio,
 storage, and connectivity code without the model dependencies.
