@@ -2,8 +2,11 @@ import Foundation
 import WoodsWhisperKit
 
 #if canImport(MLXLLM)
-import MLXLLM          // LLMModelFactory (downloads via swift-transformers HubApi) + GenerateParameters
-import MLXLMCommon     // ModelContainer, ModelConfiguration, ChatSession
+import MLXLLM          // LLMModelFactory + GenerateParameters
+import MLXLMCommon     // ModelContainer, ModelConfiguration, ChatSession, Downloader
+import MLXHuggingFace  // #huggingFaceTokenizerLoader() macro
+import HuggingFace     // referenced by the tokenizer-loader macro expansion
+import Tokenizers      // AutoTokenizer, referenced by the tokenizer-loader macro expansion
 #endif
 
 // MLXLLM also declares a `GemmaModel` (the neural-net module). Disambiguate every
@@ -13,10 +16,11 @@ public typealias GemmaModel = WoodsWhisperKit.GemmaModel
 
 /// Gemma 3 text transformation via MLX Swift. iOS/iPadOS only.
 ///
-/// Loads the model with `LLMModelFactory.shared.loadContainer` (HF download via swift-transformers
-/// `HubApi` + tokenizer) and generates via `ChatSession.streamResponse`. On platforms without MLX
-/// (the Watch) every method throws `.unsupportedPlatform`, so the type compiles everywhere and the
-/// Watch target links without the LLM dependency.
+/// Loads the model with `LLMModelFactory.shared.loadContainer`, supplying our own
+/// `URLSessionHubDownloader` for the HF download (the stock hub downloader hung on-device), and
+/// generates via `ChatSession.streamResponse`. On platforms without MLX (the Watch) every method
+/// throws `.unsupportedPlatform`, so the type compiles everywhere and the Watch target links
+/// without the LLM dependency.
 public final class GemmaTransformService: TextTransformService {
 
     public private(set) var activeModel: GemmaModel
@@ -73,14 +77,19 @@ public final class GemmaTransformService: TextTransformService {
         stall.start()
         defer { stall.stop() }
         do {
-            // (1) Download + load via the MLX model factory, which fetches through swift-transformers'
-            // `HubApi`. This replaces the `#huggingFaceLoadModelContainer` macro, whose swift-huggingface
-            // `HubClient` downloader hung before the first byte (HF reachable, progress never fired).
-            container = try await LLMModelFactory.shared.loadContainer(configuration: configuration) { p in
-                stall.update(p.fractionCompleted)
-                throttle.report(p)
-                progress?(DownloadProgress(p))
-            }
+            // (1) Download with our own foreground-URLSession Downloader instead of MLX's default
+            // `#hubDownloader()` (swift-huggingface `HubClient`), which hung before the first byte.
+            // (2) Tokenizer still loads from the downloaded files via the HF tokenizer-loader macro.
+            container = try await LLMModelFactory.shared.loadContainer(
+                from: URLSessionHubDownloader.shared,
+                using: #huggingFaceTokenizerLoader(),
+                configuration: configuration,
+                progressHandler: { p in
+                    stall.update(p.fractionCompleted)
+                    throttle.report(p)
+                    progress?(DownloadProgress(p))
+                }
+            )
             wwLog("Language model weights loaded into memory", .model)
         } catch {
             // Surface the real cause — a wrapped URLError reads as a generic "operation couldn't
