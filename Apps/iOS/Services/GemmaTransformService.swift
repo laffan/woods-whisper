@@ -2,11 +2,8 @@ import Foundation
 import WoodsWhisperKit
 
 #if canImport(MLXLLM)
-import MLXLLM
-import MLXLMCommon
-import MLXHuggingFace   // #huggingFaceLoadModelContainer macro + hub/tokenizer macros
-import HuggingFace      // HubClient (referenced by the macro expansion)
-import Tokenizers       // AutoTokenizer (referenced by the macro expansion)
+import MLXLLM          // LLMModelFactory (downloads via swift-transformers HubApi) + GenerateParameters
+import MLXLMCommon     // ModelContainer, ModelConfiguration, ChatSession
 #endif
 
 // MLXLLM also declares a `GemmaModel` (the neural-net module). Disambiguate every
@@ -16,10 +13,10 @@ public typealias GemmaModel = WoodsWhisperKit.GemmaModel
 
 /// Gemma 3 text transformation via MLX Swift. iOS/iPadOS only.
 ///
-/// Loads the model with the `#huggingFaceLoadModelContainer` macro (HF download + tokenizer)
-/// and generates via `ChatSession.streamResponse`. On platforms without MLX (the Watch) every
-/// method throws `.unsupportedPlatform`, so the type compiles everywhere and the Watch target
-/// links without the LLM dependency.
+/// Loads the model with `LLMModelFactory.shared.loadContainer` (HF download via swift-transformers
+/// `HubApi` + tokenizer) and generates via `ChatSession.streamResponse`. On platforms without MLX
+/// (the Watch) every method throws `.unsupportedPlatform`, so the type compiles everywhere and the
+/// Watch target links without the LLM dependency.
 public final class GemmaTransformService: TextTransformService {
 
     public private(set) var activeModel: GemmaModel
@@ -58,16 +55,14 @@ public final class GemmaTransformService: TextTransformService {
     public func prepare(progress: (@Sendable (DownloadProgress) -> Void)? = nil) async throws {
         #if canImport(MLXLLM)
         // Downloads weights on first run (re-running resumes via the HF cache), then loads from
-        // the local cache (offline). The macro injects the HuggingFace hub downloader + tokenizer
-        // loader; its progressHandler variant streams download progress as a `Foundation.Progress`.
+        // the local cache (offline). `progressHandler` streams a `Foundation.Progress`.
         let configuration = ModelConfiguration(id: activeModel.rawValue)
         let repo = activeModel.rawValue
         wwLog("Language model download starting: \(repo)", .model)
 
-        // Diagnostic: probe HuggingFace directly, concurrently. If this reports HTTP 200 quickly
-        // while the macro download stays at 0%, the network is fine and MLX's downloader is stuck
-        // (likely the metadata/listing phase before the first byte). If the probe also fails, the
-        // app can't reach that endpoint. Independent of the download; cancelled when prepare ends.
+        // Diagnostic: probe HuggingFace directly, concurrently, so a future stall can be attributed
+        // (HTTP 200 here + no download progress ⇒ the SDK downloader, not the network). Independent
+        // of the download and cancelled when prepare ends.
         let probe = Task.detached(priority: .utility) {
             await NetworkProbe.logHuggingFaceReachability(repo: repo)
         }
@@ -78,7 +73,10 @@ public final class GemmaTransformService: TextTransformService {
         stall.start()
         defer { stall.stop() }
         do {
-            container = try await #huggingFaceLoadModelContainer(configuration: configuration) { p in
+            // (1) Download + load via the MLX model factory, which fetches through swift-transformers'
+            // `HubApi`. This replaces the `#huggingFaceLoadModelContainer` macro, whose swift-huggingface
+            // `HubClient` downloader hung before the first byte (HF reachable, progress never fired).
+            container = try await LLMModelFactory.shared.loadContainer(configuration: configuration) { p in
                 stall.update(p.fractionCompleted)
                 throttle.report(p)
                 progress?(DownloadProgress(p))
