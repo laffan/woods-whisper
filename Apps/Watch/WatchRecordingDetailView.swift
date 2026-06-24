@@ -10,12 +10,17 @@ struct WatchRecordingDetailView: View {
     @State private var isRenaming = false
     @State private var newName = ""
 
+    /// The current stored recording (the captured value goes stale after a rename).
+    private var live: Recording {
+        model.recordings.recording(with: recording.id) ?? recording
+    }
+
     var body: some View {
         List {
             Section {
-                Text(recording.name).font(.headline)
-                Text(recording.createdAt, style: .date).font(.caption).foregroundStyle(.secondary)
-                Text(String(format: "%d:%02d", Int(recording.duration) / 60, Int(recording.duration) % 60))
+                Text(live.name).font(.headline)
+                Text(live.createdAt, style: .date).font(.caption).foregroundStyle(.secondary)
+                Text(Recording.durationLabel(live.duration))
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section {
@@ -23,7 +28,7 @@ struct WatchRecordingDetailView: View {
                     Task { await model.send(recording) }
                 }
                 Button("Rename", systemImage: "pencil") {
-                    newName = recording.name; isRenaming = true
+                    newName = live.name; isRenaming = true
                 }
                 Button("Delete", systemImage: "trash", role: .destructive) {
                     model.recordings.delete(recording); dismiss()

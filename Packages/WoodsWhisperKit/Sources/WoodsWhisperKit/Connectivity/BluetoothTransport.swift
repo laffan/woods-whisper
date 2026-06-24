@@ -222,8 +222,10 @@ extension BluetoothRecordingServer: CBPeripheralManagerDelegate {
             wwLog("BLE peripheral not available (state \(peripheral.state.rawValue))", .transfer)
             return
         }
+        // Write-without-response only: the client pipelines chunks this way for speed, and we
+        // never ATT-respond (which is correct for write commands — see didReceiveWrite).
         let rx = CBMutableCharacteristic(type: WoodsWhisperBLE.rxUUID,
-                                         properties: [.write],
+                                         properties: [.writeWithoutResponse],
                                          value: nil, permissions: [.writeable])
         let tx = CBMutableCharacteristic(type: WoodsWhisperBLE.txUUID,
                                          properties: [.notify],
@@ -241,13 +243,11 @@ extension BluetoothRecordingServer: CBPeripheralManagerDelegate {
 
     public func peripheralManager(_ peripheral: CBPeripheralManager,
                                   didReceiveWrite requests: [CBATTRequest]) {
+        // These are ATT write *commands* (write-without-response); do NOT call respond(to:).
         for request in requests where request.value != nil {
             for message in reassembler.append(request.value!) {
                 handleInbound(type: message.type, body: message.body)
             }
-        }
-        if let first = requests.first {
-            peripheral.respond(to: first, withResult: .success)
         }
     }
 
@@ -341,6 +341,7 @@ final class BLECentralSession: NSObject, CBCentralManagerDelegate, CBPeripheralD
     private var txCharacteristic: CBCharacteristic?
     private var reassembler = MessageReassembler()
     private var pendingWrite = Data()
+    private var startedWriting = false
 
     private var continuation: CheckedContinuation<Reply, Error>?
     private var lastReportedProgress = -1.0
@@ -444,28 +445,41 @@ final class BLECentralSession: NSObject, CBCentralManagerDelegate, CBPeripheralD
                     error: Error?) {
         guard characteristic.uuid == WoodsWhisperBLE.txUUID, error == nil else { return }
         pendingWrite = outgoing
-        writeNextChunk()
+        startedWriting = false
+        pumpWrites()
     }
 
-    private func writeNextChunk() {
-        guard let peripheral, let rx = rxCharacteristic, !pendingWrite.isEmpty else { return }
-        let mtu = max(20, peripheral.maximumWriteValueLength(for: .withResponse))
-        let chunk = pendingWrite.prefix(mtu)
-        pendingWrite.removeFirst(chunk.count)
-        peripheral.writeValue(Data(chunk), for: rx, type: .withResponse)
-    }
-
-    func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic,
-                    error: Error?) {
-        if let error { finish(.failure(ConnectivityError.transportFailure(error))); return }
-        if let progress, outgoing.count > 0 {
-            let fraction = min(1, Double(outgoing.count - pendingWrite.count) / Double(outgoing.count))
-            if fraction - lastReportedProgress >= 0.01 || fraction >= 1 {   // throttle to ~1% steps
-                lastReportedProgress = fraction
-                progress(fraction)
-            }
+    /// Write chunks using `.withoutResponse`, which the controller pipelines (many per connection
+    /// interval) rather than one ATT round-trip per chunk — far faster. Flow control via
+    /// `canSendWriteWithoutResponse` keeps us from overrunning the radio's buffers, and the
+    /// app-level ack the iPad sends after reassembly is our end-to-end integrity check.
+    private func pumpWrites() {
+        guard let peripheral, let rx = rxCharacteristic else { return }
+        while !pendingWrite.isEmpty {
+            // Once underway, honour back-pressure; allow the first chunk through regardless to
+            // bootstrap the `peripheralIsReady…` callbacks on stacks that start "not ready".
+            if startedWriting && !peripheral.canSendWriteWithoutResponse { return }
+            startedWriting = true
+            let mtu = max(20, peripheral.maximumWriteValueLength(for: .withoutResponse))
+            let chunk = pendingWrite.prefix(mtu)
+            pendingWrite.removeFirst(chunk.count)
+            peripheral.writeValue(Data(chunk), for: rx, type: .withoutResponse)
+            reportProgress()
         }
-        if !pendingWrite.isEmpty { writeNextChunk() }   // else: done writing, await the TX reply
+        // All chunks handed to the radio; the TX-notification ack will complete the operation.
+    }
+
+    func peripheralIsReady(toSendWriteWithoutResponse peripheral: CBPeripheral) {
+        pumpWrites()
+    }
+
+    private func reportProgress() {
+        guard let progress, outgoing.count > 0 else { return }
+        let fraction = min(1, Double(outgoing.count - pendingWrite.count) / Double(outgoing.count))
+        if fraction - lastReportedProgress >= 0.01 || fraction >= 1 {   // throttle to ~1% steps
+            lastReportedProgress = fraction
+            progress(fraction)
+        }
     }
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic,

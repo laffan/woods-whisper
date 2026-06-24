@@ -56,17 +56,17 @@ struct WatchRootView: View {
                 NavigationLink {
                     WatchRecordingDetailView(recording: recording)
                 } label: {
-                    HStack {
-                        VStack(alignment: .leading) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(alignment: .top) {
                             Text(recording.name).font(.caption)
-                            Text(recording.createdAt, style: .time)
-                                .font(.caption2).foregroundStyle(.secondary)
+                            Spacer()
+                            if model.sendProgress[recording.id] == nil,
+                               model.pendingSends.contains(recording.id) {
+                                ProgressView()   // spinner for transports without byte progress
+                            }
                         }
-                        Spacer()
                         if let fraction = model.sendProgress[recording.id] {
-                            ProgressView(value: fraction).frame(width: 44)
-                        } else if model.pendingSends.contains(recording.id) {
-                            ProgressView()
+                            ProgressView(value: fraction)   // full-width bar beneath the item
                         }
                     }
                 }

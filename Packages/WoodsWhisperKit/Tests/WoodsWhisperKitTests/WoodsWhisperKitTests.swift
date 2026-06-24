@@ -24,6 +24,28 @@ final class WoodsWhisperKitTests: XCTestCase {
         XCTAssertEqual(r.sampleRate, 16_000)
     }
 
+    func testDefaultNameIsTwoLinesWithLengthAndSize() {
+        let name = Recording.defaultName(for: Date(), duration: 7, byteCount: 28_672)
+        let lines = name.split(separator: "\n", omittingEmptySubsequences: false)
+        XCTAssertEqual(lines.count, 2)                      // [Date, Time] / [Length - Size]
+        XCTAssertTrue(lines[1].contains("0:07"))           // length as m:ss
+        XCTAssertTrue(lines[1].contains(" - "))            // length - size separator
+        XCTAssertTrue(lines[1].contains("KB"))             // byte size present
+    }
+
+    func testDefaultNameOmitsSizeWhenUnknown() {
+        let name = Recording.defaultName(for: Date(), duration: 65, byteCount: nil)
+        let lines = name.split(separator: "\n", omittingEmptySubsequences: false)
+        XCTAssertEqual(lines.count, 2)
+        XCTAssertEqual(String(lines[1]), "1:05")           // length only, no size
+    }
+
+    func testDurationLabelFormatsMinutesSeconds() {
+        XCTAssertEqual(Recording.durationLabel(0), "0:00")
+        XCTAssertEqual(Recording.durationLabel(9), "0:09")
+        XCTAssertEqual(Recording.durationLabel(75), "1:15")
+    }
+
     func testRecordingTransferRoundTrips() throws {
         let rec = Recording(audioFileName: "x.m4a", origin: .pad)
         let transfer = RecordingTransfer(recording: rec, byteCount: 123, pairingSecret: "s")

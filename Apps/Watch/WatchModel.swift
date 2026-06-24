@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import Combine
 import WoodsWhisperKit
 #if canImport(WatchKit)
 import WatchKit
@@ -25,8 +26,15 @@ final class WatchModel: ObservableObject {
     #if canImport(WatchConnectivity)
     private let phone = PhoneSessionTransport()
     #endif
+    private var cancellables = Set<AnyCancellable>()
 
     init() {
+        // RecordingStore is its own ObservableObject; forward its changes so views observing
+        // WatchModel re-render on edits like rename/delete (not just when a send updates state).
+        recordings.objectWillChange
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
+
         #if canImport(WatchConnectivity)
         try? phone.start()
         #endif
@@ -100,7 +108,9 @@ final class WatchModel: ObservableObject {
     /// Persist a freshly recorded clip and attempt to send it to the paired device.
     func store(audioURL: URL, duration: TimeInterval) {
         let fileName = audioURL.lastPathComponent
-        let recording = Recording(duration: duration, audioFileName: fileName, origin: .watch)
+        let name = Recording.defaultName(for: Date(), duration: duration,
+                                         byteCount: Recording.fileSize(at: audioURL))
+        let recording = Recording(name: name, duration: duration, audioFileName: fileName, origin: .watch)
         recordings.add(recording)
         Task { await send(recording) }
     }

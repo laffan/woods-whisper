@@ -162,8 +162,11 @@ final class AppModel: ObservableObject {
 
     /// Register a clip just recorded on this device (audio already written to `audioURL`) into
     /// `documentID`, then auto-transcribe it.
-    func addDeviceRecording(fileName: String, duration: TimeInterval, toDocument documentID: UUID) {
-        let recording = Recording(duration: duration, audioFileName: fileName, origin: deviceOrigin())
+    func addDeviceRecording(audioURL: URL, duration: TimeInterval, toDocument documentID: UUID) {
+        let name = Recording.defaultName(for: Date(), duration: duration,
+                                         byteCount: Recording.fileSize(at: audioURL))
+        let recording = Recording(name: name, duration: duration,
+                                  audioFileName: audioURL.lastPathComponent, origin: deviceOrigin())
         documents.addRecording(recording, toDocument: documentID)
         wwLog("Captured “\(recording.name)” on device", .general)
         autoTranscribe(recordingID: recording.id, inDocument: documentID)

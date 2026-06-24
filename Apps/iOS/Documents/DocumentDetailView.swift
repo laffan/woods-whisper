@@ -276,7 +276,7 @@ struct DocumentDetailView: View {
         guard let document else { return }
         if recorder.isRecording {
             guard let result = recorder.stop() else { return }
-            model.addDeviceRecording(fileName: result.url.lastPathComponent,
+            model.addDeviceRecording(audioURL: result.url,
                                      duration: result.duration,
                                      toDocument: document.id)
         } else {
@@ -424,8 +424,9 @@ private struct RecordingCard: View {
     }
 
     private var metadataString: String {
-        let date = recording.createdAt.formatted(date: .abbreviated, time: .shortened)
-        let dur = String(format: "%d:%02d", Int(recording.duration) / 60, Int(recording.duration) % 60)
-        return "\(recording.name) · \(date) · \(dur) · \(recording.origin.rawValue)"
+        // The default name spans two lines (date/time + length - size); flatten it so this
+        // caption stays on one line. Renamed recordings show their custom name instead.
+        let name = recording.name.replacingOccurrences(of: "\n", with: " · ")
+        return "\(name) · \(recording.origin.rawValue)"
     }
 }
