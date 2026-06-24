@@ -8,7 +8,7 @@ import UIKit
 /// A document: its constituent recordings (each with its own transcript) plus model
 /// transformations over the combined transcript.
 ///
-/// • “Add Recording” (top) records straight into this document — no Inbox detour.
+/// • "Add Recording" (top) records straight into this document — no Inbox detour.
 /// • Long-press a recording to enter selection mode for batch delete / copy / move.
 struct DocumentDetailView: View {
     @EnvironmentObject private var model: AppModel
