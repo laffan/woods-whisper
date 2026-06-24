@@ -8,7 +8,7 @@ import UIKit
 /// A document: its constituent recordings (each with its own transcript) plus model
 /// transformations over the combined transcript.
 ///
-/// • "Add Recording" (top) records straight into this document — no Inbox detour.
+/// • “Add Recording” (top) records straight into this document — no Inbox detour.
 /// • Long-press a recording to enter selection mode for batch delete / copy / move.
 struct DocumentDetailView: View {
     @EnvironmentObject private var model: AppModel
@@ -20,7 +20,8 @@ struct DocumentDetailView: View {
     @State private var showingPresetPicker = false
     @State private var isRunning = false
     @State private var runningPresetName = ""
-    @State private var streamingOutput = ""
+    @State private var streamingAnswer = ""
+    @State private var streamingReasoning = ""
 
     // Single-recording rename
     @State private var renameTarget: Recording?
@@ -206,8 +207,11 @@ struct DocumentDetailView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Transformations").font(.headline)
             ForEach(document.transformations) { t in
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 6) {
                     Text(t.presetName).font(.subheadline.weight(.semibold))
+                    if let reasoning = t.reasoning, !reasoning.isEmpty {
+                        ReasoningView(text: reasoning)
+                    }
                     Text(t.output).textSelection(.enabled)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -215,10 +219,15 @@ struct DocumentDetailView: View {
                 .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
             }
             if isRunning {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 6) {
                     Label("Running \(runningPresetName)…", systemImage: "wand.and.stars")
                         .font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
-                    Text(streamingOutput.isEmpty ? "…" : streamingOutput).foregroundStyle(.secondary)
+                    if !streamingReasoning.isEmpty {
+                        // Expanded live so the thinking is visible as it streams; collapses to a
+                        // tidy disclosure once the answer lands and it's saved.
+                        ReasoningView(text: streamingReasoning, initiallyExpanded: true)
+                    }
+                    Text(streamingAnswer.isEmpty ? "…" : streamingAnswer).foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding()
@@ -266,11 +275,17 @@ struct DocumentDetailView: View {
 
     private func run(_ preset: PromptPreset, on document: Document) {
         runningPresetName = preset.name
-        streamingOutput = ""
+        streamingAnswer = ""
+        streamingReasoning = ""
         isRunning = true
         Task {
-            await model.runTransformation(preset, on: document) { chunk in
-                Task { @MainActor in streamingOutput += chunk }
+            await model.runTransformation(preset, on: document) { token in
+                Task { @MainActor in
+                    switch token {
+                    case .reasoning(let s): streamingReasoning += s
+                    case .answer(let s):    streamingAnswer += s
+                    }
+                }
             }
             isRunning = false
         }
@@ -446,6 +461,37 @@ private struct RecordingCard: View {
         // caption stays on one line. Renamed recordings show their custom name instead.
         let name = recording.name.replacingOccurrences(of: "\n", with: " · ")
         return "\(name) · \(recording.origin.rawValue)"
+    }
+}
+
+// MARK: - Reasoning
+
+/// Collapsible view of a model's `<think>` reasoning: visible but folded away by default so it
+/// doesn't crowd the answer, expandable to read. The reasoning itself is stored separately from
+/// the answer, so what's shown here is never copied or carried into further work.
+private struct ReasoningView: View {
+    let text: String
+    @State private var expanded: Bool
+
+    init(text: String, initiallyExpanded: Bool = false) {
+        self.text = text
+        _expanded = State(initialValue: initiallyExpanded)
+    }
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $expanded) {
+            Text(text)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 2)
+        } label: {
+            Label("Reasoning", systemImage: "brain")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+        }
+        .tint(.secondary)
     }
 }
 
