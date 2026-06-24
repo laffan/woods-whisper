@@ -71,6 +71,84 @@ struct StopSequenceFilter {
     }
 }
 
+/// Incrementally separates a `<think>…</think>` reasoning block from the answer in a streamed
+/// response. "Thinking" models (Qwen3) emit their reasoning first, wrapped in those tags, then the
+/// answer; we want the reasoning shown separately and kept out of the saved output. Tags may be
+/// split across streamed chunks, so each `consume` holds back a trailing fragment that could be the
+/// start of a tag (like `StopSequenceFilter`). When `enabled` is false everything is the answer.
+struct ThinkSplitter {
+    private static let open = "<think>"
+    private static let close = "</think>"
+
+    private enum Phase { case beforeThink, inThink, afterThink }
+    private let enabled: Bool
+    private var phase: Phase
+    private var buffer = ""
+
+    init(enabled: Bool) {
+        self.enabled = enabled
+        self.phase = enabled ? .beforeThink : .afterThink   // disabled ⇒ straight to "all answer"
+    }
+
+    /// Append streamed text; return the deltas to add to the reasoning and the answer.
+    mutating func consume(_ text: String) -> (reasoning: String, answer: String) {
+        buffer += text
+        var reasoning = ""
+        var answer = ""
+        loop: while !buffer.isEmpty {
+            switch phase {
+            case .beforeThink:
+                if let r = buffer.range(of: Self.open) {
+                    answer += String(buffer[..<r.lowerBound])      // stray text before the tag (rare)
+                    buffer.removeSubrange(buffer.startIndex..<r.upperBound)
+                    phase = .inThink
+                } else {
+                    let hold = trailingPartial(of: Self.open, in: buffer)
+                    answer += String(buffer.dropLast(hold))
+                    buffer = String(buffer.suffix(hold))
+                    break loop
+                }
+            case .inThink:
+                if let r = buffer.range(of: Self.close) {
+                    reasoning += String(buffer[..<r.lowerBound])
+                    buffer.removeSubrange(buffer.startIndex..<r.upperBound)
+                    phase = .afterThink
+                } else {
+                    let hold = trailingPartial(of: Self.close, in: buffer)
+                    reasoning += String(buffer.dropLast(hold))
+                    buffer = String(buffer.suffix(hold))
+                    break loop
+                }
+            case .afterThink:
+                answer += buffer
+                buffer = ""
+                break loop
+            }
+        }
+        return (reasoning, answer)
+    }
+
+    /// Emit whatever is still buffered once the stream ends (an unterminated `<think>` counts as
+    /// reasoning; anything else is answer).
+    mutating func flush() -> (reasoning: String, answer: String) {
+        defer { buffer = "" }
+        switch phase {
+        case .inThink:                  return (buffer, "")
+        case .beforeThink, .afterThink: return ("", buffer)
+        }
+    }
+
+    /// Length of the longest suffix of `text` that is a strict prefix of `needle`.
+    private func trailingPartial(of needle: String, in text: String) -> Int {
+        var k = min(needle.count - 1, text.count)
+        while k > 0 {
+            if text.hasSuffix(String(needle.prefix(k))) { return k }
+            k -= 1
+        }
+        return 0
+    }
+}
+
 /// On-device text transformation via MLX Swift (Qwen3 / Llama 3.2 / Gemma 3). iOS/iPadOS only.
 ///
 /// Loads the model with `LLMModelFactory.shared.loadContainer`, supplying our own
@@ -176,8 +254,8 @@ public final class GemmaTransformService: TextTransformService {
     public func transform(
         transcript: String,
         with preset: PromptPreset,
-        onToken: (@Sendable (String) -> Void)? = nil
-    ) async throws -> String {
+        onToken: (@Sendable (TransformToken) -> Void)? = nil
+    ) async throws -> TransformResult {
         #if canImport(MLXLLM)
         guard let container else { throw TextTransformError.modelNotPrepared }
         let userPrompt = preset.render(with: transcript)
@@ -192,19 +270,32 @@ public final class GemmaTransformService: TextTransformService {
         // `<end_of_turn>`) keep emitting the marker after the real answer and run away until the
         // token cap — or the app — gives out. The filter also strips the marker from the output.
         var filter = StopSequenceFilter(stops: activeModel.stopSequences)
+        // Split a `<think>…</think>` reasoning block (Qwen3) out of the answer, incrementally so it
+        // streams. Disabled models pass everything through as the answer.
+        var splitter = ThinkSplitter(enabled: activeModel.usesThinkTags)
+        var answer = ""
+        var reasoning = ""
+
+        func route(_ text: String) {
+            guard !text.isEmpty else { return }
+            let parts = splitter.consume(text)
+            if !parts.reasoning.isEmpty { reasoning += parts.reasoning; onToken?(.reasoning(parts.reasoning)) }
+            if !parts.answer.isEmpty { answer += parts.answer; onToken?(.answer(parts.answer)) }
+        }
+
         do {
-            var output = ""
             for try await chunk in session.streamResponse(to: userPrompt) {
-                let safe = filter.consume(chunk)
-                if !safe.isEmpty {
-                    output += safe
-                    onToken?(safe)
-                }
+                route(filter.consume(chunk))
                 if filter.isStopped { break }   // turn ended — stop generating
             }
-            let tail = filter.flush()
-            if !tail.isEmpty { output += tail; onToken?(tail) }
-            return output.trimmingCharacters(in: .whitespacesAndNewlines)
+            route(filter.flush())
+            let leftover = splitter.flush()     // any held-back fragment once the stream ends
+            if !leftover.reasoning.isEmpty { reasoning += leftover.reasoning; onToken?(.reasoning(leftover.reasoning)) }
+            if !leftover.answer.isEmpty { answer += leftover.answer; onToken?(.answer(leftover.answer)) }
+
+            let trimmedReasoning = reasoning.trimmingCharacters(in: .whitespacesAndNewlines)
+            return TransformResult(answer: answer.trimmingCharacters(in: .whitespacesAndNewlines),
+                                   reasoning: trimmedReasoning.isEmpty ? nil : trimmedReasoning)
         } catch {
             throw TextTransformError.underlying(error)
         }
