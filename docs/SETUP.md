@@ -26,11 +26,12 @@ On the phone/iPad, open **Settings**. There are two model sections, each with it
 - **Speech Model** — Parakeet TDT v3 (~600 MB) via FluidAudio by default, or pick a smaller
   **Whisper** variant (tiny ~75 MB / base ~145 MB / small ~480 MB) via WhisperKit in the same
   section first, then tap Download. Switching model requires downloading it.
-- **Language Model** — Gemma 3 4B (default; ~2.5–3 GB quantized) via MLX. Pick a different
-  size in the same section first if you want 1B (smaller/faster) or 12B (high-RAM devices
-  only), then tap Download. Switching size requires downloading that model.
+- **Language Model** — Qwen3 4B (default; ~3 GB quantized) via MLX. Pick a different model in
+  the same section first if you want Llama 3.2 3B, Gemma 3 4B, or Gemma 3 1B (smaller/faster),
+  then tap Download. Switching model requires downloading that model.
 
-Both load from local cache after this — no further network use.
+Both load from local cache after this — no further network use, and they reload automatically on
+later launches (no need to tap Download again).
 
 > If you only ever use an iPad standalone (no Watch, no phone), this is all you need: record on
 > the iPad, transcribe, and transform.

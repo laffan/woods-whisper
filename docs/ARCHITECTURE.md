@@ -8,7 +8,7 @@
 │  • Recordings / Documents             │   │  • Record button         │
 │  • Settings + pairing                 │   │  • Recordings list       │
 │  • Apps/iOS/Services/ (ML impls):     │   │  • Sends to paired device│
-│      Parakeet (ASR) · Gemma 3 (LLM)   │   │                          │
+│      Parakeet (ASR) · MLX LLM         │   │                          │
 │      + FluidAudio / MLX packages      │   │                          │
 └──────────────────┬───────────────────┘   └────────────┬─────────────┘
                    │  depends on                          │  depends on
