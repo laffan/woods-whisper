@@ -33,7 +33,17 @@ struct WatchRootView: View {
                     .foregroundStyle(recorder.isRecording ? .red : .accentColor)
             }
             .buttonStyle(.plain)
-            if let status = model.statusMessage {
+            if !model.pendingSends.isEmpty {
+                VStack(spacing: 3) {
+                    Text("Sending…").font(.caption2).foregroundStyle(.secondary)
+                    if let fraction = model.sendProgress.values.max() {
+                        ProgressView(value: fraction)
+                    } else {
+                        ProgressView()
+                    }
+                }
+                .padding(.horizontal)
+            } else if let status = model.statusMessage {
                 Text(status).font(.caption2).foregroundStyle(.secondary).lineLimit(2)
             }
         }
@@ -53,7 +63,9 @@ struct WatchRootView: View {
                                 .font(.caption2).foregroundStyle(.secondary)
                         }
                         Spacer()
-                        if model.pendingSends.contains(recording.id) {
+                        if let fraction = model.sendProgress[recording.id] {
+                            ProgressView(value: fraction).frame(width: 44)
+                        } else if model.pendingSends.contains(recording.id) {
                             ProgressView()
                         }
                     }

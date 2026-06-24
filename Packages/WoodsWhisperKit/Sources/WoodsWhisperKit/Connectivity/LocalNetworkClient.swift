@@ -20,7 +20,10 @@ public final class LocalNetworkClient: RecordingSender {
         link.host != nil && link.port != nil
     }
 
-    public func send(_ transfer: RecordingTransfer, audioURL: URL) async throws {
+    public func send(_ transfer: RecordingTransfer, audioURL: URL,
+                     progress: (@Sendable (Double) -> Void)?) async throws {
+        // The frame goes out in one `NWConnection.send` over fast WiFi, so there's no useful
+        // mid-flight progress to report; `progress` is intentionally unused on this path.
         guard let host = link.host, let port = link.port,
               let nwPort = NWEndpoint.Port(rawValue: port) else {
             throw ConnectivityError.noEndpointConfigured

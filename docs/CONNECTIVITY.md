@@ -106,6 +106,9 @@ chunked across the characteristic (each side reassembles with `MessageReassemble
 Modest by design — reliable chunked writes run at roughly a connection-interval per chunk. That's
 fine for this app's small **16 kHz mono AAC** clips (a short whisper is tens of KB → a few
 seconds; a minute-plus clip takes longer). For bulk transfer use WiFi when a network exists.
+Because it's chunked, the Watch shows a real **upload progress bar** (the BLE sender reports
+`bytesSent / total` via the `RecordingSender` progress callback); the WiFi/WCSession paths send in
+one shot and just show a spinner.
 
 ### Pairing is unified
 You don't choose Bluetooth vs WiFi up front. Enter the 5-digit code once and the Watch races a

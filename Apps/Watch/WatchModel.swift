@@ -14,6 +14,9 @@ final class WatchModel: ObservableObject {
 
     @Published var statusMessage: String?
     @Published var pendingSends: Set<UUID> = []
+    /// 0...1 upload progress per recording while sending (only populated by transports that
+    /// report it — currently Bluetooth, where transfers are slow enough to matter).
+    @Published var sendProgress: [UUID: Double] = [:]
 
     /// True while a pairing scan is running; `scanProgress` is `(hostsTried, hostsTotal)`.
     @Published var pairingInProgress = false
@@ -109,13 +112,16 @@ final class WatchModel: ObservableObject {
             return
         }
         pendingSends.insert(recording.id)
-        defer { pendingSends.remove(recording.id) }
+        defer { pendingSends.remove(recording.id); sendProgress[recording.id] = nil }
 
         let url = recordings.audioURL(for: recording)
         let byteCount = (try? Data(contentsOf: url).count) ?? 0
         let transfer = RecordingTransfer(recording: recording, byteCount: byteCount)
+        let id = recording.id
         do {
-            try await sender.send(transfer, audioURL: url)
+            try await sender.send(transfer, audioURL: url) { fraction in
+                Task { @MainActor in self.sendProgress[id] = fraction }
+            }
             statusMessage = "Sent to \(WatchSettings.shared.deviceLink?.displayName ?? "iPhone")."
         } catch {
             statusMessage = "Send failed: \(error.localizedDescription)"

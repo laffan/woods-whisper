@@ -281,7 +281,8 @@ public final class BluetoothRecordingClient: RecordingSender {
 
     public var isReachable: Bool { true }   // can't cheaply probe; assume in range
 
-    public func send(_ transfer: RecordingTransfer, audioURL: URL) async throws {
+    public func send(_ transfer: RecordingTransfer, audioURL: URL,
+                     progress: (@Sendable (Double) -> Void)?) async throws {
         let audio = try Data(contentsOf: audioURL)
         var stamped = transfer
         stamped.pairingSecret = link.pairingSecret
@@ -293,7 +294,7 @@ public final class BluetoothRecordingClient: RecordingSender {
         body.append(audio)
 
         let outgoing = bleEnvelope(type: BLEMessageType.recording, body: body)
-        let reply = try await BLECentralSession(outgoing: outgoing).run(timeout: 60)
+        let reply = try await BLECentralSession(outgoing: outgoing, progress: progress).run(timeout: 60)
         guard reply.type == BLEMessageType.ack, reply.body.first == 1 else {
             throw ConnectivityError.authenticationFailed
         }
@@ -331,6 +332,7 @@ final class BLECentralSession: NSObject, CBCentralManagerDelegate, CBPeripheralD
     struct Reply { let type: UInt8; let body: Data }
 
     private let outgoing: Data
+    private let progress: (@Sendable (Double) -> Void)?
     private let queue = DispatchQueue(label: "WoodsWhisper.BLEClient")
 
     private var manager: CBCentralManager?
@@ -341,12 +343,14 @@ final class BLECentralSession: NSObject, CBCentralManagerDelegate, CBPeripheralD
     private var pendingWrite = Data()
 
     private var continuation: CheckedContinuation<Reply, Error>?
+    private var lastReportedProgress = -1.0
     private var finished = false
     private var timeoutItem: DispatchWorkItem?
     private var selfRetain: BLECentralSession?
 
-    init(outgoing: Data) {
+    init(outgoing: Data, progress: (@Sendable (Double) -> Void)? = nil) {
         self.outgoing = outgoing
+        self.progress = progress
         super.init()
     }
 
@@ -454,6 +458,13 @@ final class BLECentralSession: NSObject, CBCentralManagerDelegate, CBPeripheralD
     func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic,
                     error: Error?) {
         if let error { finish(.failure(ConnectivityError.transportFailure(error))); return }
+        if let progress, outgoing.count > 0 {
+            let fraction = min(1, Double(outgoing.count - pendingWrite.count) / Double(outgoing.count))
+            if fraction - lastReportedProgress >= 0.01 || fraction >= 1 {   // throttle to ~1% steps
+                lastReportedProgress = fraction
+                progress(fraction)
+            }
+        }
         if !pendingWrite.isEmpty { writeNextChunk() }   // else: done writing, await the TX reply
     }
 
