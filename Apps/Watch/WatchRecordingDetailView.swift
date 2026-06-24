@@ -15,6 +15,33 @@ struct WatchRecordingDetailView: View {
         model.recordings.recording(with: recording.id) ?? recording
     }
 
+    private var isSending: Bool { model.pendingSends.contains(recording.id) }
+    private var isFailed: Bool { model.sendOutcome[recording.id] == .failed }
+
+    @ViewBuilder
+    private var sendStatus: some View {
+        if isSending {
+            VStack(alignment: .leading, spacing: 4) {
+                Label("Sending…", systemImage: "paperplane")
+                    .font(.caption).foregroundStyle(.secondary)
+                if let fraction = model.sendProgress[recording.id] {
+                    ProgressView(value: fraction)
+                }
+            }
+        } else {
+            switch model.sendOutcome[recording.id] {
+            case .sent:
+                Label("Sent", systemImage: "checkmark.circle.fill")
+                    .font(.caption).foregroundStyle(.green)
+            case .failed:
+                Label("Send failed — tap Retry", systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption).foregroundStyle(.orange)
+            case nil:
+                EmptyView()
+            }
+        }
+    }
+
     var body: some View {
         List {
             Section {
@@ -23,10 +50,14 @@ struct WatchRecordingDetailView: View {
                 Text(Recording.durationLabel(live.duration))
                     .font(.caption).foregroundStyle(.secondary)
             }
+            if isSending || model.sendOutcome[recording.id] != nil {
+                Section { sendStatus }
+            }
             Section {
-                Button("Send Again", systemImage: "paperplane") {
+                Button(isFailed ? "Retry" : "Send Again", systemImage: "paperplane") {
                     Task { await model.send(recording) }
                 }
+                .disabled(isSending)
                 Button("Rename", systemImage: "pencil") {
                     newName = live.name; isRenaming = true
                 }

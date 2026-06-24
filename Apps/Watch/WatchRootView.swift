@@ -60,15 +60,21 @@ struct WatchRootView: View {
                         HStack(alignment: .top) {
                             Text(recording.name).font(.caption)
                             Spacer()
-                            if model.sendProgress[recording.id] == nil,
-                               model.pendingSends.contains(recording.id) {
-                                ProgressView()   // spinner for transports without byte progress
-                            }
+                            sendStatusIcon(for: recording.id)
                         }
                         if let fraction = model.sendProgress[recording.id] {
                             ProgressView(value: fraction)   // full-width bar beneath the item
                         }
                     }
+                }
+                .swipeActions(edge: .leading) {
+                    Button {
+                        Task { await model.send(recording) }
+                    } label: {
+                        Label(model.sendOutcome[recording.id] == .failed ? "Retry" : "Send",
+                              systemImage: "paperplane")
+                    }
+                    .tint(.blue)
                 }
                 .swipeActions {
                     Button("Delete", role: .destructive) { model.recordings.delete(recording) }
@@ -78,6 +84,26 @@ struct WatchRootView: View {
         .overlay {
             if model.recordings.recordings.isEmpty {
                 Text("No recordings").font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    /// Trailing send status for a row: spinner while in flight (no byte progress), ✓ when sent,
+    /// ⚠︎ when the last attempt failed. When a determinate bar is showing it renders below instead.
+    @ViewBuilder
+    private func sendStatusIcon(for id: UUID) -> some View {
+        if model.sendProgress[id] != nil {
+            EmptyView()
+        } else if model.pendingSends.contains(id) {
+            ProgressView()
+        } else {
+            switch model.sendOutcome[id] {
+            case .sent:
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+            case .failed:
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+            case nil:
+                EmptyView()
             }
         }
     }

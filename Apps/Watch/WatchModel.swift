@@ -18,6 +18,10 @@ final class WatchModel: ObservableObject {
     /// 0...1 upload progress per recording while sending (only populated by transports that
     /// report it — currently Bluetooth, where transfers are slow enough to matter).
     @Published var sendProgress: [UUID: Double] = [:]
+    /// Outcome of the last send attempt per recording, for the ✓ / retry affordances.
+    @Published var sendOutcome: [UUID: SendOutcome] = [:]
+
+    enum SendOutcome: Equatable { case sent, failed }
 
     /// True while a pairing scan is running; `scanProgress` is `(hostsTried, hostsTotal)`.
     @Published var pairingInProgress = false
@@ -117,23 +121,27 @@ final class WatchModel: ObservableObject {
 
     /// Send (or re-send) a recording to the paired device.
     func send(_ recording: Recording) async {
+        guard !pendingSends.contains(recording.id) else { return }   // already in flight
         guard let sender = sender() else {
             statusMessage = "No paired device configured."
             return
         }
-        pendingSends.insert(recording.id)
-        defer { pendingSends.remove(recording.id); sendProgress[recording.id] = nil }
+        let id = recording.id
+        pendingSends.insert(id)
+        sendOutcome[id] = nil
+        defer { pendingSends.remove(id); sendProgress[id] = nil }
 
         let url = recordings.audioURL(for: recording)
         let byteCount = (try? Data(contentsOf: url).count) ?? 0
         let transfer = RecordingTransfer(recording: recording, byteCount: byteCount)
-        let id = recording.id
         do {
             try await sender.send(transfer, audioURL: url) { fraction in
                 Task { @MainActor in self.sendProgress[id] = fraction }
             }
+            sendOutcome[id] = .sent
             statusMessage = "Sent to \(WatchSettings.shared.deviceLink?.displayName ?? "iPhone")."
         } catch {
+            sendOutcome[id] = .failed
             statusMessage = "Send failed: \(error.localizedDescription)"
         }
     }
