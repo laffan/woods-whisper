@@ -317,7 +317,7 @@ final class AppModel: ObservableObject {
     /// Run a preset against a document's combined transcript, appending the result.
     func runTransformation(_ preset: PromptPreset,
                            on document: Document,
-                           onToken: (@Sendable (String) -> Void)? = nil) async {
+                           onToken: (@Sendable (TransformToken) -> Void)? = nil) async {
         let source = document.combinedTranscript
         guard !source.isEmpty else {
             setupError = "Nothing to transform yet — record and transcribe something first."
@@ -326,11 +326,13 @@ final class AppModel: ObservableObject {
         wwLog("Running preset “\(preset.name)” on “\(document.title)”…", .transform)
         let start = Date()
         do {
-            let output = try await transform.transform(transcript: source, with: preset, onToken: onToken)
-            let t = Document.Transformation(presetName: preset.name, presetID: preset.id, output: output)
+            let result = try await transform.transform(transcript: source, with: preset, onToken: onToken)
+            let t = Document.Transformation(presetName: preset.name, presetID: preset.id,
+                                            output: result.answer, reasoning: result.reasoning)
             documents.appendTransformation(t, to: document.id)
-            wwLog(String(format: "Preset “%@” finished in %.1fs (%d chars)", preset.name,
-                         Date().timeIntervalSince(start), output.count), .transform)
+            wwLog(String(format: "Preset “%@” finished in %.1fs (%d chars%@)", preset.name,
+                         Date().timeIntervalSince(start), result.answer.count,
+                         result.reasoning.map { " + \($0.count) reasoning" } ?? ""), .transform)
         } catch {
             setupError = error.localizedDescription
             wwLog("Transform failed: \(error.localizedDescription)", .error)

@@ -56,8 +56,8 @@ final class WoodsWhisperKitTests: XCTestCase {
         XCTAssertEqual(decoded.pairingSecret, "s")
     }
 
-    func testLanguageModelDefaultIsQwen3_4B() {
-        XCTAssertEqual(LanguageModelChoice.default, .qwen3_4B)
+    func testLanguageModelDefaultIsGemma3_4B() {
+        XCTAssertEqual(LanguageModelChoice.default, .gemma3_4B)
     }
 
     func testLanguageModelLineupDropsGemma12B() {
@@ -69,6 +69,12 @@ final class WoodsWhisperKitTests: XCTestCase {
 
     func testEveryLanguageModelHasStopSequences() {
         XCTAssertTrue(LanguageModelChoice.allCases.allSatisfy { !$0.stopSequences.isEmpty })
+    }
+
+    func testOnlyQwen3UsesThinkTags() {
+        XCTAssertTrue(LanguageModelChoice.qwen3_4B.usesThinkTags)
+        XCTAssertFalse(LanguageModelChoice.gemma3_4B.usesThinkTags)
+        XCTAssertFalse(LanguageModelChoice.llama3_2_3B.usesThinkTags)
     }
 
     // MARK: Pairing / subnet math
