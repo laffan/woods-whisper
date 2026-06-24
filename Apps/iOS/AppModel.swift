@@ -261,13 +261,15 @@ final class AppModel: ObservableObject {
         if !isPreparingLLM { busyMessage = nil }
     }
 
-    /// Download/prepare the selected Gemma language model. Safe to call repeatedly.
+    /// Download/prepare the selected language model. Safe to call repeatedly. When the model is
+    /// already downloaded this loads it from cache (fast, and works offline).
     func prepareLanguageModel() async {
         guard !isPreparingLLM, !modelReady else { return }
+        let cached = AppSettings.shared.isModelDownloaded(AppSettings.shared.model.rawValue)
         isPreparingLLM = true
-        busyMessage = "Preparing language model… (this can take a while)"
+        busyMessage = cached ? "Loading language model…" : "Preparing language model… (this can take a while)"
         llmProgress = DownloadProgress(fractionCompleted: 0)
-        wwLog("Language model (\(AppSettings.shared.model.displayName)): preparing — downloads on first run", .model)
+        wwLog("Language model (\(AppSettings.shared.model.displayName)): \(cached ? "loading from cache" : "preparing — downloads on first run")", .model)
         let start = Date()
         do {
             try await transform.prepare { [weak self] p in
@@ -275,6 +277,7 @@ final class AppModel: ObservableObject {
             }
             modelReady = await transform.isReady
             llmProgress = nil
+            if modelReady { AppSettings.shared.markModelDownloaded(AppSettings.shared.model.rawValue) }
             wwLog(String(format: "Language model ready in %.1fs", Date().timeIntervalSince(start)), .model)
         } catch {
             setupError = error.localizedDescription      // keep llmProgress to show stall point
@@ -288,6 +291,17 @@ final class AppModel: ObservableObject {
         transcriptionReady = await transcription.isReady
         modelReady = await transform.isReady
         if transcriptionReady { transcribePending() }
+    }
+
+    /// Reload any model that was downloaded in a previous session. Model readiness is in-memory on
+    /// the services, so it's false on every launch even though the weights are cached on disk; this
+    /// loads them back automatically (with the busy banner) so the user doesn't re-tap Download.
+    /// Called once at startup.
+    func loadDownloadedModelsAtStartup() async {
+        await refreshReadiness()
+        if !modelReady, AppSettings.shared.isModelDownloaded(AppSettings.shared.model.rawValue) {
+            await prepareLanguageModel()
+        }
     }
 
     // MARK: Transform

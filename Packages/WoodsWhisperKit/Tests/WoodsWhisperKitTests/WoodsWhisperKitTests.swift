@@ -56,8 +56,19 @@ final class WoodsWhisperKitTests: XCTestCase {
         XCTAssertEqual(decoded.pairingSecret, "s")
     }
 
-    func testGemmaDefaultIs4B() {
-        XCTAssertEqual(GemmaModel.default, .gemma3_4B)
+    func testLanguageModelDefaultIsQwen3_4B() {
+        XCTAssertEqual(LanguageModelChoice.default, .qwen3_4B)
+    }
+
+    func testLanguageModelLineupDropsGemma12B() {
+        let ids = LanguageModelChoice.allCases.map(\.rawValue)
+        XCTAssertTrue(ids.contains("mlx-community/Qwen3-4B-4bit"))
+        XCTAssertTrue(ids.contains("mlx-community/Llama-3.2-3B-Instruct-4bit"))
+        XCTAssertFalse(ids.contains { $0.contains("12b") })
+    }
+
+    func testEveryLanguageModelHasStopSequences() {
+        XCTAssertTrue(LanguageModelChoice.allCases.allSatisfy { !$0.stopSequences.isEmpty })
     }
 
     // MARK: Pairing / subnet math

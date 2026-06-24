@@ -83,13 +83,14 @@ how the pieces fit together.
 |---------------|-------------------------------|------------|--------------------|
 | Speech → text | Parakeet TDT 0.6b **v3** (default) | FluidAudio | iPhone / iPad (ANE)|
 |               | Whisper tiny / base / small (selectable) | WhisperKit | iPhone / iPad |
-| Text rewrite  | **Gemma 3** 4B (default)      | MLX Swift  | iPhone / iPad      |
-|               | Gemma 3 1B / 12B (selectable) |            |                    |
+| Text rewrite  | **Qwen3 4B** (default)        | MLX Swift  | iPhone / iPad      |
+|               | Llama 3.2 3B / Gemma 3 4B / Gemma 3 1B (selectable) | |          |
 
 **Speech model.** Parakeet TDT v3 is the default — most accurate and multilingual. The smaller
 **Whisper** variants (tiny/base/small) are lighter, faster downloads; pick one in
 **Settings → Speech Model** if you prefer Whisper or want a smaller footprint.
 
-**Language model.** There is no "Gemma 4"; the current line is Gemma 3 (1B/4B/12B/27B). The
-default is **4B** for broad device support; **12B** is selectable on high-RAM devices (iPad Pro
-M-series, iPhone Pro 8 GB+). Change it in **Settings → Language Model**.
+**Language model.** The default is **Qwen3 4B**; **Llama 3.2 3B** and **Gemma 3** (4B/1B) are
+selectable alternatives, all 4-bit quantized via MLX. Change it in **Settings → Language Model**.
+Each downloads once while online and is reloaded automatically from cache on subsequent launches
+(no need to re-tap Download).

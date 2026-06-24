@@ -63,7 +63,7 @@ struct SettingsView: View {
     private var languageModelSection: some View {
         Section {
             Picker("Model", selection: $selectedModel) {
-                ForEach(GemmaModel.allCases) { m in
+                ForEach(LanguageModelChoice.allCases) { m in
                     Text(m.displayName).tag(m)
                 }
             }
@@ -78,7 +78,7 @@ struct SettingsView: View {
             Text(selectedModel.approxRAMNote)
                 .font(.caption).foregroundStyle(.secondary)
 
-            ModelSetupRow(title: "Gemma weights", systemImage: "brain",
+            ModelSetupRow(title: "Model weights", systemImage: "brain",
                           ready: model.modelReady, progress: model.llmProgress)
             if !model.modelReady {
                 Button(downloadTitle(preparing: model.isPreparingLLM,
@@ -90,9 +90,10 @@ struct SettingsView: View {
         } header: {
             Text("Language Model")
         } footer: {
-            Text("Rewrites transcripts on-device with Gemma 3. Download once while online "
-                 + "(several GB depending on size); works offline afterward. If interrupted, "
-                 + "tap to resume. Switching size requires downloading that model.")
+            Text("Rewrites transcripts on-device (Qwen3, Llama 3.2, or Gemma 3). Download once "
+                 + "while online (a few GB depending on model); works offline afterward, and "
+                 + "reloads automatically on launch. If interrupted, tap to resume. Switching "
+                 + "model requires downloading it.")
         }
     }
 

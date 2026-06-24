@@ -15,10 +15,11 @@ final class AppSettings {
         static let pairingSecret = "pairingSecret"
         static let deviceDisplayName = "deviceDisplayName"
         static let didCompleteSetup = "didCompleteSetup"
+        static let downloadedModels = "downloadedModels"
     }
 
-    var model: GemmaModel {
-        get { (defaults.string(forKey: Key.model)).flatMap(GemmaModel.init(rawValue:)) ?? .default }
+    var model: LanguageModelChoice {
+        get { (defaults.string(forKey: Key.model)).flatMap(LanguageModelChoice.init(rawValue:)) ?? .default }
         set { defaults.set(newValue.rawValue, forKey: Key.model) }
     }
 
@@ -58,5 +59,29 @@ final class AppSettings {
     var didCompleteSetup: Bool {
         get { defaults.bool(forKey: Key.didCompleteSetup) }
         set { defaults.set(newValue, forKey: Key.didCompleteSetup) }
+    }
+
+    // MARK: Downloaded-model tracking
+    //
+    // Whether a model's weights have finished downloading is in-memory only on the services
+    // (`isReady` reflects a loaded model, not a cached one), so it's false on every launch. We
+    // record the rawValue of each model that completed a download here, keyed so switching models
+    // is handled, and use it at startup to auto-load an already-downloaded model from cache rather
+    // than making the user tap Download again.
+
+    private var downloadedModels: Set<String> {
+        Set(defaults.stringArray(forKey: Key.downloadedModels) ?? [])
+    }
+
+    /// True if `rawValue`'s weights were downloaded in a previous session.
+    func isModelDownloaded(_ rawValue: String) -> Bool {
+        downloadedModels.contains(rawValue)
+    }
+
+    /// Record that `rawValue`'s weights finished downloading (called on a successful `prepare`).
+    func markModelDownloaded(_ rawValue: String) {
+        var set = downloadedModels
+        guard set.insert(rawValue).inserted else { return }
+        defaults.set(Array(set), forKey: Key.downloadedModels)
     }
 }

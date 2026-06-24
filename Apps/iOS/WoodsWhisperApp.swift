@@ -9,7 +9,7 @@ struct WoodsWhisperApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(model)
-                .task { await model.refreshReadiness() }
+                .task { await model.loadDownloadedModelsAtStartup() }
         }
     }
 }

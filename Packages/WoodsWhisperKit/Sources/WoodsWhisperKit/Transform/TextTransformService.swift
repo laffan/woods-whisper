@@ -4,12 +4,12 @@ import Foundation
 public protocol TextTransformService: AnyObject {
     var isReady: Bool { get async }
 
-    /// Which model is currently selected (e.g. "gemma-3-4b-it-4bit").
-    var activeModel: GemmaModel { get }
+    /// Which model is currently selected (e.g. "Qwen3-4B-4bit").
+    var activeModel: LanguageModelChoice { get }
 
     /// Switch the active model. Does not download — it only selects the model and drops any
     /// loaded weights, so `isReady` becomes false until `prepare` is called for the new model.
-    func setModel(_ model: GemmaModel) async throws
+    func setModel(_ model: LanguageModelChoice) async throws
 
     /// Download/prepare the active model's weights. Call once during setup; offline after.
     /// Re-running resumes partial downloads. `progress` reports download fraction and byte counts.
@@ -24,33 +24,51 @@ public protocol TextTransformService: AnyObject {
     ) async throws -> String
 }
 
-/// Available on-device models. 4B is the default (runs on most modern devices); 12B is opt-in
-/// for high-RAM devices (iPad Pro M-series, iPhone Pro 8 GB+).
-public enum GemmaModel: String, CaseIterable, Codable, Sendable, Identifiable {
-    case gemma3_1B = "mlx-community/gemma-3-1b-it-4bit"
+/// Available on-device language models. Qwen3 4B is the default; Llama 3.2 3B and the two Gemma
+/// sizes are selectable alternatives. All run 4-bit quantized via MLX on iPhone/iPad.
+public enum LanguageModelChoice: String, CaseIterable, Codable, Sendable, Identifiable {
+    case qwen3_4B = "mlx-community/Qwen3-4B-4bit"
+    case llama3_2_3B = "mlx-community/Llama-3.2-3B-Instruct-4bit"
     case gemma3_4B = "mlx-community/gemma-3-4b-it-4bit"
-    case gemma3_12B = "mlx-community/gemma-3-12b-it-4bit"
+    case gemma3_1B = "mlx-community/gemma-3-1b-it-4bit"
 
     public var id: String { rawValue }
 
     public var displayName: String {
         switch self {
-        case .gemma3_1B: return "Gemma 3 · 1B (fastest)"
-        case .gemma3_4B: return "Gemma 3 · 4B (default)"
-        case .gemma3_12B: return "Gemma 3 · 12B (high-RAM)"
+        case .qwen3_4B:    return "Qwen3 · 4B (default)"
+        case .llama3_2_3B: return "Llama 3.2 · 3B"
+        case .gemma3_4B:   return "Gemma 3 · 4B"
+        case .gemma3_1B:   return "Gemma 3 · 1B (fastest)"
         }
     }
 
     /// Rough minimum device RAM advisory, surfaced in Settings.
     public var approxRAMNote: String {
         switch self {
-        case .gemma3_1B: return "~1.5 GB"
-        case .gemma3_4B: return "~3.5 GB"
-        case .gemma3_12B: return "~8 GB (iPad Pro / iPhone Pro only)"
+        case .qwen3_4B:    return "~3 GB"
+        case .llama3_2_3B: return "~2.5 GB"
+        case .gemma3_4B:   return "~3.5 GB"
+        case .gemma3_1B:   return "~1.5 GB"
         }
     }
 
-    public static let `default`: GemmaModel = .gemma3_4B
+    /// Extra stop strings beyond the tokenizer's own end-of-sequence token. Chat models mark the
+    /// end of a turn with a special token (Gemma's `<end_of_turn>`, Qwen/ChatML's `<|im_end|>`,
+    /// Llama's `<|eot_id|>`); if the streaming loop doesn't treat that marker as a stop, generation
+    /// runs away repeating it. The transform loop halts at the first of these it sees.
+    public var stopSequences: [String] {
+        switch self {
+        case .qwen3_4B:
+            return ["<|im_end|>", "<|endoftext|>"]
+        case .llama3_2_3B:
+            return ["<|eot_id|>", "<|end_of_text|>"]
+        case .gemma3_4B, .gemma3_1B:
+            return ["<end_of_turn>", "<eos>"]
+        }
+    }
+
+    public static let `default`: LanguageModelChoice = .qwen3_4B
 }
 
 public enum TextTransformError: Error, LocalizedError {
