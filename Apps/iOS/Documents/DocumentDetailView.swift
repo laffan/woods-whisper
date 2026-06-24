@@ -27,8 +27,7 @@ struct DocumentDetailView: View {
     @State private var renameText = ""
 
     // Playback
-    @State private var player: AVAudioPlayer?
-    @State private var playingID: UUID?
+    @StateObject private var playback = AudioPlaybackController()
 
     // Selection mode
     @State private var selectionMode = false
@@ -48,7 +47,8 @@ struct DocumentDetailView: View {
         .navigationTitle(selectionMode ? "\(selected.count) selected" : (document?.title ?? "Document"))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbarContent(for: document) }
-        .onDisappear { stopPlayback() }
+        .onAppear { playback.onError = { message in model.setupError = message } }
+        .onDisappear { playback.stop() }
     }
 
     // MARK: Content
@@ -62,10 +62,14 @@ struct DocumentDetailView: View {
                         recording: recording,
                         selectionMode: selectionMode,
                         isSelected: selected.contains(recording.id),
-                        isPlaying: playingID == recording.id,
+                        isActive: playback.playingID == recording.id,
+                        isPaused: playback.isPaused,
+                        playbackProgress: playback.progress,
+                        playbackElapsed: playback.currentTime,
+                        playbackDuration: playback.duration,
                         onTap: { if selectionMode { toggle(recording.id) } },
                         onLongPress: { enterSelection(with: recording.id) },
-                        onPlay: { togglePlayback(recording) },
+                        onPlay: { playback.toggle(recording, url: model.documents.audioURL(for: recording)) },
                         onRetranscribe: { Task { await model.transcribe(recordingID: recording.id, inDocument: documentID) } },
                         onCopy: { copyTranscript(recording) },
                         onRename: { startRename(recording) },
@@ -227,7 +231,7 @@ struct DocumentDetailView: View {
 
     private func enterSelection(with id: UUID) {
         guard !selectionMode else { return }
-        stopPlayback()
+        playback.stop()
         selectionMode = true
         selected = [id]
     }
@@ -301,25 +305,6 @@ struct DocumentDetailView: View {
         renameTarget = recording
     }
 
-    private func togglePlayback(_ recording: Recording) {
-        if playingID == recording.id { stopPlayback(); return }
-        stopPlayback()
-        do {
-            let p = try AVAudioPlayer(contentsOf: model.documents.audioURL(for: recording))
-            p.play()
-            player = p
-            playingID = recording.id
-        } catch {
-            model.setupError = "Couldn't play audio: \(error.localizedDescription)"
-        }
-    }
-
-    private func stopPlayback() {
-        player?.stop()
-        player = nil
-        playingID = nil
-    }
-
     private func timeString(_ t: TimeInterval) -> String {
         String(format: "%02d:%02d", Int(t) / 60, Int(t) % 60)
     }
@@ -331,7 +316,12 @@ private struct RecordingCard: View {
     let recording: Recording
     let selectionMode: Bool
     let isSelected: Bool
-    let isPlaying: Bool
+    /// This recording is the one currently loaded in the player (playing or paused).
+    let isActive: Bool
+    let isPaused: Bool
+    let playbackProgress: Double
+    let playbackElapsed: TimeInterval
+    let playbackDuration: TimeInterval
     let onTap: () -> Void
     let onLongPress: () -> Void
     let onPlay: () -> Void
@@ -356,6 +346,7 @@ private struct RecordingCard: View {
                 if !selectionMode {
                     Divider()
                     actionRow
+                    if isActive { playbackBar }
                 }
             }
         }
@@ -368,10 +359,16 @@ private struct RecordingCard: View {
         .onLongPressGesture { onLongPress() }
     }
 
+    /// Play/pause toggle: shows pause while this recording is actively playing, play otherwise
+    /// (including when it's the active-but-paused recording, so tapping resumes).
+    private var playButtonIcon: String {
+        (isActive && !isPaused) ? "pause.fill" : "play.fill"
+    }
+
     private var actionRow: some View {
         HStack(spacing: 18) {
             Button(action: onPlay) {
-                Image(systemName: isPlaying ? "stop.fill" : "play.fill")
+                Image(systemName: playButtonIcon)
             }
             if recording.status == .failed {
                 Button(action: onRetranscribe) { Image(systemName: "arrow.clockwise") }
@@ -398,6 +395,27 @@ private struct RecordingCard: View {
         .font(.title3)
         .buttonStyle(.plain)
         .foregroundStyle(.tint)
+    }
+
+    private var playbackBar: some View {
+        VStack(spacing: 3) {
+            ProgressView(value: min(max(playbackProgress, 0), 1))
+                .progressViewStyle(.linear)
+            HStack {
+                Text(Self.clock(playbackElapsed))
+                Spacer()
+                Text(Self.clock(playbackDuration))
+            }
+            .font(.caption2.monospacedDigit())
+            .foregroundStyle(.secondary)
+        }
+        .padding(.top, 2)
+    }
+
+    private static func clock(_ t: TimeInterval) -> String {
+        guard t.isFinite, t >= 0 else { return "0:00" }
+        let total = Int(t.rounded())
+        return String(format: "%d:%02d", total / 60, total % 60)
     }
 
     @ViewBuilder
@@ -428,5 +446,116 @@ private struct RecordingCard: View {
         // caption stays on one line. Renamed recordings show their custom name instead.
         let name = recording.name.replacingOccurrences(of: "\n", with: " · ")
         return "\(name) · \(recording.origin.rawValue)"
+    }
+}
+
+// MARK: - Playback
+
+/// Plays a single recording at a time with real transport state: progress, elapsed/duration, and
+/// pause/resume. Crucially it puts the audio session into `.playback` first — without that the
+/// session can be left in a record-oriented or muted-ambient mode, so `AVAudioPlayer.play()`
+/// returns but routes to the receiver or stays silent (the "nothing happens" symptom). Lives in
+/// this file so the app target picks it up without an xcodegen regen.
+@MainActor
+final class AudioPlaybackController: NSObject, ObservableObject {
+    @Published private(set) var playingID: UUID?
+    @Published private(set) var isPaused = false
+    @Published private(set) var progress: Double = 0          // 0...1
+    @Published private(set) var currentTime: TimeInterval = 0
+    @Published private(set) var duration: TimeInterval = 0
+
+    /// Surfaces a user-facing error message (e.g. a missing/unreadable audio file).
+    var onError: ((String) -> Void)?
+
+    private var player: AVAudioPlayer?
+    private var timer: Timer?
+
+    /// Tapping the active recording pauses/resumes it; tapping another switches to it.
+    func toggle(_ recording: Recording, url: URL) {
+        if playingID == recording.id {
+            isPaused ? resume() : pause()
+        } else {
+            start(id: recording.id, url: url)
+        }
+    }
+
+    private func start(id: UUID, url: URL) {
+        stop()
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            onError?("Couldn't play audio: the recording file is missing.")
+            return
+        }
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playback, mode: .default)
+            try session.setActive(true)
+            let p = try AVAudioPlayer(contentsOf: url)
+            p.delegate = self
+            p.prepareToPlay()
+            guard p.play() else {
+                onError?("Couldn't start audio playback.")
+                return
+            }
+            player = p
+            playingID = id
+            isPaused = false
+            duration = p.duration
+            currentTime = 0
+            progress = 0
+            startTimer()
+        } catch {
+            onError?("Couldn't play audio: \(error.localizedDescription)")
+        }
+    }
+
+    func pause() {
+        player?.pause()
+        isPaused = true
+        stopTimer()
+    }
+
+    func resume() {
+        guard let player else { return }
+        try? AVAudioSession.sharedInstance().setActive(true)
+        player.play()
+        isPaused = false
+        startTimer()
+    }
+
+    func stop() {
+        stopTimer()
+        player?.stop()
+        player = nil
+        playingID = nil
+        isPaused = false
+        progress = 0
+        currentTime = 0
+        duration = 0
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    }
+
+    private func startTimer() {
+        stopTimer()
+        timer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.tick() }
+        }
+    }
+
+    private func tick() {
+        guard let player else { return }
+        currentTime = player.currentTime
+        duration = player.duration
+        progress = player.duration > 0 ? player.currentTime / player.duration : 0
+    }
+
+    private func stopTimer() {
+        timer?.invalidate()
+        timer = nil
+    }
+}
+
+extension AudioPlaybackController: AVAudioPlayerDelegate {
+    nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        Task { @MainActor in self.stop() }
     }
 }

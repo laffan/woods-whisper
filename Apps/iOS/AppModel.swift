@@ -237,13 +237,15 @@ final class AppModel: ObservableObject {
         await prepareLanguageModel()
     }
 
-    /// Download/prepare the Parakeet speech model. Safe to call repeatedly; no-op if ready.
+    /// Download/prepare the speech model. Safe to call repeatedly; no-op if ready. When the model
+    /// is already downloaded this loads it from cache rather than re-downloading.
     func prepareSpeechModel() async {
         guard !isPreparingSpeech, !transcriptionReady else { return }
+        let cached = AppSettings.shared.isModelDownloaded(AppSettings.shared.speechModel.rawValue)
         isPreparingSpeech = true
-        busyMessage = "Preparing speech model…"
+        busyMessage = cached ? "Loading speech model…" : "Preparing speech model…"
         speechProgress = DownloadProgress(fractionCompleted: 0)
-        wwLog("Speech model (\(AppSettings.shared.speechModel.displayName)): preparing — downloads on first run", .model)
+        wwLog("Speech model (\(AppSettings.shared.speechModel.displayName)): \(cached ? "loading from cache" : "preparing — downloads on first run")", .model)
         let start = Date()
         do {
             try await transcription.prepare { [weak self] p in
@@ -251,6 +253,7 @@ final class AppModel: ObservableObject {
             }
             transcriptionReady = await transcription.isReady
             speechProgress = nil
+            if transcriptionReady { AppSettings.shared.markModelDownloaded(AppSettings.shared.speechModel.rawValue) }
             wwLog(String(format: "Speech model ready in %.1fs", Date().timeIntervalSince(start)), .model)
             transcribePending()   // catch up anything captured during download
         } catch {
@@ -299,6 +302,11 @@ final class AppModel: ObservableObject {
     /// Called once at startup.
     func loadDownloadedModelsAtStartup() async {
         await refreshReadiness()
+        // Speech first, so transcription (and Retranscribe) work immediately; both are loads from
+        // cache when previously downloaded.
+        if !transcriptionReady, AppSettings.shared.isModelDownloaded(AppSettings.shared.speechModel.rawValue) {
+            await prepareSpeechModel()
+        }
         if !modelReady, AppSettings.shared.isModelDownloaded(AppSettings.shared.model.rawValue) {
             await prepareLanguageModel()
         }

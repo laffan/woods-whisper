@@ -182,6 +182,18 @@ public final class DocumentStore: ObservableObject {
         persistPresets()
     }
 
+    /// Insert a new preset or replace the existing one with the same id. The editor uses this so
+    /// saving never depends on a separate "is new" flag being correct — a brand-new preset that
+    /// (for any reason) reached `update`'s "not found" path would previously be silently dropped.
+    public func save(preset: PromptPreset) {
+        if let idx = presets.firstIndex(where: { $0.id == preset.id }) {
+            presets[idx] = preset
+        } else {
+            presets.append(preset)
+        }
+        persistPresets()
+    }
+
     public func delete(preset: PromptPreset) {
         presets.removeAll { $0.id == preset.id }
         persistPresets()

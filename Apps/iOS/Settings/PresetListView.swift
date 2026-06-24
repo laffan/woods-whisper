@@ -88,8 +88,7 @@ struct PresetEditorView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
-                        if isNew { model.documents.add(preset: preset) }
-                        else { model.documents.update(preset: preset) }
+                        model.documents.save(preset: preset)   // upsert: works for new and edited
                         dismiss()
                     }
                     .disabled(preset.name.isEmpty || preset.template.isEmpty)
