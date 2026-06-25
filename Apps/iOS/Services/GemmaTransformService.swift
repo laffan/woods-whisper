@@ -364,8 +364,12 @@ final class URLSessionHubDownloader: Downloader, @unchecked Sendable {
             try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(),
                                                     withIntermediateDirectories: true)
 
-            // Resume: skip files already present at the expected size.
-            if file.size > 0, Self.fileSize(destination) == file.size {
+            // Resume: skip large files already present at the expected size. Always re-fetch the
+            // small `*config.json` files so the quantization config can't end up stale relative to
+            // freshly-downloaded weights — that mismatch surfaces as a quantization shape error at
+            // load time ("Mismatched parameter … o_proj.biases …").
+            let alwaysRefresh = destination.lastPathComponent.hasSuffix("config.json")
+            if !alwaysRefresh, file.size > 0, Self.fileSize(destination) == file.size {
                 completed += file.size
                 progress.completedUnitCount = completed
                 progressHandler(progress)
