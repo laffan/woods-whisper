@@ -1,7 +1,12 @@
 import Foundation
 
-/// A topic container that holds one or more `Recording`s and any model-produced text
-/// transformations. iOS/iPadOS only (the Watch has a flat recordings list).
+/// A coherent text document, built from an ordered list of editable `Paragraph`s, plus the raw
+/// `Recording`s it was assembled from (kept in a separate "Recordings" section, not woven into the
+/// body). iOS/iPadOS only (the Watch has a flat recordings list).
+///
+/// The body is the document the user reads and edits; recordings are the source material.
+/// Re-transcribing a recording appends its transcript as a paragraph at the bottom of the body;
+/// transforming rewrites paragraphs in place.
 public struct Document: Identifiable, Codable, Hashable, Sendable {
     public let id: UUID
 
@@ -10,68 +15,76 @@ public struct Document: Identifiable, Codable, Hashable, Sendable {
     public let createdAt: Date
     public var updatedAt: Date
 
-    /// The recordings that make up this document, in capture order.
-    public var recordings: [Recording]
+    /// The document body: ordered, editable, reorderable text blocks.
+    public var paragraphs: [Paragraph]
 
-    /// Model-produced transformations of the combined transcript, newest last.
-    public var transformations: [Transformation]
+    /// The recordings this document was assembled from, kept separate from the body and shown in
+    /// their own "Recordings" section.
+    public var recordings: [Recording]
 
     public init(
         id: UUID = UUID(),
         title: String,
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
-        recordings: [Recording] = [],
-        transformations: [Transformation] = []
+        paragraphs: [Paragraph] = [],
+        recordings: [Recording] = []
     ) {
         self.id = id
         self.title = title
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+        self.paragraphs = paragraphs
         self.recordings = recordings
-        self.transformations = transformations
     }
 
-    /// All recording transcripts joined, in order — the input for transformations.
-    public var combinedTranscript: String {
-        recordings
-            .compactMap { $0.transcript?.trimmingCharacters(in: .whitespacesAndNewlines) }
+    /// The whole body as plain text — the input for a whole-document transform.
+    public var combinedText: String {
+        paragraphs
+            .map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .joined(separator: "\n\n")
     }
 
-    public var hasTranscribableContent: Bool {
-        recordings.contains { ($0.transcript?.isEmpty == false) }
+    public var hasBodyText: Bool {
+        paragraphs.contains { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     }
 
-    /// A single run of a prompt preset against the combined transcript.
-    public struct Transformation: Identifiable, Codable, Hashable, Sendable {
+    /// One editable block of the document body.
+    public struct Paragraph: Identifiable, Codable, Hashable, Sendable {
         public let id: UUID
-        /// Name of the preset that produced this (snapshot, so renaming a preset later
-        /// doesn't rewrite history).
-        public var presetName: String
-        public var presetID: UUID?
-        public var output: String
-        /// The model's reasoning (`<think>` block), if it emitted one. Shown collapsibly in the UI;
-        /// deliberately separate from `output` so it's never copied or fed into further work.
-        /// Optional with a default so older saved documents (no key) decode fine.
-        public var reasoning: String?
-        public let createdAt: Date
+        public var text: String
 
-        public init(
-            id: UUID = UUID(),
-            presetName: String,
-            presetID: UUID? = nil,
-            output: String,
-            reasoning: String? = nil,
-            createdAt: Date = Date()
-        ) {
+        public init(id: UUID = UUID(), text: String) {
             self.id = id
-            self.presetName = presetName
-            self.presetID = presetID
-            self.output = output
-            self.reasoning = reasoning
-            self.createdAt = createdAt
+            self.text = text
         }
+    }
+
+    /// Split model output (or any transcript) into paragraphs on blank lines, trimming and dropping
+    /// empties, so paragraph-level operations keep working after a transform.
+    public static func paragraphs(from text: String) -> [Paragraph] {
+        let blocks = text
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .components(separatedBy: "\n\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        return blocks.isEmpty ? [] : blocks.map { Paragraph(text: $0) }
+    }
+
+    // Custom decoding so documents saved by older builds (which stored `transformations` and no
+    // `paragraphs`) still load: missing keys default to empty rather than failing the decode.
+    enum CodingKeys: String, CodingKey {
+        case id, title, createdAt, updatedAt, paragraphs, recordings
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        title = try c.decode(String.self, forKey: .title)
+        createdAt = try c.decode(Date.self, forKey: .createdAt)
+        updatedAt = try c.decode(Date.self, forKey: .updatedAt)
+        paragraphs = try c.decodeIfPresent([Paragraph].self, forKey: .paragraphs) ?? []
+        recordings = try c.decodeIfPresent([Recording].self, forKey: .recordings) ?? []
     }
 }

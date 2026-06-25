@@ -84,6 +84,19 @@ public enum LanguageModelChoice: String, CaseIterable, Codable, Sendable, Identi
         }
     }
 
+    /// Approximate on-disk download size (4-bit weights), shown inline in the model picker.
+    public var approxDownloadSize: String {
+        switch self {
+        case .gemma3_4B:   return "~2.4 GB"
+        case .qwen3_4B:    return "~2.3 GB"
+        case .llama3_2_3B: return "~1.8 GB"
+        case .gemma3_1B:   return "~0.7 GB"
+        }
+    }
+
+    /// Picker label combining the model name and its download size, e.g. "Gemma 3 · 4B — ~2.4 GB".
+    public var pickerLabel: String { "\(displayName) — \(approxDownloadSize)" }
+
     /// Extra stop strings beyond the tokenizer's own end-of-sequence token. Chat models mark the
     /// end of a turn with a special token (Gemma's `<end_of_turn>`, Qwen/ChatML's `<|im_end|>`,
     /// Llama's `<|eot_id|>`); if the streaming loop doesn't treat that marker as a stop, generation

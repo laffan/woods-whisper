@@ -4,13 +4,18 @@ import WoodsWhisperKit
 struct WatchRootView: View {
     @EnvironmentObject private var model: WatchModel
     @StateObject private var recorder = AudioRecorder()
+    @State private var tab: Tab = .record
+
+    /// Screen order top-to-bottom: Pairing, Record, List. Record is the default, so you swipe up
+    /// to the list and down to pairing.
+    private enum Tab { case pairing, record, list }
 
     var body: some View {
         NavigationStack {
-            TabView {
-                recordTab
-                recordingsTab
-                settingsTab
+            TabView(selection: $tab) {
+                settingsTab.tag(Tab.pairing)
+                recordTab.tag(Tab.record)
+                recordingsTab.tag(Tab.list)
             }
             .tabViewStyle(.verticalPage)
             .navigationTitle("Woods Whisper")
@@ -20,8 +25,20 @@ struct WatchRootView: View {
     private var recordTab: some View {
         VStack(spacing: 10) {
             if recorder.isRecording {
-                Text(timeString(recorder.elapsed)).font(.title2.monospacedDigit())
-                LevelMeter(level: recorder.currentLevel)
+                Text(timeString(recorder.elapsed))
+                    .font(.title3.monospacedDigit())
+                    .foregroundStyle(recorder.isPaused ? .secondary : .primary)
+                HStack(spacing: 8) {
+                    LevelMeter(level: recorder.currentLevel)
+                    Button {
+                        recorder.isPaused ? recorder.resume() : recorder.pause()
+                    } label: {
+                        Image(systemName: recorder.isPaused ? "play.circle.fill" : "pause.circle.fill")
+                            .font(.title3)
+                            .foregroundStyle(recorder.isPaused ? .accentColor : .secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
             } else {
                 Text("Tap to record").font(.caption).foregroundStyle(.secondary)
             }

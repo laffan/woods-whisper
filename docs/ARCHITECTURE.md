@@ -44,8 +44,10 @@ storage, and connectivity code without the model dependencies.
 
 - **`Recording`** — metadata for one audio clip (audio bytes live on disk via `RecordingStore`).
   Carries `origin` (watch/phone/pad). `Codable`, so it travels between devices as-is.
-- **`Document`** — a transcript plus an ordered list of **`Transformation`**s (one per preset
-  run). iOS/iPadOS only.
+- **`Document`** — a coherent body of ordered, editable **`Paragraph`**s, plus the source
+  **`Recording`**s it was built from (kept in a separate "Recordings" section). iOS/iPadOS only.
+  Re-transcribing a recording appends its transcript as a paragraph; transforming rewrites the
+  paragraphs in place. The **Inbox** is a `Document` rendered as a flat recordings list.
 - **`PromptPreset`** — a named, reusable instruction (`systemPrompt` + `template` with a
   `{{transcript}}` token) plus generation params. Five built-ins ship; users add their own.
 - **`DeviceLink`** — describes the Watch↔host pairing; for the direct-to-iPad path it stores the
@@ -59,12 +61,14 @@ storage, and connectivity code without the model dependencies.
 (paired iPhone via WCSession, or direct to iPad via local network) and ships
 `RecordingTransfer` + audio bytes. The host's receiver calls `RecordingStore.ingest`.
 
-**Transcribe (iOS):** `AppModel.transcribeToDocument` → `TranscriptionService.transcribe`
+**Transcribe (iOS):** `AppModel.transcribe` → `TranscriptionService.transcribe`
 (`SpeechTranscriptionCoordinator` routes to Parakeet — decoding to 16 kHz `[Float]` — or to
-WhisperKit by file path) → new `Document`.
+WhisperKit by file path) → sets the recording's `transcript`. "Re-transcribe" then appends that
+text to the document body as a paragraph.
 
-**Transform (iOS):** `AppModel.runTransformation` → `TextTransformService.transform` streams
-Gemma output token-by-token into a new `Transformation` appended to the document.
+**Transform (iOS):** `AppModel.transformDocument` (whole body) / `transformParagraph` (one
+paragraph) → `TextTransformService.transform` → the result **replaces** the paragraphs in place
+rather than appending a new block.
 
 ## Persistence
 

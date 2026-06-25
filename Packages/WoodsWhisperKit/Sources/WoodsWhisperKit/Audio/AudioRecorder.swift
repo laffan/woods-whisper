@@ -8,12 +8,17 @@ import AVFoundation
 @MainActor
 public final class AudioRecorder: NSObject, ObservableObject {
     @Published public private(set) var isRecording = false
+    /// True while recording is paused (still an active session, just not capturing).
+    @Published public private(set) var isPaused = false
     @Published public private(set) var currentLevel: Float = 0      // 0...1, for a live meter
     @Published public private(set) var elapsed: TimeInterval = 0
 
     private var recorder: AVAudioRecorder?
     private var levelTimer: Timer?
     private var startDate: Date?
+    /// Accumulated recorded time across pause/resume cycles. `elapsed` is this plus the time
+    /// since the most recent resume, so the timer doesn't keep counting while paused.
+    private var accumulatedElapsed: TimeInterval = 0
 
     public var outputURL: URL?
 
@@ -52,9 +57,32 @@ public final class AudioRecorder: NSObject, ObservableObject {
         self.recorder = recorder
         self.outputURL = url
         self.isRecording = true
+        self.isPaused = false
+        self.accumulatedElapsed = 0
+        self.elapsed = 0
         self.startDate = Date()
         startLevelTimer()
         return url
+    }
+
+    /// Pause an in-progress recording. The file stays open; `resume()` continues into it.
+    public func pause() {
+        guard let recorder, isRecording, !isPaused else { return }
+        recorder.pause()
+        if let start = startDate { accumulatedElapsed += Date().timeIntervalSince(start) }
+        startDate = nil
+        isPaused = true
+        currentLevel = 0
+        stopLevelTimer()
+    }
+
+    /// Resume a paused recording, appending to the same file.
+    public func resume() {
+        guard let recorder, isRecording, isPaused else { return }
+        guard recorder.record() else { return }
+        startDate = Date()
+        isPaused = false
+        startLevelTimer()
     }
 
     /// Stop recording. Returns the finished file URL and its duration.
@@ -65,6 +93,7 @@ public final class AudioRecorder: NSObject, ObservableObject {
         recorder.stop()
         stopLevelTimer()
         isRecording = false
+        isPaused = false
         self.recorder = nil
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         return (url, duration)
@@ -77,7 +106,9 @@ public final class AudioRecorder: NSObject, ObservableObject {
                 recorder.updateMeters()
                 let power = recorder.averagePower(forChannel: 0)        // dBFS, ~ -160...0
                 self.currentLevel = Self.normalizedPower(power)
-                if let start = self.startDate { self.elapsed = Date().timeIntervalSince(start) }
+                if let start = self.startDate {
+                    self.elapsed = self.accumulatedElapsed + Date().timeIntervalSince(start)
+                }
             }
         }
     }

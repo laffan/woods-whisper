@@ -163,12 +163,47 @@ public final class DocumentStore: ObservableObject {
         touch(dstIdx)
     }
 
-    // MARK: Transformations
+    // MARK: Document body (paragraphs)
 
-    public func appendTransformation(_ transformation: Document.Transformation,
-                                     to documentID: UUID) {
+    /// Append a paragraph to the bottom of the body (e.g. from "Re-transcribe").
+    public func appendParagraph(_ text: String, to documentID: UUID) {
         guard let idx = index(of: documentID) else { return }
-        documents[idx].transformations.append(transformation)
+        documents[idx].paragraphs.append(Document.Paragraph(text: text))
+        touch(idx)
+    }
+
+    /// Insert a paragraph at `position` in the body (used by the inter-paragraph "+" button).
+    public func insertParagraph(_ text: String, at position: Int, in documentID: UUID) {
+        guard let idx = index(of: documentID) else { return }
+        let clamped = max(0, min(position, documents[idx].paragraphs.count))
+        documents[idx].paragraphs.insert(Document.Paragraph(text: text), at: clamped)
+        touch(idx)
+    }
+
+    public func updateParagraph(_ paragraphID: UUID, in documentID: UUID, to text: String) {
+        guard let docIdx = index(of: documentID),
+              let pIdx = documents[docIdx].paragraphs.firstIndex(where: { $0.id == paragraphID })
+        else { return }
+        documents[docIdx].paragraphs[pIdx].text = text
+        touch(docIdx)
+    }
+
+    public func deleteParagraph(_ paragraphID: UUID, in documentID: UUID) {
+        guard let docIdx = index(of: documentID) else { return }
+        documents[docIdx].paragraphs.removeAll { $0.id == paragraphID }
+        touch(docIdx)
+    }
+
+    public func moveParagraphs(in documentID: UUID, from offsets: IndexSet, to destination: Int) {
+        guard let docIdx = index(of: documentID) else { return }
+        documents[docIdx].paragraphs.move(fromOffsets: offsets, toOffset: destination)
+        touch(docIdx)
+    }
+
+    /// Replace the entire body with new paragraphs (used by a whole-document transform).
+    public func setParagraphs(_ paragraphs: [Document.Paragraph], in documentID: UUID) {
+        guard let idx = index(of: documentID) else { return }
+        documents[idx].paragraphs = paragraphs
         touch(idx)
     }
 

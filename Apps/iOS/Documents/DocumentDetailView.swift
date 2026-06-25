@@ -5,35 +5,42 @@ import WoodsWhisperKit
 import UIKit
 #endif
 
-/// A document: its constituent recordings (each with its own transcript) plus model
-/// transformations over the combined transcript.
+/// A document: a coherent body of editable paragraphs, with the source recordings kept in a
+/// separate "Recordings" section at the bottom.
 ///
-/// • "Add Recording" (top) records straight into this document — no Inbox detour.
-/// • Long-press a recording to enter selection mode for batch delete / copy / move.
+/// • The body reads top-to-bottom. Between paragraphs, a "+" inserts a fresh recording's transcript
+///   at that spot. Swipe a paragraph for Delete / Replace / Edit / Transform; long-press to enter
+///   reorder mode and drag to rearrange.
+/// • Recordings are source material: play them, or "Re-transcribe" to append their text to the body.
+///   Long-press a recording to enter selection mode for batch actions.
+/// • "Transform" rewrites the whole body in place.
 struct DocumentDetailView: View {
     @EnvironmentObject private var model: AppModel
     let documentID: UUID
 
-    @StateObject private var recorder = AudioRecorder()
+    // Body reorder (long-press a paragraph → drag to rearrange)
+    @State private var editMode: EditMode = .inactive
 
-    // Transform
-    @State private var showingPresetPicker = false
-    @State private var isRunning = false
-    @State private var runningPresetName = ""
-    @State private var streamingAnswer = ""
-    @State private var streamingReasoning = ""
-
-    // Single-recording rename
-    @State private var renameTarget: Recording?
-    @State private var renameText = ""
-
-    // Playback
-    @StateObject private var playback = AudioPlaybackController()
-
-    // Selection mode
+    // Recording-selection mode (long-press a recording)
     @State private var selectionMode = false
     @State private var selected: Set<UUID> = []
     @State private var showingBatchMove = false
+
+    // Transform
+    @State private var showingDocTransform = false
+    @State private var paragraphTransformTarget: UUID?
+    @State private var isTransformingDoc = false
+    @State private var transformingParagraphID: UUID?
+
+    // Paragraph editing
+    @State private var editingParagraph: Document.Paragraph?
+    @State private var editingText = ""
+
+    // Recording flows (insert / replace / add-to-recordings) routed through one sheet
+    @State private var recorderTask: RecorderTask?
+
+    // Playback
+    @StateObject private var playback = AudioPlaybackController()
 
     private var document: Document? { model.documents.document(with: documentID) }
 
@@ -50,67 +57,52 @@ struct DocumentDetailView: View {
         .toolbar { toolbarContent(for: document) }
         .onAppear { playback.onError = { message in model.setupError = message } }
         .onDisappear { playback.stop() }
+        .sheet(item: $recorderTask) { task in
+            RecordingSheet(title: task.sheetTitle,
+                           makeURL: { model.documents.newAudioURL().url }) { url, duration in
+                complete(task, url: url, duration: duration)
+            }
+        }
+        .sheet(item: $editingParagraph) { para in
+            ParagraphEditor(text: $editingText) {
+                model.documents.updateParagraph(para.id, in: documentID, to: editingText)
+            }
+        }
     }
 
     // MARK: Content
 
     @ViewBuilder
     private func content(for document: Document) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                ForEach(document.recordings) { recording in
-                    RecordingCard(
-                        recording: recording,
-                        selectionMode: selectionMode,
-                        isSelected: selected.contains(recording.id),
-                        isActive: playback.playingID == recording.id,
-                        isPaused: playback.isPaused,
-                        playbackProgress: playback.progress,
-                        playbackElapsed: playback.currentTime,
-                        playbackDuration: playback.duration,
-                        onTap: { if selectionMode { toggle(recording.id) } },
-                        onLongPress: { enterSelection(with: recording.id) },
-                        onPlay: { playback.toggle(recording, url: model.documents.audioURL(for: recording)) },
-                        onRetranscribe: { Task { await model.transcribe(recordingID: recording.id, inDocument: documentID) } },
-                        onCopy: { copyTranscript(recording) },
-                        onRename: { startRename(recording) },
-                        onDelete: { model.documents.deleteRecording(recording.id, fromDocument: documentID) },
-                        moveTargets: otherDocuments,
-                        onMove: { target in model.documents.moveRecording(recording.id, from: documentID, to: target.id) }
-                    )
-                }
-
-                if document.recordings.isEmpty {
-                    Text("No recordings yet. Tap “Add Recording” to start.")
-                        .font(.callout).foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .padding(.vertical, 24)
-                }
-
-                if !document.transformations.isEmpty || isRunning {
-                    transformationsSection(for: document)
-                }
-            }
-            .padding()
+        List {
+            bodySection(for: document)
+            recordingsSection(for: document)
         }
+        .environment(\.editMode, $editMode)
         .safeAreaInset(edge: .bottom) { bottomBar(for: document) }
-        .alert("Rename recording", isPresented: Binding(get: { renameTarget != nil },
-                                                        set: { if !$0 { renameTarget = nil } })) {
-            TextField("Name", text: $renameText)
-            Button("Save") {
-                if let t = renameTarget {
-                    model.documents.renameRecording(t.id, inDocument: documentID, to: renameText)
-                }
-                renameTarget = nil
+        .overlay(alignment: .top) {
+            if isTransformingDoc {
+                BusyBanner(message: "Transforming document…").padding(.top, 8)
             }
-            Button("Cancel", role: .cancel) { renameTarget = nil }
         }
-        .confirmationDialog("Transform with…", isPresented: $showingPresetPicker, titleVisibility: .visible) {
+        .confirmationDialog("Transform document with…", isPresented: $showingDocTransform,
+                            titleVisibility: .visible) {
             ForEach(model.documents.presets) { preset in
-                Button(preset.name) { run(preset, on: document) }
+                Button(preset.name) { runDocumentTransform(preset, on: document) }
             }
         }
-        .confirmationDialog("Move \(selected.count) to…", isPresented: $showingBatchMove, titleVisibility: .visible) {
+        .confirmationDialog("Transform paragraph with…",
+                            isPresented: Binding(get: { paragraphTransformTarget != nil },
+                                                 set: { if !$0 { paragraphTransformTarget = nil } }),
+                            titleVisibility: .visible) {
+            ForEach(model.documents.presets) { preset in
+                Button(preset.name) {
+                    if let pid = paragraphTransformTarget { runParagraphTransform(preset, paragraphID: pid) }
+                }
+            }
+        }
+        .confirmationDialog("Move \(selected.count) to…", isPresented: $showingBatchMove,
+                            titleVisibility: .visible) {
             ForEach(otherDocuments) { target in
                 Button(target.title) {
                     model.documents.moveRecordings(selected, from: documentID, to: target.id)
@@ -120,15 +112,98 @@ struct DocumentDetailView: View {
         }
     }
 
+    // MARK: Body section (paragraphs)
+
+    @ViewBuilder
+    private func bodySection(for document: Document) -> some View {
+        Section {
+            if document.paragraphs.isEmpty {
+                Text("No text yet. Tap “+” to record straight into the document, or “Re-transcribe” a recording below to add its text here.")
+                    .font(.callout).foregroundStyle(.secondary)
+                InsertHereButton { recorderTask = .insertBody(at: 0) }
+            } else {
+                if !editMode.isEditing {
+                    InsertHereButton { recorderTask = .insertBody(at: 0) }
+                }
+                ForEach(document.paragraphs) { para in
+                    let position = (document.paragraphs.firstIndex(of: para) ?? 0) + 1
+                    VStack(alignment: .leading, spacing: 10) {
+                        paragraphContent(para)
+                        if !editMode.isEditing {
+                            InsertHereButton { recorderTask = .insertBody(at: position) }
+                        }
+                    }
+                    .contentShape(Rectangle())
+                    .onLongPressGesture {
+                        guard !selectionMode else { return }
+                        withAnimation { editMode = .active }
+                    }
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        Button("Delete", role: .destructive) {
+                            model.documents.deleteParagraph(para.id, in: documentID)
+                        }
+                        Button("Replace") { recorderTask = .replace(paragraphID: para.id) }.tint(.orange)
+                        Button("Edit") { startEditing(para) }.tint(.blue)
+                        Button("Transform") { paragraphTransformTarget = para.id }.tint(.purple)
+                    }
+                }
+                .onMove { offsets, destination in
+                    model.documents.moveParagraphs(in: documentID, from: offsets, to: destination)
+                }
+            }
+        } header: {
+            Text(document.title)
+        }
+    }
+
+    @ViewBuilder
+    private func paragraphContent(_ para: Document.Paragraph) -> some View {
+        if transformingParagraphID == para.id {
+            HStack(spacing: 8) { ProgressView(); Text("Transforming…").foregroundStyle(.secondary) }
+        } else {
+            Text(para.text).frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    // MARK: Recordings section
+
+    @ViewBuilder
+    private func recordingsSection(for document: Document) -> some View {
+        if !document.recordings.isEmpty {
+            Section("Recordings") {
+                ForEach(document.recordings) { recording in
+                    RecordingRow(
+                        recording: recording,
+                        selectionMode: selectionMode,
+                        isSelected: selected.contains(recording.id),
+                        isActive: playback.playingID == recording.id,
+                        isPaused: playback.isPaused,
+                        onTap: { if selectionMode { toggle(recording.id) } },
+                        onLongPress: { enterSelection(with: recording.id) },
+                        onPlay: { playback.toggle(recording, url: model.documents.audioURL(for: recording)) },
+                        onRetranscribe: { Task { await model.retranscribeIntoBody(recordingID: recording.id, in: documentID) } },
+                        onCopy: { copyTranscript(recording) },
+                        onDelete: { model.documents.deleteRecording(recording.id, fromDocument: documentID) }
+                    )
+                    .moveDisabled(true)
+                }
+            }
+        }
+    }
+
     private var otherDocuments: [Document] {
-        model.documents.documents.filter { $0.id != documentID }
+        model.documents.documents.filter { $0.id != documentID && $0.title != DocumentStore.inboxTitle }
     }
 
     // MARK: Toolbar
 
     @ToolbarContentBuilder
     private func toolbarContent(for document: Document?) -> some ToolbarContent {
-        if selectionMode {
+        if editMode.isEditing {
+            ToolbarItem(placement: .primaryAction) {
+                Button("Done") { withAnimation { editMode = .inactive } }
+            }
+        } else if selectionMode {
             ToolbarItem(placement: .cancellationAction) {
                 Button("Done") { exitSelection() }
             }
@@ -139,13 +214,9 @@ struct DocumentDetailView: View {
             }
         } else {
             ToolbarItem(placement: .primaryAction) {
-                Button {
-                    Task { await toggleRecording(in: document) }
-                } label: {
-                    Label(recorder.isRecording ? "Stop" : "Add Recording",
-                          systemImage: recorder.isRecording ? "stop.circle.fill" : "mic.circle.fill")
+                Button { recorderTask = .addToRecordings } label: {
+                    Label("Add Recording", systemImage: "mic.badge.plus")
                 }
-                .tint(recorder.isRecording ? .red : .accentColor)
             }
         }
     }
@@ -161,28 +232,19 @@ struct DocumentDetailView: View {
                     exitSelection()
                 }
                 batchButton("Copy", "doc.on.doc") { copySelectedTranscripts(in: document) }
-                batchButton("Move", "folder") {
-                    if !otherDocuments.isEmpty { showingBatchMove = true }
-                }
+                batchButton("Move", "folder") { if !otherDocuments.isEmpty { showingBatchMove = true } }
             }
             .frame(maxWidth: .infinity)
             .padding()
             .background(.bar)
-        } else if recorder.isRecording {
-            HStack(spacing: 16) {
-                Text(timeString(recorder.elapsed)).monospacedDigit().font(.headline)
-                LevelMeter(level: recorder.currentLevel)
-            }
-            .padding()
-            .background(.bar)
-        } else {
+        } else if !editMode.isEditing {
             Button {
-                showingPresetPicker = true
+                showingDocTransform = true
             } label: {
                 Label("Transform", systemImage: "wand.and.stars").frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
-            .disabled(!model.modelReady || isRunning || document.combinedTranscript.isEmpty)
+            .disabled(!model.modelReady || isTransformingDoc || document.combinedText.isEmpty)
             .padding()
             .background(.bar)
         }
@@ -200,46 +262,10 @@ struct DocumentDetailView: View {
         .disabled(selected.isEmpty)
     }
 
-    // MARK: Transformations
-
-    @ViewBuilder
-    private func transformationsSection(for document: Document) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Transformations").font(.headline)
-            ForEach(document.transformations) { t in
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(t.presetName).font(.subheadline.weight(.semibold))
-                    if let reasoning = t.reasoning, !reasoning.isEmpty {
-                        ReasoningView(text: reasoning)
-                    }
-                    Text(t.output).textSelection(.enabled)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding()
-                .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
-            }
-            if isRunning {
-                VStack(alignment: .leading, spacing: 6) {
-                    Label("Running \(runningPresetName)…", systemImage: "wand.and.stars")
-                        .font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
-                    if !streamingReasoning.isEmpty {
-                        // Expanded live so the thinking is visible as it streams; collapses to a
-                        // tidy disclosure once the answer lands and it's saved.
-                        ReasoningView(text: streamingReasoning, initiallyExpanded: true)
-                    }
-                    Text(streamingAnswer.isEmpty ? "…" : streamingAnswer).foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding()
-                .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 10))
-            }
-        }
-    }
-
     // MARK: Selection helpers
 
     private func enterSelection(with id: UUID) {
-        guard !selectionMode else { return }
+        guard !selectionMode, !editMode.isEditing else { return }
         playback.stop()
         selectionMode = true
         selected = [id]
@@ -271,41 +297,44 @@ struct DocumentDetailView: View {
         wwLog("Copied \(selected.count) recording transcript(s) to clipboard", .general)
     }
 
-    // MARK: Actions
+    // MARK: Transform actions
 
-    private func run(_ preset: PromptPreset, on document: Document) {
-        runningPresetName = preset.name
-        streamingAnswer = ""
-        streamingReasoning = ""
-        isRunning = true
+    private func runDocumentTransform(_ preset: PromptPreset, on document: Document) {
+        isTransformingDoc = true
         Task {
-            await model.runTransformation(preset, on: document) { token in
-                Task { @MainActor in
-                    switch token {
-                    case .reasoning(let s): streamingReasoning += s
-                    case .answer(let s):    streamingAnswer += s
-                    }
-                }
-            }
-            isRunning = false
+            await model.transformDocument(preset, on: document)
+            isTransformingDoc = false
         }
     }
 
-    private func toggleRecording(in document: Document?) async {
-        guard let document else { return }
-        if recorder.isRecording {
-            guard let result = recorder.stop() else { return }
-            model.addDeviceRecording(audioURL: result.url,
-                                     duration: result.duration,
-                                     toDocument: document.id)
-        } else {
-            guard await recorder.requestPermission() else {
-                model.setupError = "Microphone permission is required to record."
-                return
-            }
-            let new = model.documents.newAudioURL()
-            try? recorder.start(to: new.url)
+    private func runParagraphTransform(_ preset: PromptPreset, paragraphID: UUID) {
+        transformingParagraphID = paragraphID
+        Task {
+            await model.transformParagraph(preset, paragraphID: paragraphID, in: documentID)
+            transformingParagraphID = nil
         }
+    }
+
+    // MARK: Recording-sheet completion
+
+    private func complete(_ task: RecorderTask, url: URL, duration: TimeInterval) {
+        switch task {
+        case .addToRecordings:
+            model.addDeviceRecording(audioURL: url, duration: duration, toDocument: documentID)
+        case .insertBody(let position):
+            model.addDeviceRecording(audioURL: url, duration: duration, toDocument: documentID,
+                                     insertingTranscriptAt: position)
+        case .replace(let paragraphID):
+            model.captureReplacingParagraph(audioURL: url, duration: duration,
+                                            paragraphID: paragraphID, in: documentID)
+        }
+    }
+
+    // MARK: Paragraph editing
+
+    private func startEditing(_ para: Document.Paragraph) {
+        editingText = para.text
+        editingParagraph = para
     }
 
     private func copyTranscript(_ recording: Recording) {
@@ -315,37 +344,83 @@ struct DocumentDetailView: View {
         wwLog("Copied transcript of “\(recording.name)”", .general)
     }
 
-    private func startRename(_ recording: Recording) {
-        renameText = recording.name
-        renameTarget = recording
-    }
+    /// What a presented `RecordingSheet` should do with the finished clip.
+    enum RecorderTask: Identifiable {
+        case addToRecordings
+        case insertBody(at: Int)
+        case replace(paragraphID: UUID)
 
-    private func timeString(_ t: TimeInterval) -> String {
-        String(format: "%02d:%02d", Int(t) / 60, Int(t) % 60)
+        var id: String {
+            switch self {
+            case .addToRecordings:        return "add"
+            case .insertBody(let i):      return "insert-\(i)"
+            case .replace(let pid):       return "replace-\(pid)"
+            }
+        }
+
+        var sheetTitle: String {
+            switch self {
+            case .addToRecordings: return "New Recording"
+            case .insertBody:      return "Insert Recording"
+            case .replace:         return "Replace Paragraph"
+            }
+        }
     }
 }
 
-// MARK: - Recording card
+// MARK: - Insert-here button
 
-private struct RecordingCard: View {
+private struct InsertHereButton: View {
+    let action: () -> Void
+    var body: some View {
+        Button(action: action) {
+            Label("Add recording here", systemImage: "plus.circle")
+                .font(.caption)
+                .foregroundStyle(.tint)
+        }
+        .buttonStyle(.plain)
+        .frame(maxWidth: .infinity, alignment: .center)
+        .padding(.vertical, 2)
+    }
+}
+
+// MARK: - Paragraph editor
+
+private struct ParagraphEditor: View {
+    @Binding var text: String
+    let onSave: () -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            TextEditor(text: $text)
+                .padding()
+                .navigationTitle("Edit Paragraph")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Save") { onSave(); dismiss() }
+                    }
+                }
+        }
+    }
+}
+
+// MARK: - Recording row
+
+private struct RecordingRow: View {
     let recording: Recording
     let selectionMode: Bool
     let isSelected: Bool
-    /// This recording is the one currently loaded in the player (playing or paused).
     let isActive: Bool
     let isPaused: Bool
-    let playbackProgress: Double
-    let playbackElapsed: TimeInterval
-    let playbackDuration: TimeInterval
     let onTap: () -> Void
     let onLongPress: () -> Void
     let onPlay: () -> Void
     let onRetranscribe: () -> Void
     let onCopy: () -> Void
-    let onRename: () -> Void
     let onDelete: () -> Void
-    let moveTargets: [Document]
-    let onMove: (Document) -> Void
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -354,53 +429,30 @@ private struct RecordingCard: View {
                     .font(.title2)
                     .foregroundStyle(isSelected ? Color.accentColor : .secondary)
             }
-
             VStack(alignment: .leading, spacing: 8) {
-                transcriptView          // transcript (or status) first…
-                metadata                 // …with small metadata below it
+                transcriptView
+                metadata
                 if !selectionMode {
-                    Divider()
                     actionRow
-                    if isActive { playbackBar }
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding()
-        .background(isSelected ? Color.accentColor.opacity(0.12) : Color(.secondarySystemBackground),
-                    in: RoundedRectangle(cornerRadius: 12))
-        .contentShape(RoundedRectangle(cornerRadius: 12))
+        .contentShape(Rectangle())
         .onTapGesture { onTap() }
         .onLongPressGesture { onLongPress() }
-    }
-
-    /// Play/pause toggle: shows pause while this recording is actively playing, play otherwise
-    /// (including when it's the active-but-paused recording, so tapping resumes).
-    private var playButtonIcon: String {
-        (isActive && !isPaused) ? "pause.fill" : "play.fill"
     }
 
     private var actionRow: some View {
         HStack(spacing: 18) {
             Button(action: onPlay) {
-                Image(systemName: playButtonIcon)
-            }
-            if recording.status == .failed {
-                Button(action: onRetranscribe) { Image(systemName: "arrow.clockwise") }
+                Image(systemName: (isActive && !isPaused) ? "pause.fill" : "play.fill")
             }
             Spacer()
             Menu {
-                Button("Retranscribe", systemImage: "arrow.clockwise", action: onRetranscribe)
+                Button("Re-transcribe to document", systemImage: "text.append", action: onRetranscribe)
                 if recording.transcript?.isEmpty == false {
                     Button("Copy Transcript", systemImage: "doc.on.doc", action: onCopy)
-                }
-                Button("Rename", systemImage: "pencil", action: onRename)
-                if !moveTargets.isEmpty {
-                    Menu("Move to…") {
-                        ForEach(moveTargets) { target in
-                            Button(target.title) { onMove(target) }
-                        }
-                    }
                 }
                 Button("Delete", systemImage: "trash", role: .destructive, action: onDelete)
             } label: {
@@ -412,86 +464,25 @@ private struct RecordingCard: View {
         .foregroundStyle(.tint)
     }
 
-    private var playbackBar: some View {
-        VStack(spacing: 3) {
-            ProgressView(value: min(max(playbackProgress, 0), 1))
-                .progressViewStyle(.linear)
-            HStack {
-                Text(Self.clock(playbackElapsed))
-                Spacer()
-                Text(Self.clock(playbackDuration))
-            }
-            .font(.caption2.monospacedDigit())
-            .foregroundStyle(.secondary)
-        }
-        .padding(.top, 2)
-    }
-
-    private static func clock(_ t: TimeInterval) -> String {
-        guard t.isFinite, t >= 0 else { return "0:00" }
-        let total = Int(t.rounded())
-        return String(format: "%d:%02d", total / 60, total % 60)
-    }
-
     @ViewBuilder
     private var transcriptView: some View {
         switch recording.status {
         case .done:
-            // No textSelection here: its long-press would fight the card's long-press-to-select.
-            // Use selection mode → Copy (or the ⋯ menu) to copy transcripts.
             Text(recording.transcript?.isEmpty == false ? recording.transcript! : "(no speech detected)")
         case .transcribing:
             HStack(spacing: 8) { ProgressView(); Text("Transcribing…").foregroundStyle(.secondary) }
         case .pending:
             Label("Waiting to transcribe", systemImage: "clock").foregroundStyle(.secondary)
         case .failed:
-            Label("Transcription failed — tap retry", systemImage: "exclamationmark.triangle")
+            Label("Transcription failed — Re-transcribe to retry", systemImage: "exclamationmark.triangle")
                 .foregroundStyle(.orange)
         }
     }
 
     private var metadata: some View {
-        Text(metadataString)
+        Text(recording.name.replacingOccurrences(of: "\n", with: " · ") + " · " + recording.origin.rawValue)
             .font(.caption2)
             .foregroundStyle(.secondary)
-    }
-
-    private var metadataString: String {
-        // The default name spans two lines (date/time + length - size); flatten it so this
-        // caption stays on one line. Renamed recordings show their custom name instead.
-        let name = recording.name.replacingOccurrences(of: "\n", with: " · ")
-        return "\(name) · \(recording.origin.rawValue)"
-    }
-}
-
-// MARK: - Reasoning
-
-/// Collapsible view of a model's `<think>` reasoning: visible but folded away by default so it
-/// doesn't crowd the answer, expandable to read. The reasoning itself is stored separately from
-/// the answer, so what's shown here is never copied or carried into further work.
-private struct ReasoningView: View {
-    let text: String
-    @State private var expanded: Bool
-
-    init(text: String, initiallyExpanded: Bool = false) {
-        self.text = text
-        _expanded = State(initialValue: initiallyExpanded)
-    }
-
-    var body: some View {
-        DisclosureGroup(isExpanded: $expanded) {
-            Text(text)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.top, 2)
-        } label: {
-            Label("Reasoning", systemImage: "brain")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-        }
-        .tint(.secondary)
     }
 }
 

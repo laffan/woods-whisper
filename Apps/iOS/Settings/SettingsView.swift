@@ -64,7 +64,7 @@ struct SettingsView: View {
         Section {
             Picker("Model", selection: $selectedModel) {
                 ForEach(LanguageModelChoice.allCases) { m in
-                    Text(m.displayName).tag(m)
+                    Text(m.pickerLabel).tag(m)
                 }
             }
             .onChange(of: selectedModel) { _, newValue in
@@ -75,8 +75,6 @@ struct SettingsView: View {
                     await model.refreshReadiness()
                 }
             }
-            Text(selectedModel.approxRAMNote)
-                .font(.caption).foregroundStyle(.secondary)
 
             ModelSetupRow(title: "Model weights", systemImage: "brain",
                           ready: model.modelReady, progress: model.llmProgress)
