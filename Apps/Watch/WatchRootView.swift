@@ -27,28 +27,37 @@ struct WatchRootView: View {
                 Text(timeString(recorder.elapsed))
                     .font(.title3.monospacedDigit())
                     .foregroundStyle(recorder.isPaused ? .secondary : .primary)
-                HStack(spacing: 8) {
-                    LevelMeter(level: recorder.currentLevel)
+                LevelMeter(level: recorder.currentLevel)
+                // Stop and pause/continue side by side, same size (matches the iPhone recorder).
+                HStack(spacing: 24) {
+                    Button {
+                        Task { await toggle() }
+                    } label: {
+                        Image(systemName: "stop.circle.fill")
+                            .font(.system(size: 56))
+                            .foregroundStyle(.red)
+                    }
+                    .buttonStyle(.plain)
                     Button {
                         recorder.isPaused ? recorder.resume() : recorder.pause()
                     } label: {
                         Image(systemName: recorder.isPaused ? "play.circle.fill" : "pause.circle.fill")
-                            .font(.title3)
+                            .font(.system(size: 56))
                             .foregroundStyle(recorder.isPaused ? Color.accentColor : Color.secondary)
                     }
                     .buttonStyle(.plain)
                 }
             } else {
                 Text("Tap to record").font(.caption).foregroundStyle(.secondary)
+                Button {
+                    Task { await toggle() }
+                } label: {
+                    Image(systemName: "record.circle")
+                        .font(.system(size: 56))
+                        .foregroundStyle(.accentColor)
+                }
+                .buttonStyle(.plain)
             }
-            Button {
-                Task { await toggle() }
-            } label: {
-                Image(systemName: recorder.isRecording ? "stop.circle.fill" : "record.circle")
-                    .font(.system(size: 56))
-                    .foregroundStyle(recorder.isRecording ? .red : .accentColor)
-            }
-            .buttonStyle(.plain)
             if !model.pendingSends.isEmpty {
                 VStack(spacing: 4) {
                     Text("Sending…").font(.caption2).foregroundStyle(.secondary)
