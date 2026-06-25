@@ -62,11 +62,19 @@ cd woods-whisper
 open WoodsWhisper.xcodeproj
 ```
 
-`Scripts/generate.sh` finds your Apple **Team ID** and applies it to **every** target (app, watch
-app, and the two extensions) so signing "just works" — including provisioning the new
-widget/complication targets. Pass it explicitly if auto-detection can't find it
-(`./Scripts/generate.sh A1B2C3D4E5`). Prefer plain XcodeGen? `DEVELOPMENT_TEAM=A1B2C3D4E5 xcodegen
-generate` does the same; bare `xcodegen generate` leaves signing to be set per-target in Xcode.
+`Scripts/generate.sh` finds your Apple **Team ID** and applies it — plus a **unique bundle-ID
+prefix** — to **every** target (app, watch app, and the two extensions), so signing "just works"
+and the new App IDs don't collide with the generic `com.woodswhisper.*` identifiers (already
+registered to someone else). By default it derives a unique prefix from your team; pass your own for
+a prettier one:
+
+```bash
+./Scripts/generate.sh A1B2C3D4E5 com.yourname   # explicit Team ID + bundle prefix
+```
+
+Equivalent via env: `DEVELOPMENT_TEAM=… BUNDLE_ID_PREFIX=com.yourname xcodegen generate`. Keep the
+**same** prefix across runs so you don't create a fresh batch of App IDs each time — free Apple IDs
+cap App IDs at ~10 per 7 days.
 
 Then in Xcode: select the **WoodsWhisper** scheme, set your signing team, and run on a device
 (the ML models need real hardware; the Simulator can't use the ANE).

@@ -24,9 +24,9 @@
     <!-- Modern single-target SwiftUI watch app -->
     <key>WKApplication</key>
     <true/>
-    <!-- Associates this watch app with its companion iPhone app -->
+    <!-- Associates this watch app with its companion iPhone app (kept in sync via project.yml) -->
     <key>WKCompanionAppBundleIdentifier</key>
-    <string>com.woodswhisper.app</string>
+    <string>$(WW_COMPANION_BUNDLE_ID)</string>
 
     <!-- Microphone capture on the Watch -->
     <key>NSMicrophoneUsageDescription</key>
