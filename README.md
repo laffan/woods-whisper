@@ -58,34 +58,23 @@ Xcode 15+:
 ```bash
 brew install xcodegen          # one-time
 cd woods-whisper
-./Scripts/generate.sh          # auto-detects your signing team, creates WoodsWhisper.xcodeproj
+xcodegen generate              # creates WoodsWhisper.xcodeproj
 open WoodsWhisper.xcodeproj
 ```
 
-`Scripts/generate.sh` finds your Apple **Team ID** and applies it — plus a **unique bundle-ID
-prefix** — to **every** target (app, watch app, and the two extensions), so signing "just works"
-and the new App IDs don't collide with the generic `com.woodswhisper.*` identifiers (already
-registered to someone else). By default it derives a unique prefix from your team; pass your own for
-a prettier one:
+Then in Xcode: select the **WoodsWhisper** scheme (or **WoodsWhisperWatch** to run on the Watch
+directly), set your signing team on each target, and run on a device (the ML models need real
+hardware; the Simulator can't use the ANE).
 
-```bash
-./Scripts/generate.sh A1B2C3D4E5 com.yourname   # explicit Team ID + bundle prefix
-```
-
-Equivalent via env: `DEVELOPMENT_TEAM=… BUNDLE_ID_PREFIX=com.yourname xcodegen generate`. Keep the
-**same** prefix across runs so you don't create a fresh batch of App IDs each time — free Apple IDs
-cap App IDs at ~10 per 7 days.
-
-Then in Xcode: select the **WoodsWhisper** scheme, set your signing team, and run on a device
-(the ML models need real hardware; the Simulator can't use the ANE).
-
-> **Widget/Control & complication targets.** The project includes two WidgetKit app extensions —
-> `WoodsWhisperWidgets` (iOS Lock Screen widget + iOS 18 Control for "New Recording") and
-> `WoodsWhisperWatchComplication` (a watch complication). After pulling, **re-run
-> `./Scripts/generate.sh`** so they're added and signed with your team automatically. A **free**
-> Apple ID works — complications/widgets need no paid membership. The iOS **Control** appears on
-> iOS 18+; the Lock Screen widget works on iOS 17. Both start a recording by opening the app via the
-> `woodswhisper://record` deep link / the shared `StartRecordingIntent`.
+> **"New Recording" everywhere.** A `StartRecordingIntent` App Intent (in `WoodsWhisperKit`) lets you
+> start a recording from **Siri, Spotlight, Shortcuts, the iOS Action Button, and a Lock Screen /
+> Control Center Shortcut** — no extra target or paid account needed.
+>
+> **Native complication / Control (optional).** Bespoke WidgetKit extensions for a watch complication
+> (`Apps/WatchComplication`) and an iOS Lock Screen widget + iOS 18 Control (`Apps/iOSWidgets`) are in
+> the repo but **not built by default** — provisioning their extra app-extension App IDs is painful on
+> a free Apple ID. To enable them, re-add the two `app-extension` targets to `project.yml` (see this
+> file's git history), embed them in the apps, and give them a signing team.
 
 > ⚠️ **The Swift package versions for FluidAudio, WhisperKit, and MLX move quickly.** Three
 > files — `ParakeetTranscriptionService.swift`, `WhisperTranscriptionService.swift`, and
