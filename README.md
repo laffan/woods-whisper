@@ -65,6 +65,14 @@ open WoodsWhisper.xcodeproj
 Then in Xcode: select the **WoodsWhisper** scheme, set your signing team, and run on a device
 (the ML models need real hardware; the Simulator can't use the ANE).
 
+> **Widget/Control & complication targets.** The project now includes two WidgetKit app
+> extensions — `WoodsWhisperWidgets` (iOS Lock Screen widget + iOS 18 Control for "New Recording")
+> and `WoodsWhisperWatchComplication` (a watch complication). After pulling, **re-run
+> `xcodegen generate`** so they're added, and set a signing team on the new extension targets too
+> (they sign with the same team as the apps). The iOS **Control** appears on iOS 18+; the Lock
+> Screen widget works on iOS 17. Both the watch complication and the iOS widget start a recording
+> by opening the app via the `woodswhisper://record` deep link / the shared `StartRecordingIntent`.
+
 > ⚠️ **The Swift package versions for FluidAudio, WhisperKit, and MLX move quickly.** Three
 > files — `ParakeetTranscriptionService.swift`, `WhisperTranscriptionService.swift`, and
 > `GemmaTransformService.swift` — call those SDKs and have their version-sensitive lines marked

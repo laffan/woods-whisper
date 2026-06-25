@@ -32,8 +32,8 @@ struct ContentView: View {
         } message: {
             Text(model.setupError ?? "")
         }
-        // "New Recording" requested from outside the app (Lock Screen / Control Center / Action
-        // Button / Siri / Shortcuts). Present the recorder straight to the Inbox, wherever we are.
+        // "New Recording" requested from outside the app (Control / Lock Screen / Action Button /
+        // Siri / Shortcuts). Present the recorder straight to the Inbox, wherever we are.
         .sheet(isPresented: $launcher.pending) {
             RecordingSheet(title: "New Recording",
                            makeURL: { model.documents.newAudioURL().url }) { url, duration in
@@ -41,35 +41,17 @@ struct ContentView: View {
                 model.addDeviceRecording(audioURL: url, duration: duration, toDocument: inbox.id)
             }
         }
+        .onOpenURL { url in
+            if url == woodsWhisperRecordURL { launcher.request() }
+        }
     }
 }
 
-// MARK: - "New Recording" App Intent
+// MARK: - "New Recording" App Shortcut
 
-/// Bridges an external "new recording" request (App Intent) to the running app. The intent flips
-/// `pending`; `ContentView` observes it and presents the recorder. A plain in-process singleton is
-/// enough because the intent runs with the app open (`openAppWhenRun`).
-@MainActor
-final class RecordingLauncher: ObservableObject {
-    static let shared = RecordingLauncher()
-    @Published var pending = false
-    func request() { pending = true }
-}
-
-/// Starts a new recording in Woods Whisper. Surfaced to Siri/Spotlight via `AppShortcutsProvider`,
-/// and usable as a Lock Screen / Control Center control, an Action Button action, or a Shortcut.
-struct StartRecordingIntent: AppIntent {
-    static var title: LocalizedStringResource = "New Recording"
-    static var description = IntentDescription("Start a new voice recording in Woods Whisper.")
-    static var openAppWhenRun = true
-
-    @MainActor
-    func perform() async throws -> some IntentResult {
-        RecordingLauncher.shared.request()
-        return .result()
-    }
-}
-
+/// Exposes the (shared) `StartRecordingIntent` to Siri/Spotlight. `AppShortcutsProvider` must live
+/// in the app target; the intent itself is defined in WoodsWhisperKit so the Control extension can
+/// share it.
 struct WoodsWhisperShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(

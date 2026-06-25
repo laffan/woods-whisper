@@ -30,6 +30,9 @@ struct WatchRootView: View {
         .task {
             if launcher.pending { await startFromIntent() }
         }
+        .onOpenURL { url in
+            if url == woodsWhisperRecordURL { launcher.request() }
+        }
     }
 
     /// Begin a recording in response to an external request (complication / Shortcut / Siri).
@@ -258,31 +261,11 @@ struct WatchRootView: View {
     }
 }
 
-// MARK: - "New Recording" App Intent (watch)
+// MARK: - "New Recording" App Shortcut (watch)
 
-/// Bridges an external "new recording" request (complication / Shortcut / Siri) to the running
-/// Watch app, which observes `pending` and starts recording.
-@MainActor
-final class RecordingLauncher: ObservableObject {
-    static let shared = RecordingLauncher()
-    @Published var pending = false
-    func request() { pending = true }
-}
-
-/// Starts a new recording on the Watch. Add it as a **complication** via the Shortcuts app, or run
-/// it from Siri / Shortcuts; tapping launches the app and begins capturing.
-struct StartRecordingIntent: AppIntent {
-    static var title: LocalizedStringResource = "New Recording"
-    static var description = IntentDescription("Start a new voice recording on your Apple Watch.")
-    static var openAppWhenRun = true
-
-    @MainActor
-    func perform() async throws -> some IntentResult {
-        RecordingLauncher.shared.request()
-        return .result()
-    }
-}
-
+/// Exposes the (shared) `StartRecordingIntent` to Siri. `AppShortcutsProvider` must live in the
+/// app target; the intent itself is defined in WoodsWhisperKit so the complication extension can
+/// share it.
 struct WoodsWhisperWatchShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(
