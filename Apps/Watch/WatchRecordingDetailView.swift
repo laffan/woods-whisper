@@ -16,7 +16,10 @@ struct WatchRecordingDetailView: View {
     }
 
     private var isSending: Bool { model.pendingSends.contains(recording.id) }
-    private var isFailed: Bool { model.sendOutcome[recording.id] == .failed }
+    private var isFailed: Bool {
+        let outcome = model.sendOutcome[recording.id]
+        return outcome == .failed || outcome == .cancelled
+    }
 
     @ViewBuilder
     private var sendStatus: some View {
@@ -36,6 +39,9 @@ struct WatchRecordingDetailView: View {
             case .failed:
                 Label("Send failed — tap Retry", systemImage: "exclamationmark.triangle.fill")
                     .font(.caption).foregroundStyle(.orange)
+            case .cancelled:
+                Label("Send cancelled — tap Retry", systemImage: "xmark.circle.fill")
+                    .font(.caption).foregroundStyle(.orange)
             case nil:
                 EmptyView()
             }
@@ -54,10 +60,15 @@ struct WatchRecordingDetailView: View {
                 Section { sendStatus }
             }
             Section {
-                Button(isFailed ? "Retry" : "Send Again", systemImage: "paperplane") {
-                    Task { await model.send(recording) }
+                if isSending {
+                    Button("Cancel Send", systemImage: "xmark", role: .destructive) {
+                        model.cancelSend(recording)
+                    }
+                } else {
+                    Button(isFailed ? "Retry" : "Send Again", systemImage: "paperplane") {
+                        model.startSend(recording)
+                    }
                 }
-                .disabled(isSending)
                 Button("Rename", systemImage: "pencil") {
                     newName = live.name; isRenaming = true
                 }

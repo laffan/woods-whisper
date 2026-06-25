@@ -50,13 +50,21 @@ struct WatchRootView: View {
             }
             .buttonStyle(.plain)
             if !model.pendingSends.isEmpty {
-                VStack(spacing: 3) {
+                VStack(spacing: 4) {
                     Text("Sending…").font(.caption2).foregroundStyle(.secondary)
                     if let fraction = model.sendProgress.values.max() {
                         ProgressView(value: fraction)
                     } else {
                         ProgressView()
                     }
+                    Button(role: .destructive) {
+                        model.cancelAllSends()
+                    } label: {
+                        Label("Cancel", systemImage: "xmark")
+                    }
+                    .font(.caption2)
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
                 }
                 .padding(.horizontal)
             } else if let status = model.statusMessage {
@@ -68,33 +76,24 @@ struct WatchRootView: View {
 
     private var recordingsTab: some View {
         List {
-            ForEach(model.recordings.recordings) { recording in
-                NavigationLink {
-                    WatchRecordingDetailView(recording: recording)
-                } label: {
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(alignment: .top) {
-                            Text(recording.name).font(.caption)
-                            Spacer()
-                            sendStatusIcon(for: recording.id)
-                        }
-                        if let fraction = model.sendProgress[recording.id] {
-                            ProgressView(value: fraction)   // full-width bar beneath the item
-                        }
-                    }
-                }
-                .swipeActions(edge: .leading) {
+            // Clips whose last send failed or was cancelled — surfaced at the top with a Resend
+            // button (switch targets in Pairing first if needed).
+            if !needsResend.isEmpty {
+                Section {
+                    ForEach(needsResend) { recordingRow($0) }
                     Button {
-                        Task { await model.send(recording) }
+                        model.resendFailed()
                     } label: {
-                        Label(model.sendOutcome[recording.id] == .failed ? "Retry" : "Send",
-                              systemImage: "paperplane")
+                        Label("Resend", systemImage: "arrow.clockwise").frame(maxWidth: .infinity)
                     }
                     .tint(.blue)
+                } header: {
+                    Text("Needs Resend")
                 }
-                .swipeActions {
-                    Button("Delete", role: .destructive) { model.recordings.delete(recording) }
-                }
+            }
+
+            Section {
+                ForEach(others) { recordingRow($0) }
             }
         }
         .overlay {
@@ -104,8 +103,55 @@ struct WatchRootView: View {
         }
     }
 
+    @ViewBuilder
+    private func recordingRow(_ recording: Recording) -> some View {
+        NavigationLink {
+            WatchRecordingDetailView(recording: recording)
+        } label: {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .top) {
+                    Text(recording.name).font(.caption)
+                    Spacer()
+                    sendStatusIcon(for: recording.id)
+                }
+                if let fraction = model.sendProgress[recording.id] {
+                    ProgressView(value: fraction)   // full-width bar beneath the item
+                }
+            }
+        }
+        .swipeActions(edge: .leading) {
+            if model.pendingSends.contains(recording.id) {
+                Button { model.cancelSend(recording) } label: {
+                    Label("Cancel", systemImage: "xmark")
+                }
+                .tint(.orange)
+            } else {
+                Button { model.startSend(recording) } label: {
+                    Label(isFailedOrCancelled(recording.id) ? "Retry" : "Send", systemImage: "paperplane")
+                }
+                .tint(.blue)
+            }
+        }
+        .swipeActions {
+            Button("Delete", role: .destructive) { model.recordings.delete(recording) }
+        }
+    }
+
+    private var needsResend: [Recording] {
+        model.recordings.recordings.filter { isFailedOrCancelled($0.id) }
+    }
+
+    private var others: [Recording] {
+        model.recordings.recordings.filter { !isFailedOrCancelled($0.id) }
+    }
+
+    private func isFailedOrCancelled(_ id: UUID) -> Bool {
+        let outcome = model.sendOutcome[id]
+        return outcome == .failed || outcome == .cancelled
+    }
+
     /// Trailing send status for a row: spinner while in flight (no byte progress), ✓ when sent,
-    /// ⚠︎ when the last attempt failed. When a determinate bar is showing it renders below instead.
+    /// ⚠︎ when failed, ⊘ when cancelled. When a determinate bar is showing it renders below instead.
     @ViewBuilder
     private func sendStatusIcon(for id: UUID) -> some View {
         if model.sendProgress[id] != nil {
@@ -118,6 +164,8 @@ struct WatchRootView: View {
                 Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
             case .failed:
                 Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+            case .cancelled:
+                Image(systemName: "xmark.circle.fill").foregroundStyle(.orange)
             case nil:
                 EmptyView()
             }
