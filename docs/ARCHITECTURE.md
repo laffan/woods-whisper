@@ -49,7 +49,7 @@ storage, and connectivity code without the model dependencies.
   Re-transcribing a recording appends its transcript as a paragraph; transforming rewrites the
   paragraphs in place. The **Inbox** is a `Document` rendered as a flat recordings list.
 - **`PromptPreset`** — a named, reusable instruction (`systemPrompt` + `template` with a
-  `{{transcript}}` token) plus generation params. Five built-ins ship; users add their own.
+  `{{transcript}}` token) plus generation params. Three built-ins ship; users add their own.
 - **`DeviceLink`** — describes the Watch↔host pairing; for the direct-to-iPad path it stores the
   iPad's `host`/`port`/`pairingSecret`.
 
