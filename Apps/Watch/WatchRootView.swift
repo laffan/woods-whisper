@@ -35,7 +35,7 @@ struct WatchRootView: View {
                     } label: {
                         Image(systemName: recorder.isPaused ? "play.circle.fill" : "pause.circle.fill")
                             .font(.title3)
-                            .foregroundStyle(recorder.isPaused ? .accentColor : .secondary)
+                            .foregroundStyle(recorder.isPaused ? Color.accentColor : Color.secondary)
                     }
                     .buttonStyle(.plain)
                 }
