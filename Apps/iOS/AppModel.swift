@@ -165,12 +165,11 @@ final class AppModel: ObservableObject {
     // MARK: Capture on this device
 
     /// Register a clip just recorded on this device (audio already written to `audioURL`) into
-    /// `documentID`'s Recordings section, then auto-transcribe it. If `insertingTranscriptAt` is
-    /// given, the resulting transcript is also inserted into the document body at that position
-    /// (used by the inter-paragraph "+" button); otherwise the recording stays as source material
-    /// in the Recordings section until the user pulls it into the body.
+    /// `documentID`'s Recordings section, auto-transcribe it, and place the transcript into the
+    /// document body per `body` (`.append` for the in-document "Add Recording", `.at` for the
+    /// inter-paragraph "+", `.none` for the Inbox where there is no body).
     func addDeviceRecording(audioURL: URL, duration: TimeInterval, toDocument documentID: UUID,
-                            insertingTranscriptAt bodyPosition: Int? = nil) {
+                            body: BodyInsertion = .none) {
         let name = Recording.defaultName(for: Date(), duration: duration,
                                          byteCount: Recording.fileSize(at: audioURL))
         let recording = Recording(name: name, duration: duration,
@@ -178,20 +177,30 @@ final class AppModel: ObservableObject {
         documents.addRecording(recording, toDocument: documentID)
         wwLog("Captured “\(recording.name)” on device", .general)
         guard transcriptionReady else {
-            if bodyPosition != nil {
+            if body != .none {
                 setupError = "Speech model isn't ready yet — the recording was saved; transcribe it once setup finishes."
             }
             return   // left pending; picked up by transcribePending after setup
         }
         Task {
             await transcribe(recordingID: recording.id, inDocument: documentID)
-            if let position = bodyPosition,
-               let text = documents.document(with: documentID)?
-                .recordings.first(where: { $0.id == recording.id })?.transcript,
-               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                documents.insertParagraph(text, at: position, in: documentID)
+            guard body != .none,
+                  let text = documents.document(with: documentID)?
+                    .recordings.first(where: { $0.id == recording.id })?.transcript,
+                  !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            switch body {
+            case .none:           break
+            case .append:         documents.appendParagraph(text, to: documentID)
+            case .at(let position): documents.insertParagraph(text, at: position, in: documentID)
             }
         }
+    }
+
+    /// Where a freshly captured recording's transcript should land in the document body.
+    enum BodyInsertion: Equatable {
+        case none          // Inbox: no body
+        case append        // add to the end of the body
+        case at(Int)       // insert at a specific paragraph index
     }
 
     /// Capture a clip (into the Recordings section), transcribe it, and replace the text of an

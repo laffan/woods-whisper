@@ -18,7 +18,6 @@ struct WatchRootView: View {
                 recordingsTab.tag(Tab.list)
             }
             .tabViewStyle(.verticalPage)
-            .navigationTitle("Woods Whisper")
         }
     }
 

@@ -121,9 +121,11 @@ struct DocumentDetailView: View {
                 Text("No text yet. Tap “+” to record straight into the document, or “Re-transcribe” a recording below to add its text here.")
                     .font(.callout).foregroundStyle(.secondary)
                 InsertHereButton { recorderTask = .insertBody(at: 0) }
+                    .listRowSeparator(.hidden)
             } else {
                 if !editMode.isEditing {
                     InsertHereButton { recorderTask = .insertBody(at: 0) }
+                        .listRowSeparator(.hidden)
                 }
                 ForEach(document.paragraphs) { para in
                     let position = (document.paragraphs.firstIndex(of: para) ?? 0) + 1
@@ -134,6 +136,7 @@ struct DocumentDetailView: View {
                         }
                     }
                     .contentShape(Rectangle())
+                    .listRowSeparator(.hidden)
                     .onLongPressGesture {
                         guard !selectionMode else { return }
                         withAnimation { editMode = .active }
@@ -320,10 +323,11 @@ struct DocumentDetailView: View {
     private func complete(_ task: RecorderTask, url: URL, duration: TimeInterval) {
         switch task {
         case .addToRecordings:
-            model.addDeviceRecording(audioURL: url, duration: duration, toDocument: documentID)
+            model.addDeviceRecording(audioURL: url, duration: duration, toDocument: documentID,
+                                     body: .append)
         case .insertBody(let position):
             model.addDeviceRecording(audioURL: url, duration: duration, toDocument: documentID,
-                                     insertingTranscriptAt: position)
+                                     body: .at(position))
         case .replace(let paragraphID):
             model.captureReplacingParagraph(audioURL: url, duration: duration,
                                             paragraphID: paragraphID, in: documentID)
@@ -370,17 +374,24 @@ struct DocumentDetailView: View {
 
 // MARK: - Insert-here button
 
+/// A minimal "insert here" affordance: a thin rule across the row with a small + at its center.
 private struct InsertHereButton: View {
     let action: () -> Void
     var body: some View {
         Button(action: action) {
-            Label("Add recording here", systemImage: "plus.circle")
-                .font(.caption)
-                .foregroundStyle(.tint)
+            HStack(spacing: 8) {
+                rule
+                Image(systemName: "plus.circle.fill").font(.system(size: 15))
+                rule
+            }
+            .foregroundStyle(.tertiary)
         }
         .buttonStyle(.plain)
-        .frame(maxWidth: .infinity, alignment: .center)
         .padding(.vertical, 2)
+    }
+
+    private var rule: some View {
+        Rectangle().fill(.quaternary).frame(height: 1).frame(maxWidth: .infinity)
     }
 }
 
@@ -423,66 +434,68 @@ private struct RecordingRow: View {
     let onDelete: () -> Void
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(spacing: 12) {
             if selectionMode {
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .font(.title2)
                     .foregroundStyle(isSelected ? Color.accentColor : .secondary)
+            } else {
+                Button(action: onPlay) {
+                    Image(systemName: (isActive && !isPaused) ? "pause.fill" : "play.fill")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.tint)
             }
-            VStack(alignment: .leading, spacing: 8) {
-                transcriptView
-                metadata
-                if !selectionMode {
-                    actionRow
+
+            RecordingLabel(recording: recording)
+
+            Spacer(minLength: 8)
+
+            if !selectionMode {
+                Menu {
+                    Button("Re-transcribe to document", systemImage: "text.append", action: onRetranscribe)
+                    if recording.transcript?.isEmpty == false {
+                        Button("Copy Transcript", systemImage: "doc.on.doc", action: onCopy)
+                    }
+                    Button("Delete", systemImage: "trash", role: .destructive, action: onDelete)
+                } label: {
+                    Image(systemName: "ellipsis").foregroundStyle(.tint)
                 }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
         .onTapGesture { onTap() }
         .onLongPressGesture { onLongPress() }
     }
+}
 
-    private var actionRow: some View {
-        HStack(spacing: 18) {
-            Button(action: onPlay) {
-                Image(systemName: (isActive && !isPaused) ? "pause.fill" : "play.fill")
-            }
-            Spacer()
-            Menu {
-                Button("Re-transcribe to document", systemImage: "text.append", action: onRetranscribe)
-                if recording.transcript?.isEmpty == false {
-                    Button("Copy Transcript", systemImage: "doc.on.doc", action: onCopy)
-                }
-                Button("Delete", systemImage: "trash", role: .destructive, action: onDelete)
-            } label: {
-                Image(systemName: "ellipsis.circle")
-            }
-        }
-        .font(.title3)
-        .buttonStyle(.plain)
-        .foregroundStyle(.tint)
-    }
+/// One-line summary of a recording: the first line of its transcript, or a status placeholder.
+private struct RecordingLabel: View {
+    let recording: Recording
 
-    @ViewBuilder
-    private var transcriptView: some View {
+    var body: some View {
         switch recording.status {
         case .done:
-            Text(recording.transcript?.isEmpty == false ? recording.transcript! : "(no speech detected)")
+            Text(firstLine ?? "(no speech detected)")
+                .lineLimit(1)
         case .transcribing:
-            HStack(spacing: 8) { ProgressView(); Text("Transcribing…").foregroundStyle(.secondary) }
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.mini)
+                Text("Transcribing…").foregroundStyle(.secondary).lineLimit(1)
+            }
         case .pending:
-            Label("Waiting to transcribe", systemImage: "clock").foregroundStyle(.secondary)
+            Text("Waiting to transcribe").foregroundStyle(.secondary).lineLimit(1)
         case .failed:
-            Label("Transcription failed — Re-transcribe to retry", systemImage: "exclamationmark.triangle")
-                .foregroundStyle(.orange)
+            Text("Transcription failed").foregroundStyle(.orange).lineLimit(1)
         }
     }
 
-    private var metadata: some View {
-        Text(recording.name.replacingOccurrences(of: "\n", with: " · ") + " · " + recording.origin.rawValue)
-            .font(.caption2)
-            .foregroundStyle(.secondary)
+    private var firstLine: String? {
+        guard let transcript = recording.transcript else { return nil }
+        for line in transcript.split(whereSeparator: \.isNewline) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if !trimmed.isEmpty { return trimmed }
+        }
+        return nil
     }
 }
 
@@ -599,11 +612,10 @@ extension AudioPlaybackController: AVAudioPlayerDelegate {
 
 // MARK: - Recording sheet
 
-/// A modal recording surface: a big record/stop button with the shared elapsed-time + gain meter +
-/// pause/continue control while recording. On stop it hands the finished file back via `onComplete`;
-/// cancelling discards the clip. Used for "New Recording" (→ Inbox) and the in-document insert /
-/// replace flows. Lives here (not a standalone file) so the app target picks it up without an
-/// xcodegen regen.
+/// A compact bottom "toast" recording surface: it starts recording the moment it appears, shows an
+/// elapsed-time counter and a live gain meter, and offers two equal-size controls — pause/continue
+/// and stop. Stop hands the finished clip back via `onComplete`; swiping it down discards the clip.
+/// Lives here (not a standalone file) so the app target picks it up without an xcodegen regen.
 struct RecordingSheet: View {
     let title: String
     /// Supplies a fresh URL to record into (e.g. `store.newAudioURL().url`).
@@ -614,78 +626,88 @@ struct RecordingSheet: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var recorder = AudioRecorder()
     @State private var startedURL: URL?
+    @State private var didComplete = false
     @State private var errorMessage: String?
 
-    var body: some View {
-        NavigationStack {
-            VStack(spacing: 28) {
-                Spacer()
-                if recorder.isRecording {
-                    RecordingBar(elapsed: recorder.elapsed, level: recorder.currentLevel,
-                                 isPaused: recorder.isPaused, onTogglePause: togglePause)
-                        .padding(.horizontal)
-                    Text(recorder.isPaused ? "Paused" : "Recording…")
-                        .font(.caption).foregroundStyle(.secondary)
-                } else {
-                    Text("Tap to start recording")
-                        .font(.callout).foregroundStyle(.secondary)
-                }
+    private let controlSize: CGFloat = 56
 
+    var body: some View {
+        VStack(spacing: 18) {
+            HStack(spacing: 12) {
+                Text(timeString(recorder.elapsed))
+                    .font(.title3.monospacedDigit())
+                    .foregroundStyle(recorder.isPaused ? .secondary : .primary)
+                LevelMeter(level: recorder.currentLevel)
+            }
+
+            HStack(spacing: 44) {
                 Button {
-                    Task { await toggle() }
+                    recorder.isPaused ? recorder.resume() : recorder.pause()
                 } label: {
-                    Image(systemName: recorder.isRecording ? "stop.circle.fill" : "record.circle")
-                        .font(.system(size: 72))
-                        .foregroundStyle(recorder.isRecording ? .red : .accentColor)
+                    Image(systemName: recorder.isPaused ? "play.circle.fill" : "pause.circle.fill")
+                        .font(.system(size: controlSize))
+                        .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
-                Spacer()
-            }
-            .navigationTitle(title)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { cancel() }
+                .disabled(!recorder.isRecording)
+                .accessibilityLabel(recorder.isPaused ? "Continue" : "Pause")
+
+                Button { finish() } label: {
+                    Image(systemName: "stop.circle.fill")
+                        .font(.system(size: controlSize))
+                        .foregroundStyle(.red)
                 }
-            }
-            .alert("Couldn't record", isPresented: Binding(get: { errorMessage != nil },
-                                                           set: { if !$0 { errorMessage = nil } })) {
-                Button("OK", role: .cancel) { errorMessage = nil }
-            } message: { Text(errorMessage ?? "") }
-        }
-        .interactiveDismissDisabled(recorder.isRecording)
-    }
-
-    private func toggle() async {
-        if recorder.isRecording {
-            guard let result = recorder.stop() else { dismiss(); return }
-            onComplete(result.url, result.duration)
-            dismiss()
-        } else {
-            guard await recorder.requestPermission() else {
-                errorMessage = "Microphone permission is required to record."
-                return
-            }
-            let url = makeURL()
-            do {
-                try recorder.start(to: url)
-                startedURL = url
-            } catch {
-                errorMessage = error.localizedDescription
+                .buttonStyle(.plain)
+                .accessibilityLabel("Stop")
             }
         }
+        .padding(.top, 28)
+        .padding(.horizontal, 24)
+        .padding(.bottom, 12)
+        .frame(maxWidth: .infinity)
+        .presentationDetents([.height(190)])
+        .presentationDragIndicator(.visible)
+        .task { await begin() }
+        .onDisappear { discardIfUnfinished() }
+        .alert("Couldn't record", isPresented: Binding(get: { errorMessage != nil },
+                                                       set: { if !$0 { errorMessage = nil } })) {
+            Button("OK", role: .cancel) { dismiss() }
+        } message: { Text(errorMessage ?? "") }
     }
 
-    private func togglePause() {
-        recorder.isPaused ? recorder.resume() : recorder.pause()
-    }
-
-    private func cancel() {
-        if recorder.isRecording {
-            _ = recorder.stop()
-            if let url = startedURL { try? FileManager.default.removeItem(at: url) }
+    /// Auto-start recording as soon as the toast appears.
+    private func begin() async {
+        guard startedURL == nil else { return }
+        guard await recorder.requestPermission() else {
+            errorMessage = "Microphone permission is required to record."
+            return
         }
+        let url = makeURL()
+        do {
+            try recorder.start(to: url)
+            startedURL = url
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func finish() {
+        guard let result = recorder.stop() else { dismiss(); return }
+        didComplete = true
+        onComplete(result.url, result.duration)
         dismiss()
+    }
+
+    /// Swiped away without stopping: drop the in-progress clip.
+    private func discardIfUnfinished() {
+        guard !didComplete else { return }
+        _ = recorder.stop()
+        if let url = startedURL { try? FileManager.default.removeItem(at: url) }
+    }
+
+    private func timeString(_ t: TimeInterval) -> String {
+        let total = Int(t)
+        return String(format: "%02d:%02d", total / 60, total % 60)
     }
 }
 
@@ -770,54 +792,32 @@ private struct InboxRecordingRow: View {
     let onMove: (Document) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            transcriptView
-            HStack(spacing: 18) {
-                Button(action: onPlay) {
-                    Image(systemName: (isActive && !isPaused) ? "pause.fill" : "play.fill")
-                }
-                Spacer()
-                Menu {
-                    Button("Retranscribe", systemImage: "arrow.clockwise", action: onRetranscribe)
-                    if recording.transcript?.isEmpty == false {
-                        Button("Copy Transcript", systemImage: "doc.on.doc", action: onCopy)
-                    }
-                    if !moveTargets.isEmpty {
-                        Menu("Move to Document…") {
-                            ForEach(moveTargets) { target in
-                                Button(target.title) { onMove(target) }
-                            }
-                        }
-                    }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                }
+        HStack(spacing: 12) {
+            Button(action: onPlay) {
+                Image(systemName: (isActive && !isPaused) ? "pause.fill" : "play.fill")
             }
-            .font(.title3)
             .buttonStyle(.plain)
             .foregroundStyle(.tint)
-            Text(metadataString).font(.caption2).foregroundStyle(.secondary)
-        }
-        .padding(.vertical, 4)
-    }
 
-    @ViewBuilder
-    private var transcriptView: some View {
-        switch recording.status {
-        case .done:
-            Text(recording.transcript?.isEmpty == false ? recording.transcript! : "(no speech detected)")
-        case .transcribing:
-            HStack(spacing: 8) { ProgressView(); Text("Transcribing…").foregroundStyle(.secondary) }
-        case .pending:
-            Label("Waiting to transcribe", systemImage: "clock").foregroundStyle(.secondary)
-        case .failed:
-            Label("Transcription failed — tap Retranscribe", systemImage: "exclamationmark.triangle")
-                .foregroundStyle(.orange)
-        }
-    }
+            RecordingLabel(recording: recording)
 
-    private var metadataString: String {
-        let name = recording.name.replacingOccurrences(of: "\n", with: " · ")
-        return "\(name) · \(recording.origin.rawValue)"
+            Spacer(minLength: 8)
+
+            Menu {
+                Button("Retranscribe", systemImage: "arrow.clockwise", action: onRetranscribe)
+                if recording.transcript?.isEmpty == false {
+                    Button("Copy Transcript", systemImage: "doc.on.doc", action: onCopy)
+                }
+                if !moveTargets.isEmpty {
+                    Menu("Move to Document…") {
+                        ForEach(moveTargets) { target in
+                            Button(target.title) { onMove(target) }
+                        }
+                    }
+                }
+            } label: {
+                Image(systemName: "ellipsis").foregroundStyle(.tint)
+            }
+        }
     }
 }
