@@ -1,4 +1,5 @@
 import SwiftUI
+import AppIntents
 import WoodsWhisperKit
 
 struct WatchRootView: View {
@@ -6,6 +7,7 @@ struct WatchRootView: View {
     @StateObject private var recorder = AudioRecorder()
     @State private var tab: Tab = .record
     @AppStorage("walkingMode") private var walkingMode = false
+    @ObservedObject private var launcher = RecordingLauncher.shared
 
     /// Screen order top-to-bottom: Pairing, Record, List. Record is the default, so you swipe up
     /// to the list and down to pairing.
@@ -20,6 +22,27 @@ struct WatchRootView: View {
             }
             .tabViewStyle(.verticalPage)
         }
+        // Launched by the "New Recording" complication / Shortcut: jump to the record screen and
+        // start capturing.
+        .onChange(of: launcher.pending) { _, pending in
+            if pending { Task { await startFromIntent() } }
+        }
+        .task {
+            if launcher.pending { await startFromIntent() }
+        }
+    }
+
+    /// Begin a recording in response to an external request (complication / Shortcut / Siri).
+    private func startFromIntent() async {
+        launcher.pending = false
+        tab = .record
+        guard !recorder.isRecording else { return }
+        guard await recorder.requestPermission() else {
+            model.statusMessage = "Microphone permission needed."
+            return
+        }
+        let new = model.recordings.newAudioURL()
+        try? recorder.start(to: new.url)
     }
 
     private var recordTab: some View {
@@ -232,5 +255,44 @@ struct WatchRootView: View {
 
     private func timeString(_ t: TimeInterval) -> String {
         String(format: "%02d:%02d", Int(t) / 60, Int(t) % 60)
+    }
+}
+
+// MARK: - "New Recording" App Intent (watch)
+
+/// Bridges an external "new recording" request (complication / Shortcut / Siri) to the running
+/// Watch app, which observes `pending` and starts recording.
+@MainActor
+final class RecordingLauncher: ObservableObject {
+    static let shared = RecordingLauncher()
+    @Published var pending = false
+    func request() { pending = true }
+}
+
+/// Starts a new recording on the Watch. Add it as a **complication** via the Shortcuts app, or run
+/// it from Siri / Shortcuts; tapping launches the app and begins capturing.
+struct StartRecordingIntent: AppIntent {
+    static var title: LocalizedStringResource = "New Recording"
+    static var description = IntentDescription("Start a new voice recording on your Apple Watch.")
+    static var openAppWhenRun = true
+
+    @MainActor
+    func perform() async throws -> some IntentResult {
+        RecordingLauncher.shared.request()
+        return .result()
+    }
+}
+
+struct WoodsWhisperWatchShortcuts: AppShortcutsProvider {
+    static var appShortcuts: [AppShortcut] {
+        AppShortcut(
+            intent: StartRecordingIntent(),
+            phrases: [
+                "New recording in \(.applicationName)",
+                "Start a recording in \(.applicationName)"
+            ],
+            shortTitle: "New Recording",
+            systemImageName: "mic.fill"
+        )
     }
 }
