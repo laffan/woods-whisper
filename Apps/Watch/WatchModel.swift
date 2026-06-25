@@ -119,7 +119,25 @@ final class WatchModel: ObservableObject {
                                          byteCount: Recording.fileSize(at: audioURL))
         let recording = Recording(name: name, duration: duration, audioFileName: fileName, origin: .watch)
         recordings.add(recording)
-        startSend(recording)
+        // Walking mode: queue locally and send the batch later, instead of uploading each clip now.
+        if WatchSettings.shared.walkingMode {
+            statusMessage = "Saved — walking mode, not sent yet."
+        } else {
+            startSend(recording)
+        }
+    }
+
+    /// Recordings that haven't been confirmed sent (queued in walking mode, or failed/cancelled).
+    var unsentRecordings: [Recording] {
+        recordings.recordings.filter { sendOutcome[$0.id] != .sent && !pendingSends.contains($0.id) }
+    }
+
+    /// Send every recording not yet confirmed sent — the "send the batch" action for walking mode.
+    func sendAllUnsent() {
+        for recording in unsentRecordings {
+            sendOutcome[recording.id] = nil
+            startSend(recording)
+        }
     }
 
     /// Begin sending a recording (recorded just now, or a manual re-send), tracking the task so it

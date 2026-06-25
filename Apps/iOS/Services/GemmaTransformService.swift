@@ -360,6 +360,7 @@ final class URLSessionHubDownloader: Downloader, @unchecked Sendable {
         defer { fetcher.invalidate() }
 
         for file in files {
+            try Task.checkCancellation()   // stop promptly if the user cancelled the download
             let destination = directory.appendingPathComponent(file.path)
             try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(),
                                                     withIntermediateDirectories: true)
@@ -512,9 +513,14 @@ private final class HubFileFetcher: NSObject, URLSessionDownloadDelegate, @unche
                onProgress: @escaping @Sendable (Int64, Int64) -> Void) async throws {
         self.destination = destination
         self.onProgress = onProgress
-        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
-            self.continuation = cont
-            session.downloadTask(with: url).resume()
+        let task = session.downloadTask(with: url)
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+                self.continuation = cont
+                task.resume()
+            }
+        } onCancel: {
+            task.cancel()   // surfaces as a cancellation error via didCompleteWithError
         }
     }
 

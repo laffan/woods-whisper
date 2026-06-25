@@ -5,6 +5,7 @@ struct WatchRootView: View {
     @EnvironmentObject private var model: WatchModel
     @StateObject private var recorder = AudioRecorder()
     @State private var tab: Tab = .record
+    @AppStorage("walkingMode") private var walkingMode = false
 
     /// Screen order top-to-bottom: Pairing, Record, List. Record is the default, so you swipe up
     /// to the list and down to pairing.
@@ -78,6 +79,18 @@ struct WatchRootView: View {
                 .padding(.horizontal)
             } else if let status = model.statusMessage {
                 Text(status).font(.caption2).foregroundStyle(.secondary).lineLimit(2)
+            }
+
+            // Walking mode: clips queue locally; offer a one-tap batch send.
+            if walkingMode, model.pendingSends.isEmpty, !model.unsentRecordings.isEmpty {
+                Button {
+                    model.sendAllUnsent()
+                } label: {
+                    Label("Send All (\(model.unsentRecordings.count))", systemImage: "paperplane.fill")
+                }
+                .font(.caption2)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
             }
         }
         .padding()

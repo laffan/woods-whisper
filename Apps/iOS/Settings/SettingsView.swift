@@ -79,11 +79,16 @@ struct SettingsView: View {
             ModelSetupRow(title: "Model weights", systemImage: "brain",
                           ready: model.modelReady, progress: model.llmProgress)
             if !model.modelReady {
-                Button(downloadTitle(preparing: model.isPreparingLLM,
-                                     started: model.llmProgress != nil)) {
-                    Task { await model.prepareLanguageModel() }
+                if model.isPreparingLLM {
+                    Button("Cancel Download", role: .destructive) {
+                        model.cancelLanguageModelDownload()
+                    }
+                } else {
+                    Button(downloadTitle(preparing: false,
+                                         started: model.llmProgress != nil)) {
+                        model.startLanguageModelDownload()
+                    }
                 }
-                .disabled(model.isPreparingLLM)
             }
         } header: {
             Text("Language Model")

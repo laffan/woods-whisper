@@ -31,6 +31,9 @@ final class AppModel: ObservableObject {
     @Published var isPreparingSpeech = false
     @Published var isPreparingLLM = false
 
+    /// The user-initiated language-model download, kept so it can be cancelled.
+    private var llmPrepareTask: Task<Void, Never>?
+
     /// Active Watch-pairing window: the 5-digit code shown on screen and when it expires. Nil
     /// when not pairing. `lastPairedWatch` holds the name of the most recently paired Watch so
     /// the UI can confirm success.
@@ -364,11 +367,30 @@ final class AppModel: ObservableObject {
             if modelReady { AppSettings.shared.markModelDownloaded(AppSettings.shared.model.rawValue) }
             wwLog(String(format: "Language model ready in %.1fs", Date().timeIntervalSince(start)), .model)
         } catch {
-            setupError = error.localizedDescription      // keep llmProgress to show stall point
-            wwLog("Language model failed: \(error.localizedDescription)", .error)
+            if Task.isCancelled {
+                llmProgress = nil                        // user cancelled — not an error
+                wwLog("Language model download cancelled", .model)
+            } else {
+                setupError = error.localizedDescription   // keep llmProgress to show stall point
+                wwLog("Language model failed: \(error.localizedDescription)", .error)
+            }
         }
         isPreparingLLM = false
         if !isPreparingSpeech { busyMessage = nil }
+    }
+
+    /// Start the language-model download as a cancellable task (used by the Settings Download button).
+    func startLanguageModelDownload() {
+        guard llmPrepareTask == nil else { return }
+        llmPrepareTask = Task { [weak self] in
+            await self?.prepareLanguageModel()
+            self?.llmPrepareTask = nil
+        }
+    }
+
+    /// Cancel an in-flight language-model download.
+    func cancelLanguageModelDownload() {
+        llmPrepareTask?.cancel()
     }
 
     func refreshReadiness() async {
