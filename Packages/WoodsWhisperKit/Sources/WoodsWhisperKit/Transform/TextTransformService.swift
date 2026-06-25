@@ -51,11 +51,17 @@ public struct TransformResult: Sendable, Equatable {
 /// Available on-device language models. Gemma 3 4B is the default; Qwen3 4B (which shows its
 /// reasoning), Llama 3.2 3B, and Gemma 3 1B are selectable alternatives. All run 4-bit quantized
 /// via MLX on iPhone/iPad.
+///
+/// The Gemma entries use Google's **QAT** (quantization-aware-trained) 4-bit weights. The plain
+/// `…-it-4bit` community repos quantize some attention projections with a per-layer group size that
+/// the MLX-Swift loader mis-reads ("Mismatched parameter … o_proj.biases … Actual [2560,32],
+/// expected [2560,16]"); the QAT repos are uniformly quantized, so they load cleanly (and are a bit
+/// higher quality).
 public enum LanguageModelChoice: String, CaseIterable, Codable, Sendable, Identifiable {
-    case gemma3_4B = "mlx-community/gemma-3-4b-it-4bit"
+    case gemma3_4B = "mlx-community/gemma-3-4b-it-qat-4bit"
     case qwen3_4B = "mlx-community/Qwen3-4B-4bit"
     case llama3_2_3B = "mlx-community/Llama-3.2-3B-Instruct-4bit"
-    case gemma3_1B = "mlx-community/gemma-3-1b-it-4bit"
+    case gemma3_1B = "mlx-community/gemma-3-1b-it-qat-4bit"
 
     public var id: String { rawValue }
 
