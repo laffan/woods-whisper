@@ -22,7 +22,31 @@ public final class AudioRecorder: NSObject, ObservableObject {
 
     public var outputURL: URL?
 
+    /// Preferred capture input (port UID) chosen in Settings; `nil` means the system default.
+    /// Applied to the audio session at the start of each recording. App-wide, so every recorder
+    /// honours the choice without threading it through each call site.
+    public static var preferredInputUID: String?
+
     public override init() { super.init() }
+
+    /// A selectable microphone input (built-in, wired, Bluetooth, …).
+    public struct InputOption: Identifiable, Hashable, Sendable {
+        public let id: String      // AVAudioSessionPortDescription.uid
+        public let name: String    // user-facing port name
+        public init(id: String, name: String) { self.id = id; self.name = name }
+    }
+
+    /// The microphones currently available to capture from. iOS only (empty elsewhere).
+    public static func availableInputs() -> [InputOption] {
+        #if os(iOS)
+        let session = AVAudioSession.sharedInstance()
+        // The category must allow recording (and Bluetooth) for the inputs to be enumerable.
+        try? session.setCategory(.playAndRecord, mode: .default, options: [.allowBluetooth])
+        return (session.availableInputs ?? []).map { InputOption(id: $0.uid, name: $0.portName) }
+        #else
+        return []
+        #endif
+    }
 
     /// Request microphone permission. Call before `start`.
     public func requestPermission() async -> Bool {
@@ -37,8 +61,13 @@ public final class AudioRecorder: NSObject, ObservableObject {
     @discardableResult
     public func start(to url: URL) throws -> URL {
         let session = AVAudioSession.sharedInstance()
+        #if os(iOS)
+        try session.setCategory(.playAndRecord, mode: .default, options: [.duckOthers, .allowBluetooth])
+        #else
         try session.setCategory(.playAndRecord, mode: .default, options: [.duckOthers])
+        #endif
         try session.setActive(true)
+        applyPreferredInput(to: session)
 
         let settings: [String: Any] = [
             AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
@@ -97,6 +126,15 @@ public final class AudioRecorder: NSObject, ObservableObject {
         self.recorder = nil
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         return (url, duration)
+    }
+
+    /// Route capture to the user-selected microphone, if one is chosen and present.
+    private func applyPreferredInput(to session: AVAudioSession) {
+        #if os(iOS)
+        guard let uid = Self.preferredInputUID,
+              let input = session.availableInputs?.first(where: { $0.uid == uid }) else { return }
+        try? session.setPreferredInput(input)
+        #endif
     }
 
     private func startLevelTimer() {

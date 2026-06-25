@@ -57,6 +57,7 @@ final class AppModel: ObservableObject {
             .sink { [weak self] _ in self?.objectWillChange.send() }
             .store(in: &cancellables)
 
+        AudioRecorder.preferredInputUID = AppSettings.shared.preferredMicUID
         configureReceivers()
     }
 

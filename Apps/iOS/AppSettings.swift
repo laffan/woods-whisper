@@ -16,6 +16,16 @@ final class AppSettings {
         static let deviceDisplayName = "deviceDisplayName"
         static let didCompleteSetup = "didCompleteSetup"
         static let downloadedModels = "downloadedModels"
+        static let preferredMicUID = "preferredMicUID"
+    }
+
+    /// Chosen capture microphone (port UID), or nil for the system default.
+    var preferredMicUID: String? {
+        get { defaults.string(forKey: Key.preferredMicUID) }
+        set {
+            if let newValue { defaults.set(newValue, forKey: Key.preferredMicUID) }
+            else { defaults.removeObject(forKey: Key.preferredMicUID) }
+        }
     }
 
     var model: LanguageModelChoice {
