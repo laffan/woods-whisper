@@ -22,8 +22,11 @@ public extension PromptPreset {
         ),
         PromptPreset(
             name: "Action Items",
-            template: "Extract any tasks, commitments, or action items from this transcript as a "
-                + "checklist. If there are none, say so.\n\n" + transcriptToken,
+            template: "Extract any tasks, commitments, or action items from this transcript. Write "
+                + "each item as a single line of plain text, and separate each item from the next "
+                + "with a blank line. Do not use bullets, dashes, numbers, or any markdown "
+                + "formatting. If there are none, reply with a single line saying so.\n\n"
+                + transcriptToken,
             temperature: 0.3,
             isBuiltIn: true
         )

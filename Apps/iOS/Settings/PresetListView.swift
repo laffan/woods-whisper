@@ -53,6 +53,10 @@ struct PresetEditorView: View {
     @Environment(\.dismiss) private var dismiss
     @State var preset: PromptPreset
     let isNew: Bool
+    /// Label for the confirm button (e.g. "Save & Run" when creating a transform inline).
+    var saveTitle: String = "Save"
+    /// Invoked with the saved preset after it's persisted — used to run it immediately.
+    var onSaved: ((PromptPreset) -> Void)? = nil
 
     var body: some View {
         NavigationStack {
@@ -87,8 +91,9 @@ struct PresetEditorView: View {
                     Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
+                    Button(saveTitle) {
                         model.documents.save(preset: preset)   // upsert: works for new and edited
+                        onSaved?(preset)
                         dismiss()
                     }
                     .disabled(preset.name.isEmpty || preset.template.isEmpty)

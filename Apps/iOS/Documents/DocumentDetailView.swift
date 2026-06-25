@@ -45,6 +45,12 @@ struct DocumentDetailView: View {
     @State private var showingRename = false
     @State private var renameText = ""
 
+    // Reset-with-originals confirmation
+    @State private var showingResetConfirm = false
+
+    // Inline "Add New Transform" (save a preset and run it at once)
+    @State private var creatingTransform: PromptPreset?
+
     // Recording flows (insert / replace / re-record / add) routed through one sheet
     @State private var recorderTask: RecorderTask?
 
@@ -106,6 +112,12 @@ struct DocumentDetailView: View {
             }
             Button("Cancel", role: .cancel) { }
         }
+        .alert("Reset with Originals?", isPresented: $showingResetConfirm) {
+            Button("Reset", role: .destructive) { model.resetWithOriginals(in: documentID) }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("This replaces the document with the recordings' original transcripts and will delete any edits and transformations you've made.")
+        }
     }
 
     // MARK: Content
@@ -128,6 +140,14 @@ struct DocumentDetailView: View {
                             titleVisibility: .visible) {
             ForEach(model.documents.presets) { preset in
                 Button(preset.name) { runDocumentTransform(preset, on: document) }
+            }
+            Button("Add New Transform…") {
+                creatingTransform = PromptPreset(name: "", template: PromptPreset.transcriptToken)
+            }
+        }
+        .sheet(item: $creatingTransform) { preset in
+            PresetEditorView(preset: preset, isNew: true, saveTitle: "Save & Run") { saved in
+                runDocumentTransform(saved, on: document)
             }
         }
         .confirmationDialog("Transform paragraph with…",
@@ -286,13 +306,12 @@ struct DocumentDetailView: View {
 
             if document.recordings.contains(where: { $0.transcript?.isEmpty == false }) {
                 Section {
-                    Button {
-                        model.resetWithOriginals(in: documentID)
+                    Button(role: .destructive) {
+                        showingResetConfirm = true
                     } label: {
                         Label("Reset with Originals", systemImage: "arrow.uturn.backward")
                             .frame(maxWidth: .infinity)
                     }
-                    .foregroundStyle(.tint)
                 } footer: {
                     Text("Replaces the document body with the recordings' original transcripts, discarding edits and transforms.")
                 }
@@ -686,7 +705,13 @@ struct RecordingSheet: View {
     @State private var errorMessage: String?
 
     var body: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 14) {
+            HStack {
+                Button("Cancel") { cancel() }
+                    .font(.subheadline)
+                Spacer()
+            }
+
             Text(timeString(recorder.elapsed))
                 .font(.title2.monospacedDigit())
                 .foregroundStyle(recorder.isPaused ? .secondary : .primary)
@@ -715,11 +740,11 @@ struct RecordingSheet: View {
                 .accessibilityLabel(recorder.isPaused ? "Continue" : "Pause")
             }
         }
-        .padding(.top, 24)
+        .padding(.top, 16)
         .padding(.horizontal, 24)
         .padding(.bottom, 12)
         .frame(maxWidth: .infinity)
-        .presentationDetents([.height(210)])
+        .presentationDetents([.height(230)])
         .interactiveDismissDisabled(true)
         .task { await begin() }
         .onDisappear { discardIfUnfinished() }
@@ -727,6 +752,12 @@ struct RecordingSheet: View {
                                                        set: { if !$0 { errorMessage = nil } })) {
             Button("OK", role: .cancel) { dismiss() }
         } message: { Text(errorMessage ?? "") }
+    }
+
+    /// Discard the in-progress clip and close.
+    private func cancel() {
+        discardIfUnfinished()
+        dismiss()
     }
 
     /// Auto-start recording as soon as the toast appears.
