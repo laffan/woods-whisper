@@ -36,6 +36,10 @@ struct DocumentDetailView: View {
     @State private var editingParagraph: Document.Paragraph?
     @State private var editingText = ""
 
+    // Document rename (tap the title)
+    @State private var showingRename = false
+    @State private var renameText = ""
+
     // Recording flows (insert / replace / add-to-recordings) routed through one sheet
     @State private var recorderTask: RecorderTask?
 
@@ -52,7 +56,7 @@ struct DocumentDetailView: View {
                 ContentUnavailableView("Document not found", systemImage: "doc")
             }
         }
-        .navigationTitle(selectionMode ? "\(selected.count) selected" : (document?.title ?? "Document"))
+        .navigationTitle(selectionMode ? "\(selected.count) selected" : "")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbarContent(for: document) }
         .onAppear { playback.onError = { message in model.setupError = message } }
@@ -67,6 +71,14 @@ struct DocumentDetailView: View {
             ParagraphEditor(text: $editingText) {
                 model.documents.updateParagraph(para.id, in: documentID, to: editingText)
             }
+        }
+        .alert("Rename document", isPresented: $showingRename) {
+            TextField("Title", text: $renameText)
+            Button("Save") {
+                let trimmed = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let document, !trimmed.isEmpty { model.documents.rename(document, to: trimmed) }
+            }
+            Button("Cancel", role: .cancel) { }
         }
     }
 
@@ -126,10 +138,11 @@ struct DocumentDetailView: View {
                 if !editMode.isEditing {
                     InsertHereButton { recorderTask = .insertBody(at: 0) }
                         .listRowSeparator(.hidden)
+                        .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
                 }
                 ForEach(document.paragraphs) { para in
                     let position = (document.paragraphs.firstIndex(of: para) ?? 0) + 1
-                    VStack(alignment: .leading, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 6) {
                         paragraphContent(para)
                         if !editMode.isEditing {
                             InsertHereButton { recorderTask = .insertBody(at: position) }
@@ -137,6 +150,11 @@ struct DocumentDetailView: View {
                     }
                     .contentShape(Rectangle())
                     .listRowSeparator(.hidden)
+                    .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
+                    .onTapGesture(count: 2) {
+                        guard !selectionMode, !editMode.isEditing else { return }
+                        startEditing(para)
+                    }
                     .onLongPressGesture {
                         guard !selectionMode else { return }
                         withAnimation { editMode = .active }
@@ -154,8 +172,6 @@ struct DocumentDetailView: View {
                     model.documents.moveParagraphs(in: documentID, from: offsets, to: destination)
                 }
             }
-        } header: {
-            Text(document.title)
         }
     }
 
@@ -202,6 +218,21 @@ struct DocumentDetailView: View {
 
     @ToolbarContentBuilder
     private func toolbarContent(for document: Document?) -> some ToolbarContent {
+        if !selectionMode {
+            // Tappable document title — opens the rename editor.
+            ToolbarItem(placement: .principal) {
+                Button {
+                    renameText = document?.title ?? ""
+                    showingRename = true
+                } label: {
+                    Text(document?.title ?? "Document")
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                }
+            }
+        }
+
         if editMode.isEditing {
             ToolbarItem(placement: .primaryAction) {
                 Button("Done") { withAnimation { editMode = .inactive } }
@@ -468,15 +499,16 @@ private struct RecordingRow: View {
     }
 }
 
-/// One-line summary of a recording: the first line of its transcript, or a status placeholder.
+/// A transcript summary for a recording, truncated to `lineLimit` lines (1 for the compact
+/// document list, more for the Inbox preview), or a status placeholder while not yet done.
 private struct RecordingLabel: View {
     let recording: Recording
+    var lineLimit: Int = 1
 
     var body: some View {
         switch recording.status {
         case .done:
-            Text(firstLine ?? "(no speech detected)")
-                .lineLimit(1)
+            Text(text).lineLimit(lineLimit)
         case .transcribing:
             HStack(spacing: 6) {
                 ProgressView().controlSize(.mini)
@@ -489,13 +521,9 @@ private struct RecordingLabel: View {
         }
     }
 
-    private var firstLine: String? {
-        guard let transcript = recording.transcript else { return nil }
-        for line in transcript.split(whereSeparator: \.isNewline) {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if !trimmed.isEmpty { return trimmed }
-        }
-        return nil
+    private var text: String {
+        let t = recording.transcript?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return t.isEmpty ? "(no speech detected)" : t
     }
 }
 
@@ -629,43 +657,41 @@ struct RecordingSheet: View {
     @State private var didComplete = false
     @State private var errorMessage: String?
 
-    private let controlSize: CGFloat = 56
-
     var body: some View {
-        VStack(spacing: 18) {
-            HStack(spacing: 12) {
-                Text(timeString(recorder.elapsed))
-                    .font(.title3.monospacedDigit())
-                    .foregroundStyle(recorder.isPaused ? .secondary : .primary)
-                LevelMeter(level: recorder.currentLevel)
-            }
+        VStack(spacing: 16) {
+            Text(timeString(recorder.elapsed))
+                .font(.title2.monospacedDigit())
+                .foregroundStyle(recorder.isPaused ? .secondary : .primary)
 
-            HStack(spacing: 44) {
+            LevelMeter(level: recorder.currentLevel)
+
+            HStack(spacing: 12) {
+                Button { finish() } label: {
+                    Image(systemName: "stop.fill")
+                        .font(.title2)
+                        .frame(maxWidth: .infinity, minHeight: 50)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.red)
+                .accessibilityLabel("Stop")
+
                 Button {
                     recorder.isPaused ? recorder.resume() : recorder.pause()
                 } label: {
-                    Image(systemName: recorder.isPaused ? "play.circle.fill" : "pause.circle.fill")
-                        .font(.system(size: controlSize))
-                        .foregroundStyle(.secondary)
+                    Image(systemName: recorder.isPaused ? "play.fill" : "pause.fill")
+                        .font(.title2)
+                        .frame(maxWidth: .infinity, minHeight: 50)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.bordered)
                 .disabled(!recorder.isRecording)
                 .accessibilityLabel(recorder.isPaused ? "Continue" : "Pause")
-
-                Button { finish() } label: {
-                    Image(systemName: "stop.circle.fill")
-                        .font(.system(size: controlSize))
-                        .foregroundStyle(.red)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Stop")
             }
         }
-        .padding(.top, 28)
+        .padding(.top, 24)
         .padding(.horizontal, 24)
         .padding(.bottom, 12)
         .frame(maxWidth: .infinity)
-        .presentationDetents([.height(190)])
+        .presentationDetents([.height(210)])
         .presentationDragIndicator(.visible)
         .task { await begin() }
         .onDisappear { discardIfUnfinished() }
@@ -722,6 +748,7 @@ struct InboxView: View {
 
     @StateObject private var playback = AudioPlaybackController()
     @State private var showingRecorder = false
+    @State private var detailRecording: Recording?
 
     private var inbox: Document? { model.documents.document(with: documentID) }
     private var recordings: [Recording] { inbox?.recordings ?? [] }
@@ -737,6 +764,7 @@ struct InboxView: View {
                     isActive: playback.playingID == recording.id,
                     isPaused: playback.isPaused,
                     onPlay: { playback.toggle(recording, url: model.documents.audioURL(for: recording)) },
+                    onShowDetail: { detailRecording = recording },
                     onCopy: { copy(recording) },
                     onRetranscribe: { Task { await model.transcribe(recordingID: recording.id, inDocument: documentID) } },
                     moveTargets: documentTargets,
@@ -771,6 +799,9 @@ struct InboxView: View {
                 model.addDeviceRecording(audioURL: url, duration: duration, toDocument: documentID)
             }
         }
+        .sheet(item: $detailRecording) { recording in
+            TranscriptDetailView(recording: recording)
+        }
     }
 
     private func copy(_ recording: Recording) {
@@ -786,22 +817,25 @@ private struct InboxRecordingRow: View {
     let isActive: Bool
     let isPaused: Bool
     let onPlay: () -> Void
+    let onShowDetail: () -> Void
     let onCopy: () -> Void
     let onRetranscribe: () -> Void
     let moveTargets: [Document]
     let onMove: (Document) -> Void
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(alignment: .top, spacing: 12) {
             Button(action: onPlay) {
                 Image(systemName: (isActive && !isPaused) ? "pause.fill" : "play.fill")
             }
             .buttonStyle(.plain)
             .foregroundStyle(.tint)
 
-            RecordingLabel(recording: recording)
-
-            Spacer(minLength: 8)
+            // Up to an 8-line preview; tap to read the full transcript.
+            RecordingLabel(recording: recording, lineLimit: 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .onTapGesture { onShowDetail() }
 
             Menu {
                 Button("Retranscribe", systemImage: "arrow.clockwise", action: onRetranscribe)
@@ -817,6 +851,29 @@ private struct InboxRecordingRow: View {
                 }
             } label: {
                 Image(systemName: "ellipsis").foregroundStyle(.tint)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+}
+
+/// Full-transcript reader for a single recording, shown when a preview row is tapped.
+private struct TranscriptDetailView: View {
+    let recording: Recording
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                Text(recording.transcript?.isEmpty == false ? recording.transcript! : "(no speech detected)")
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding()
+            }
+            .navigationTitle("Transcript")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
             }
         }
     }
