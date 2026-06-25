@@ -81,7 +81,7 @@ struct WatchRootView: View {
                 } label: {
                     Image(systemName: "record.circle")
                         .font(.system(size: 56))
-                        .foregroundStyle(.accentColor)
+                        .foregroundStyle(Color.accentColor)
                 }
                 .buttonStyle(.plain)
             }
