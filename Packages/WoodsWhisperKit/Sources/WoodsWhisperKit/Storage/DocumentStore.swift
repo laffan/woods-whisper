@@ -140,6 +140,29 @@ public final class DocumentStore: ObservableObject {
         touch(dstIdx)
     }
 
+    /// Reorder recordings within a single document (drag-to-rearrange in the Recordings section).
+    public func moveRecordings(in documentID: UUID, from offsets: IndexSet, to destination: Int) {
+        guard let idx = index(of: documentID) else { return }
+        documents[idx].recordings.move(fromOffsets: offsets, toOffset: destination)
+        touch(idx)
+    }
+
+    /// Replace a recording's audio file and reset its transcript (used by "Re-record"). The old
+    /// audio is removed; the caller has already written the new audio at `newFileName`.
+    public func replaceRecordingAudio(_ recordingID: UUID, in documentID: UUID,
+                                      newFileName: String, duration: TimeInterval) {
+        guard let docIdx = index(of: documentID),
+              let recIdx = documents[docIdx].recordings.firstIndex(where: { $0.id == recordingID })
+        else { return }
+        let old = documents[docIdx].recordings[recIdx]
+        if old.audioFileName != newFileName { removeAudio(old) }
+        documents[docIdx].recordings[recIdx].audioFileName = newFileName
+        documents[docIdx].recordings[recIdx].duration = duration
+        documents[docIdx].recordings[recIdx].transcript = nil
+        documents[docIdx].recordings[recIdx].status = .pending
+        touch(docIdx)
+    }
+
     // MARK: Batch operations (selection mode)
 
     public func deleteRecordings(_ ids: Set<UUID>, fromDocument documentID: UUID) {

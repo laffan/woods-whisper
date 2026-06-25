@@ -226,6 +226,27 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// "Re-record": replace a recording's audio with a freshly captured clip and re-transcribe it
+    /// in place (the document body is left untouched — recordings are source material).
+    func rerecordRecording(_ recordingID: UUID, in documentID: UUID,
+                           audioURL: URL, duration: TimeInterval) {
+        documents.replaceRecordingAudio(recordingID, in: documentID,
+                                        newFileName: audioURL.lastPathComponent, duration: duration)
+        autoTranscribe(recordingID: recordingID, inDocument: documentID)
+    }
+
+    /// "Reset with Originals": rebuild the document body from the recordings' own transcripts, one
+    /// paragraph per recording, discarding any edits/transforms.
+    func resetWithOriginals(in documentID: UUID) {
+        guard let doc = documents.document(with: documentID) else { return }
+        let paragraphs = doc.recordings.compactMap { recording -> Document.Paragraph? in
+            let text = recording.transcript?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return text.isEmpty ? nil : Document.Paragraph(text: text)
+        }
+        documents.setParagraphs(paragraphs, in: documentID)
+        wwLog("Reset “\(doc.title)” to original transcripts (\(paragraphs.count) paragraphs)", .general)
+    }
+
     /// "Re-transcribe": re-run speech-to-text on a recording, then append the resulting transcript
     /// as a new paragraph at the bottom of the document body.
     func retranscribeIntoBody(recordingID: UUID, in documentID: UUID) async {

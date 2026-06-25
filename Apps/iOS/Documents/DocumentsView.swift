@@ -1,11 +1,17 @@
 import SwiftUI
 import WoodsWhisperKit
+#if canImport(UIKit)
+import UIKit
+#endif
 
 struct DocumentsView: View {
     @EnvironmentObject private var model: AppModel
     @State private var renameTarget: Document?
     @State private var renameText = ""
     @State private var showingRecorder = false
+    @State private var shareItem: ShareItem?
+    @State private var editingDoc: Document?
+    @State private var editingText = ""
 
     private var allDocuments: [Document] { model.documents.documents }
     private var inbox: Document? { allDocuments.first { $0.title == DocumentStore.inboxTitle } }
@@ -32,6 +38,11 @@ struct DocumentsView: View {
                             .swipeActions(edge: .trailing) {
                                 Button("Delete", role: .destructive) { model.documents.delete(doc) }
                                 Button("Rename") { startRename(doc) }.tint(.blue)
+                            }
+                            .swipeActions(edge: .leading) {
+                                Button("Copy") { copy(doc) }.tint(.gray)
+                                Button("Share") { shareItem = ShareItem(text: doc.combinedText) }.tint(.indigo)
+                                Button("Edit") { startEdit(doc) }.tint(.blue)
                             }
                     }
                 } header: {
@@ -81,12 +92,32 @@ struct DocumentsView: View {
                     model.addDeviceRecording(audioURL: url, duration: duration, toDocument: inbox.id)
                 }
             }
+            .sheet(item: $shareItem) { item in
+                ActivityView(text: item.text)
+            }
+            .sheet(item: $editingDoc) { doc in
+                TextEditorSheet(title: doc.title, text: $editingText) {
+                    model.documents.setParagraphs(Document.paragraphs(from: editingText), in: doc.id)
+                }
+            }
         }
     }
 
     private func startRename(_ document: Document) {
         renameText = document.title
         renameTarget = document
+    }
+
+    private func startEdit(_ document: Document) {
+        editingText = document.combinedText
+        editingDoc = document
+    }
+
+    private func copy(_ document: Document) {
+        #if canImport(UIKit)
+        UIPasteboard.general.string = document.combinedText
+        #endif
+        wwLog("Copied “\(document.title)” to clipboard", .general)
     }
 
     /// Navigation routes by document id so views always read live store state, not a stale copy.
