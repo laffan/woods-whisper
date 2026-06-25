@@ -58,20 +58,26 @@ Xcode 15+:
 ```bash
 brew install xcodegen          # one-time
 cd woods-whisper
-xcodegen generate              # creates WoodsWhisper.xcodeproj
+./Scripts/generate.sh          # auto-detects your signing team, creates WoodsWhisper.xcodeproj
 open WoodsWhisper.xcodeproj
 ```
+
+`Scripts/generate.sh` finds your Apple **Team ID** and applies it to **every** target (app, watch
+app, and the two extensions) so signing "just works" — including provisioning the new
+widget/complication targets. Pass it explicitly if auto-detection can't find it
+(`./Scripts/generate.sh A1B2C3D4E5`). Prefer plain XcodeGen? `DEVELOPMENT_TEAM=A1B2C3D4E5 xcodegen
+generate` does the same; bare `xcodegen generate` leaves signing to be set per-target in Xcode.
 
 Then in Xcode: select the **WoodsWhisper** scheme, set your signing team, and run on a device
 (the ML models need real hardware; the Simulator can't use the ANE).
 
-> **Widget/Control & complication targets.** The project now includes two WidgetKit app
-> extensions — `WoodsWhisperWidgets` (iOS Lock Screen widget + iOS 18 Control for "New Recording")
-> and `WoodsWhisperWatchComplication` (a watch complication). After pulling, **re-run
-> `xcodegen generate`** so they're added, and set a signing team on the new extension targets too
-> (they sign with the same team as the apps). The iOS **Control** appears on iOS 18+; the Lock
-> Screen widget works on iOS 17. Both the watch complication and the iOS widget start a recording
-> by opening the app via the `woodswhisper://record` deep link / the shared `StartRecordingIntent`.
+> **Widget/Control & complication targets.** The project includes two WidgetKit app extensions —
+> `WoodsWhisperWidgets` (iOS Lock Screen widget + iOS 18 Control for "New Recording") and
+> `WoodsWhisperWatchComplication` (a watch complication). After pulling, **re-run
+> `./Scripts/generate.sh`** so they're added and signed with your team automatically. A **free**
+> Apple ID works — complications/widgets need no paid membership. The iOS **Control** appears on
+> iOS 18+; the Lock Screen widget works on iOS 17. Both start a recording by opening the app via the
+> `woodswhisper://record` deep link / the shared `StartRecordingIntent`.
 
 > ⚠️ **The Swift package versions for FluidAudio, WhisperKit, and MLX move quickly.** Three
 > files — `ParakeetTranscriptionService.swift`, `WhisperTranscriptionService.swift`, and

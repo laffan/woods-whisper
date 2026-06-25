@@ -40,7 +40,12 @@ settings:
     MARKETING_VERSION: "1.0"
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "5.9"
-    DEVELOPMENT_TEAM: ""        # set your team in Xcode, or here for CLI builds
+    # Signing team for ALL targets (app, watch app, widget + complication extensions). Pulled from
+    # the DEVELOPMENT_TEAM environment variable at generate time, so one value covers every target.
+    # Use Scripts/generate.sh (auto-detects it), or run:  DEVELOPMENT_TEAM=XXXX xcodegen generate
+    # Empty (plain `xcodegen generate`) falls back to setting the team per-target in Xcode.
+    DEVELOPMENT_TEAM: ${DEVELOPMENT_TEAM}
+    CODE_SIGN_STYLE: Automatic
 
 targets:
   # iOS / iPadOS app
