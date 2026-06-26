@@ -28,6 +28,10 @@
     <key>WKCompanionAppBundleIdentifier</key>
     <string>com.woodswhisper.app</string>
 
+    <!-- Siri / Shortcuts integration (surfaces the "New Recording" App Shortcut) -->
+    <key>NSSiriUsageDescription</key>
+    <string>Woods Whisper uses Siri to start a new recording hands-free.</string>
+
     <!-- Microphone capture on the Watch -->
     <key>NSMicrophoneUsageDescription</key>
     <string>Woods Whisper records audio on your Watch to send to your paired iPhone or iPad.</string>

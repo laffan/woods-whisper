@@ -1,4 +1,5 @@
 import SwiftUI
+import AppIntents
 
 @main
 struct WoodsWhisperWatchApp: App {
@@ -6,7 +7,9 @@ struct WoodsWhisperWatchApp: App {
 
     var body: some Scene {
         WindowGroup {
-            WatchRootView().environmentObject(model)
+            WatchRootView()
+                .environmentObject(model)
+                .task { WoodsWhisperWatchShortcuts.updateAppShortcutParameters() }
         }
     }
 }

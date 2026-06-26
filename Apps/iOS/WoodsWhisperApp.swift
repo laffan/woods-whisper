@@ -1,4 +1,5 @@
 import SwiftUI
+import AppIntents
 import WoodsWhisperKit
 
 @main
@@ -9,7 +10,10 @@ struct WoodsWhisperApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(model)
-                .task { await model.loadDownloadedModelsAtStartup() }
+                .task {
+                    WoodsWhisperShortcuts.updateAppShortcutParameters()
+                    await model.loadDownloadedModelsAtStartup()
+                }
         }
     }
 }
