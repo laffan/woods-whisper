@@ -36,7 +36,7 @@ struct DocumentsView: View {
                     ForEach(userDocuments) { doc in
                         NavigationLink(value: Route.document(doc.id)) { DocumentRow(document: doc) }
                             .swipeActions(edge: .trailing) {
-                                Button("Delete", role: .destructive) { model.documents.delete(doc) }
+                                Button("Delete", role: .destructive) { model.documents.moveToTrash(doc) }
                                 Button("Rename") { startRename(doc) }.tint(.blue)
                             }
                             .swipeActions(edge: .leading) {
@@ -48,12 +48,25 @@ struct DocumentsView: View {
                 } header: {
                     if inbox != nil && !userDocuments.isEmpty { Text("Documents") }
                 }
+
+                if !model.documents.trash.isEmpty {
+                    Section {
+                        NavigationLink(value: Route.trash) {
+                            Label {
+                                TrashRow(count: model.documents.trash.count)
+                            } icon: {
+                                Image(systemName: "trash")
+                            }
+                        }
+                    }
+                }
             }
             .navigationTitle("Documents")
             .navigationDestination(for: Route.self) { route in
                 switch route {
                 case .document(let id): DocumentDetailView(documentID: id)
                 case .inbox(let id):    InboxView(documentID: id)
+                case .trash:            TrashView()
                 }
             }
             .toolbar {
@@ -124,6 +137,7 @@ struct DocumentsView: View {
     enum Route: Hashable {
         case document(UUID)
         case inbox(UUID)
+        case trash
     }
 }
 
@@ -159,5 +173,17 @@ private struct InboxRow: View {
     private var subtitle: String {
         let count = document.recordings.count
         return count == 0 ? "No recordings" : "\(count) recording\(count == 1 ? "" : "s")"
+    }
+}
+
+private struct TrashRow: View {
+    let count: Int
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("Trash")
+            Text("\(count) document\(count == 1 ? "" : "s")")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
     }
 }

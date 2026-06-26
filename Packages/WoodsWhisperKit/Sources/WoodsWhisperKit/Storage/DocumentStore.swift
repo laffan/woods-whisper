@@ -5,11 +5,13 @@ import Foundation
 @MainActor
 public final class DocumentStore: ObservableObject {
     @Published public private(set) var documents: [Document] = []
+    @Published public private(set) var trash: [Document] = []
     @Published public private(set) var presets: [PromptPreset] = []
 
     private let baseURL: URL
     private let audioDirURL: URL
     private let documentsURL: URL
+    private let trashURL: URL
     private let presetsURL: URL
 
     /// Title used for the auto-created container that receives Watch recordings.
@@ -21,6 +23,7 @@ public final class DocumentStore: ObservableObject {
         baseURL = support.appendingPathComponent(directoryName, isDirectory: true)
         audioDirURL = baseURL.appendingPathComponent("audio", isDirectory: true)
         documentsURL = baseURL.appendingPathComponent("documents.json")
+        trashURL = baseURL.appendingPathComponent("trash.json")
         presetsURL = baseURL.appendingPathComponent("presets.json")
         try? FileManager.default.createDirectory(at: audioDirURL, withIntermediateDirectories: true)
         load()
@@ -68,6 +71,36 @@ public final class DocumentStore: ObservableObject {
             documents.remove(at: index)
         }
         persistDocuments()
+    }
+
+    // MARK: Trash
+
+    public func moveToTrash(_ document: Document) {
+        documents.removeAll { $0.id == document.id }
+        trash.insert(document, at: 0)
+        persistDocuments()
+        persistTrash()
+    }
+
+    public func restoreFromTrash(_ document: Document) {
+        trash.removeAll { $0.id == document.id }
+        documents.insert(document, at: 0)
+        persistTrash()
+        persistDocuments()
+    }
+
+    public func permanentlyDelete(_ document: Document) {
+        for recording in document.recordings { removeAudio(recording) }
+        trash.removeAll { $0.id == document.id }
+        persistTrash()
+    }
+
+    public func emptyTrash() {
+        for document in trash {
+            for recording in document.recordings { removeAudio(recording) }
+        }
+        trash.removeAll()
+        persistTrash()
     }
 
     public func document(with id: UUID) -> Document? {
@@ -304,6 +337,10 @@ public final class DocumentStore: ObservableObject {
            let decoded = try? JSONDecoder.iso.decode([Document].self, from: data) {
             documents = decoded.sorted { $0.updatedAt > $1.updatedAt }
         }
+        if let data = try? Data(contentsOf: trashURL),
+           let decoded = try? JSONDecoder.iso.decode([Document].self, from: data) {
+            trash = decoded
+        }
         let defaults = UserDefaults.standard
         if let data = try? Data(contentsOf: presetsURL),
            let decoded = try? JSONDecoder.iso.decode([PromptPreset].self, from: data),
@@ -324,6 +361,11 @@ public final class DocumentStore: ObservableObject {
     private func persistDocuments() {
         guard let data = try? JSONEncoder.iso.encode(documents) else { return }
         try? data.write(to: documentsURL, options: .atomic)
+    }
+
+    private func persistTrash() {
+        guard let data = try? JSONEncoder.iso.encode(trash) else { return }
+        try? data.write(to: trashURL, options: .atomic)
     }
 
     private func persistPresets() {
