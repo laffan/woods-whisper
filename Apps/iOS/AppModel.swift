@@ -31,6 +31,9 @@ final class AppModel: ObservableObject {
     @Published var isPreparingSpeech = false
     @Published var isPreparingLLM = false
 
+    /// The user-initiated language-model download, kept so it can be cancelled.
+    private var llmPrepareTask: Task<Void, Never>?
+
     /// Active Watch-pairing window: the 5-digit code shown on screen and when it expires. Nil
     /// when not pairing. `lastPairedWatch` holds the name of the most recently paired Watch so
     /// the UI can confirm success.
@@ -54,6 +57,7 @@ final class AppModel: ObservableObject {
             .sink { [weak self] _ in self?.objectWillChange.send() }
             .store(in: &cancellables)
 
+        AudioRecorder.preferredInputUID = AppSettings.shared.preferredMicUID
         configureReceivers()
     }
 
@@ -165,15 +169,96 @@ final class AppModel: ObservableObject {
     // MARK: Capture on this device
 
     /// Register a clip just recorded on this device (audio already written to `audioURL`) into
-    /// `documentID`, then auto-transcribe it.
-    func addDeviceRecording(audioURL: URL, duration: TimeInterval, toDocument documentID: UUID) {
+    /// `documentID`'s Recordings section, auto-transcribe it, and place the transcript into the
+    /// document body per `body` (`.append` for the in-document "Add Recording", `.at` for the
+    /// inter-paragraph "+", `.none` for the Inbox where there is no body).
+    func addDeviceRecording(audioURL: URL, duration: TimeInterval, toDocument documentID: UUID,
+                            body: BodyInsertion = .none) {
         let name = Recording.defaultName(for: Date(), duration: duration,
                                          byteCount: Recording.fileSize(at: audioURL))
         let recording = Recording(name: name, duration: duration,
                                   audioFileName: audioURL.lastPathComponent, origin: deviceOrigin())
         documents.addRecording(recording, toDocument: documentID)
         wwLog("Captured “\(recording.name)” on device", .general)
-        autoTranscribe(recordingID: recording.id, inDocument: documentID)
+        guard transcriptionReady else {
+            if body != .none {
+                setupError = "Speech model isn't ready yet — the recording was saved; transcribe it once setup finishes."
+            }
+            return   // left pending; picked up by transcribePending after setup
+        }
+        Task {
+            await transcribe(recordingID: recording.id, inDocument: documentID)
+            guard body != .none,
+                  let text = documents.document(with: documentID)?
+                    .recordings.first(where: { $0.id == recording.id })?.transcript,
+                  !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            switch body {
+            case .none:           break
+            case .append:         documents.appendParagraph(text, to: documentID)
+            case .at(let position): documents.insertParagraph(text, at: position, in: documentID)
+            }
+        }
+    }
+
+    /// Where a freshly captured recording's transcript should land in the document body.
+    enum BodyInsertion: Equatable {
+        case none          // Inbox: no body
+        case append        // add to the end of the body
+        case at(Int)       // insert at a specific paragraph index
+    }
+
+    /// Capture a clip (into the Recordings section), transcribe it, and replace the text of an
+    /// existing body paragraph with the result. Backs a paragraph's "Replace" swipe action.
+    func captureReplacingParagraph(audioURL: URL, duration: TimeInterval,
+                                   paragraphID: UUID, in documentID: UUID) {
+        let name = Recording.defaultName(for: Date(), duration: duration,
+                                         byteCount: Recording.fileSize(at: audioURL))
+        let recording = Recording(name: name, duration: duration,
+                                  audioFileName: audioURL.lastPathComponent, origin: deviceOrigin())
+        documents.addRecording(recording, toDocument: documentID)
+        guard transcriptionReady else {
+            setupError = "Speech model isn't ready yet — the recording was saved; transcribe it once setup finishes."
+            return
+        }
+        Task {
+            await transcribe(recordingID: recording.id, inDocument: documentID)
+            if let text = documents.document(with: documentID)?
+                .recordings.first(where: { $0.id == recording.id })?.transcript,
+               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                documents.replaceParagraph(paragraphID, in: documentID, withTextSplitInto: text)
+            }
+        }
+    }
+
+    /// "Re-record": replace a recording's audio with a freshly captured clip and re-transcribe it
+    /// in place (the document body is left untouched — recordings are source material).
+    func rerecordRecording(_ recordingID: UUID, in documentID: UUID,
+                           audioURL: URL, duration: TimeInterval) {
+        documents.replaceRecordingAudio(recordingID, in: documentID,
+                                        newFileName: audioURL.lastPathComponent, duration: duration)
+        autoTranscribe(recordingID: recordingID, inDocument: documentID)
+    }
+
+    /// "Reset with Originals": rebuild the document body from the recordings' own transcripts, one
+    /// paragraph per recording, discarding any edits/transforms.
+    func resetWithOriginals(in documentID: UUID) {
+        guard let doc = documents.document(with: documentID) else { return }
+        let paragraphs = doc.recordings.compactMap { recording -> Document.Paragraph? in
+            let text = recording.transcript?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return text.isEmpty ? nil : Document.Paragraph(text: text)
+        }
+        documents.setParagraphs(paragraphs, in: documentID)
+        wwLog("Reset “\(doc.title)” to original transcripts (\(paragraphs.count) paragraphs)", .general)
+    }
+
+    /// "Re-transcribe": re-run speech-to-text on a recording, then append the resulting transcript
+    /// as a new paragraph at the bottom of the document body.
+    func retranscribeIntoBody(recordingID: UUID, in documentID: UUID) async {
+        await transcribe(recordingID: recordingID, inDocument: documentID)
+        guard let text = documents.document(with: documentID)?
+            .recordings.first(where: { $0.id == recordingID })?.transcript,
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        documents.appendParagraph(text, to: documentID)
     }
 
     private func deviceOrigin() -> Recording.Origin {
@@ -283,11 +368,30 @@ final class AppModel: ObservableObject {
             if modelReady { AppSettings.shared.markModelDownloaded(AppSettings.shared.model.rawValue) }
             wwLog(String(format: "Language model ready in %.1fs", Date().timeIntervalSince(start)), .model)
         } catch {
-            setupError = error.localizedDescription      // keep llmProgress to show stall point
-            wwLog("Language model failed: \(error.localizedDescription)", .error)
+            if Task.isCancelled {
+                llmProgress = nil                        // user cancelled — not an error
+                wwLog("Language model download cancelled", .model)
+            } else {
+                setupError = error.localizedDescription   // keep llmProgress to show stall point
+                wwLog("Language model failed: \(error.localizedDescription)", .error)
+            }
         }
         isPreparingLLM = false
         if !isPreparingSpeech { busyMessage = nil }
+    }
+
+    /// Start the language-model download as a cancellable task (used by the Settings Download button).
+    func startLanguageModelDownload() {
+        guard llmPrepareTask == nil else { return }
+        llmPrepareTask = Task { [weak self] in
+            await self?.prepareLanguageModel()
+            self?.llmPrepareTask = nil
+        }
+    }
+
+    /// Cancel an in-flight language-model download.
+    func cancelLanguageModelDownload() {
+        llmPrepareTask?.cancel()
     }
 
     func refreshReadiness() async {
@@ -314,25 +418,43 @@ final class AppModel: ObservableObject {
 
     // MARK: Transform
 
-    /// Run a preset against a document's combined transcript, appending the result.
-    func runTransformation(_ preset: PromptPreset,
+    /// Run a preset against the document's whole body, replacing it with the transformed text
+    /// (split back into paragraphs) rather than appending a new block.
+    func transformDocument(_ preset: PromptPreset,
                            on document: Document,
                            onToken: (@Sendable (TransformToken) -> Void)? = nil) async {
-        let source = document.combinedTranscript
+        let source = document.combinedText
         guard !source.isEmpty else {
             setupError = "Nothing to transform yet — record and transcribe something first."
             return
         }
-        wwLog("Running preset “\(preset.name)” on “\(document.title)”…", .transform)
+        wwLog("Transforming “\(document.title)” with “\(preset.name)”…", .transform)
         let start = Date()
         do {
             let result = try await transform.transform(transcript: source, with: preset, onToken: onToken)
-            let t = Document.Transformation(presetName: preset.name, presetID: preset.id,
-                                            output: result.answer, reasoning: result.reasoning)
-            documents.appendTransformation(t, to: document.id)
-            wwLog(String(format: "Preset “%@” finished in %.1fs (%d chars%@)", preset.name,
-                         Date().timeIntervalSince(start), result.answer.count,
-                         result.reasoning.map { " + \($0.count) reasoning" } ?? ""), .transform)
+            documents.setParagraphs(Document.paragraphs(from: result.answer), in: document.id)
+            wwLog(String(format: "Preset “%@” finished in %.1fs (%d chars)", preset.name,
+                         Date().timeIntervalSince(start), result.answer.count), .transform)
+        } catch {
+            setupError = error.localizedDescription
+            wwLog("Transform failed: \(error.localizedDescription)", .error)
+        }
+    }
+
+    /// Run a preset against a single paragraph, replacing that paragraph's text in place.
+    func transformParagraph(_ preset: PromptPreset,
+                            paragraphID: UUID,
+                            in documentID: UUID,
+                            onToken: (@Sendable (TransformToken) -> Void)? = nil) async {
+        guard let source = documents.document(with: documentID)?
+            .paragraphs.first(where: { $0.id == paragraphID })?.text,
+              !source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        wwLog("Transforming a paragraph with “\(preset.name)”…", .transform)
+        do {
+            let result = try await transform.transform(transcript: source, with: preset, onToken: onToken)
+            documents.replaceParagraph(paragraphID, in: documentID, withTextSplitInto: result.answer)
+            wwLog(String(format: "Paragraph transform “%@” finished (%d chars)", preset.name,
+                         result.answer.count), .transform)
         } catch {
             setupError = error.localizedDescription
             wwLog("Transform failed: \(error.localizedDescription)", .error)

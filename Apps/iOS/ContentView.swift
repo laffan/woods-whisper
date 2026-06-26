@@ -1,8 +1,10 @@
 import SwiftUI
+import AppIntents
 import WoodsWhisperKit
 
 struct ContentView: View {
     @EnvironmentObject private var model: AppModel
+    @ObservedObject private var launcher = RecordingLauncher.shared
 
     var body: some View {
         TabView {
@@ -30,6 +32,37 @@ struct ContentView: View {
         } message: {
             Text(model.setupError ?? "")
         }
+        // "New Recording" requested from outside the app (Control / Lock Screen / Action Button /
+        // Siri / Shortcuts). Present the recorder straight to the Inbox, wherever we are.
+        .sheet(isPresented: $launcher.pending) {
+            RecordingSheet(title: "New Recording",
+                           makeURL: { model.documents.newAudioURL().url }) { url, duration in
+                let inbox = model.documents.inboxDocument()
+                model.addDeviceRecording(audioURL: url, duration: duration, toDocument: inbox.id)
+            }
+        }
+        .onOpenURL { url in
+            if url == woodsWhisperRecordURL { launcher.request() }
+        }
+    }
+}
+
+// MARK: - "New Recording" App Shortcut
+
+/// Exposes the (shared) `StartRecordingIntent` to Siri/Spotlight. `AppShortcutsProvider` must live
+/// in the app target; the intent itself is defined in WoodsWhisperKit so the Control extension can
+/// share it.
+struct WoodsWhisperShortcuts: AppShortcutsProvider {
+    static var appShortcuts: [AppShortcut] {
+        AppShortcut(
+            intent: StartRecordingIntent(),
+            phrases: [
+                "New recording in \(.applicationName)",
+                "Start a recording in \(.applicationName)"
+            ],
+            shortTitle: "New Recording",
+            systemImageName: "mic.fill"
+        )
     }
 }
 

@@ -62,8 +62,19 @@ xcodegen generate              # creates WoodsWhisper.xcodeproj
 open WoodsWhisper.xcodeproj
 ```
 
-Then in Xcode: select the **WoodsWhisper** scheme, set your signing team, and run on a device
-(the ML models need real hardware; the Simulator can't use the ANE).
+Then in Xcode: select the **WoodsWhisper** scheme (or **WoodsWhisperWatch** to run on the Watch
+directly), set your signing team on each target, and run on a device (the ML models need real
+hardware; the Simulator can't use the ANE).
+
+> **"New Recording" everywhere.** A `StartRecordingIntent` App Intent (in `WoodsWhisperKit`) lets you
+> start a recording from **Siri, Spotlight, Shortcuts, the iOS Action Button, and a Lock Screen /
+> Control Center Shortcut** — no extra target or paid account needed.
+>
+> **Native complication / Control (optional).** Bespoke WidgetKit extensions for a watch complication
+> (`Apps/WatchComplication`) and an iOS Lock Screen widget + iOS 18 Control (`Apps/iOSWidgets`) are in
+> the repo but **not built by default** — provisioning their extra app-extension App IDs is painful on
+> a free Apple ID. To enable them, re-add the two `app-extension` targets to `project.yml` (see this
+> file's git history), embed them in the apps, and give them a signing team.
 
 > ⚠️ **The Swift package versions for FluidAudio, WhisperKit, and MLX move quickly.** Three
 > files — `ParakeetTranscriptionService.swift`, `WhisperTranscriptionService.swift`, and

@@ -46,38 +46,57 @@ public final class LocalNetworkClient: RecordingSender {
         parameters.includePeerToPeer = true
         let connection = NWConnection(to: endpoint, using: parameters)
 
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            var resumed = false
-            func finish(_ result: Result<Void, Error>) {
-                guard !resumed else { return }
-                resumed = true
-                connection.cancel()
-                continuation.resume(with: result)
-            }
+        // An offline iPad leaves the connection in `.waiting` indefinitely (NWConnection waits for
+        // connectivity), so we both honour Task cancellation (the Watch's Cancel button) and apply a
+        // timeout — otherwise the send would hang forever.
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                queue.async {
+                    var resumed = false
+                    var timeoutItem: DispatchWorkItem?
+                    func finish(_ result: Result<Void, Error>) {
+                        guard !resumed else { return }
+                        resumed = true
+                        timeoutItem?.cancel()
+                        connection.cancel()
+                        continuation.resume(with: result)
+                    }
 
-            connection.stateUpdateHandler = { state in
-                switch state {
-                case .ready:
-                    connection.send(content: frame, completion: .contentProcessed { error in
-                        if let error { finish(.failure(ConnectivityError.transportFailure(error))); return }
-                        // Read the 1-byte ack from the server.
-                        connection.receive(minimumIncompleteLength: 1, maximumLength: 1) { data, _, _, _ in
-                            if let byte = data?.first, byte == 1 {
-                                finish(.success(()))
-                            } else {
-                                finish(.failure(ConnectivityError.authenticationFailed))
-                            }
+                    let item = DispatchWorkItem { finish(.failure(ConnectivityError.notReachable)) }
+                    timeoutItem = item
+                    self.queue.asyncAfter(deadline: .now() + Self.timeout, execute: item)
+
+                    connection.stateUpdateHandler = { state in
+                        switch state {
+                        case .ready:
+                            connection.send(content: frame, completion: .contentProcessed { error in
+                                if let error { finish(.failure(ConnectivityError.transportFailure(error))); return }
+                                // Read the 1-byte ack from the server.
+                                connection.receive(minimumIncompleteLength: 1, maximumLength: 1) { data, _, _, _ in
+                                    if let byte = data?.first, byte == 1 {
+                                        finish(.success(()))
+                                    } else {
+                                        finish(.failure(ConnectivityError.authenticationFailed))
+                                    }
+                                }
+                            })
+                        case .failed(let error):
+                            finish(.failure(ConnectivityError.transportFailure(error)))
+                        case .cancelled:
+                            finish(.failure(ConnectivityError.notReachable))
+                        default:
+                            break
                         }
-                    })
-                case .failed(let error):
-                    finish(.failure(ConnectivityError.transportFailure(error)))
-                case .cancelled:
-                    finish(.failure(ConnectivityError.notReachable))
-                default:
-                    break
+                    }
+                    connection.start(queue: self.queue)
                 }
             }
-            connection.start(queue: queue)
+        } onCancel: {
+            // Triggers `.cancelled` on the connection's queue, which resumes the continuation.
+            connection.cancel()
         }
     }
+
+    /// How long to wait for an unreachable host before giving up.
+    private static let timeout: TimeInterval = 30
 }

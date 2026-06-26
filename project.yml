@@ -89,11 +89,25 @@ targets:
         WATCHOS_DEPLOYMENT_TARGET: "10.0"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
 
+# The native "New Recording" complication (Apps/WatchComplication) and iOS Lock Screen widget +
+# Control (Apps/iOSWidgets) live in the repo but are NOT built by default — on a free Apple ID the
+# extra app-extension App IDs are painful to provision. To enable them, re-add the two app-extension
+# targets (see git history of this file) and give them a signing team. The "New Recording" action is
+# still available without them via App Intents (Siri / Shortcuts / Action Button / a Lock Screen
+# Shortcut), which need no separate target.
+
 schemes:
   WoodsWhisper:
     build:
       targets:
         WoodsWhisper: all
+        WoodsWhisperWatch: all
+    run:
+      config: Debug
+  # Run the watch app directly on an Apple Watch.
+  WoodsWhisperWatch:
+    build:
+      targets:
         WoodsWhisperWatch: all
     run:
       config: Debug

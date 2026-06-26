@@ -44,5 +44,18 @@
     <array>
         <string>audio</string>
     </array>
+
+    <!-- Deep link used by the "New Recording" complication to start a recording -->
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>com.woodswhisper.app.record</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>woodswhisper</string>
+            </array>
+        </dict>
+    </array>
 </dict>
 </plist>

@@ -21,7 +21,10 @@ final class WatchModel: ObservableObject {
     /// Outcome of the last send attempt per recording, for the ✓ / retry affordances.
     @Published var sendOutcome: [UUID: SendOutcome] = [:]
 
-    enum SendOutcome: Equatable { case sent, failed }
+    enum SendOutcome: Equatable { case sent, failed, cancelled }
+
+    /// In-flight send tasks, kept so a send can be cancelled (e.g. the iPad is offline).
+    private var sendTasks: [UUID: Task<Void, Never>] = [:]
 
     /// True while a pairing scan is running; `scanProgress` is `(hostsTried, hostsTotal)`.
     @Published var pairingInProgress = false
@@ -116,20 +119,80 @@ final class WatchModel: ObservableObject {
                                          byteCount: Recording.fileSize(at: audioURL))
         let recording = Recording(name: name, duration: duration, audioFileName: fileName, origin: .watch)
         recordings.add(recording)
-        Task { await send(recording) }
+        // Walking mode: queue locally and send the batch later, instead of uploading each clip now.
+        if WatchSettings.shared.walkingMode {
+            statusMessage = "Saved — walking mode, not sent yet."
+        } else {
+            startSend(recording)
+        }
+    }
+
+    /// Recordings that haven't been confirmed sent (queued in walking mode, or failed/cancelled).
+    var unsentRecordings: [Recording] {
+        recordings.recordings.filter { sendOutcome[$0.id] != .sent && !pendingSends.contains($0.id) }
+    }
+
+    /// Send every recording not yet confirmed sent — the "send the batch" action for walking mode.
+    func sendAllUnsent() {
+        for recording in unsentRecordings {
+            sendOutcome[recording.id] = nil
+            startSend(recording)
+        }
+    }
+
+    /// Begin sending a recording (recorded just now, or a manual re-send), tracking the task so it
+    /// can be cancelled. No-op if a send for this clip is already in flight.
+    func startSend(_ recording: Recording) {
+        guard sendTasks[recording.id] == nil, !pendingSends.contains(recording.id) else { return }
+        sendTasks[recording.id] = Task { await self.send(recording) }
+    }
+
+    /// Cancel an in-flight send (e.g. the iPad isn't online). The clip is marked cancelled so it
+    /// lands in the "Needs Resend" section, where the user can switch targets and resend.
+    func cancelSend(_ recording: Recording) {
+        let id = recording.id
+        sendTasks[id]?.cancel()
+        pendingSends.remove(id)
+        sendProgress[id] = nil
+        sendOutcome[id] = .cancelled
+        statusMessage = "Send cancelled."
+    }
+
+    /// Cancel every in-flight send.
+    func cancelAllSends() {
+        for id in pendingSends {
+            sendTasks[id]?.cancel()
+            sendProgress[id] = nil
+            sendOutcome[id] = .cancelled
+        }
+        pendingSends.removeAll()
+        statusMessage = "Send cancelled."
+    }
+
+    /// Resend everything that previously failed or was cancelled (after, perhaps, switching targets).
+    func resendFailed() {
+        for recording in recordings.recordings
+        where sendOutcome[recording.id] == .failed || sendOutcome[recording.id] == .cancelled {
+            sendOutcome[recording.id] = nil
+            startSend(recording)
+        }
     }
 
     /// Send (or re-send) a recording to the paired device.
     func send(_ recording: Recording) async {
-        guard !pendingSends.contains(recording.id) else { return }   // already in flight
         guard let sender = sender() else {
             statusMessage = "No paired device configured."
+            sendTasks[recording.id] = nil
             return
         }
         let id = recording.id
         pendingSends.insert(id)
         sendOutcome[id] = nil
-        defer { pendingSends.remove(id); sendProgress[id] = nil }
+        defer {
+            pendingSends.remove(id)
+            sendProgress[id] = nil
+            sendTasks[id] = nil
+        }
 
         let url = recordings.audioURL(for: recording)
         let byteCount = (try? Data(contentsOf: url).count) ?? 0
@@ -138,11 +201,21 @@ final class WatchModel: ObservableObject {
             try await sender.send(transfer, audioURL: url) { fraction in
                 Task { @MainActor in self.sendProgress[id] = fraction }
             }
-            sendOutcome[id] = .sent
-            statusMessage = "Sent to \(WatchSettings.shared.deviceLink?.displayName ?? "iPhone")."
+            if Task.isCancelled {
+                sendOutcome[id] = .cancelled
+            } else {
+                sendOutcome[id] = .sent
+                statusMessage = "Sent to \(WatchSettings.shared.deviceLink?.displayName ?? "iPhone")."
+            }
+        } catch is CancellationError {
+            sendOutcome[id] = .cancelled    // cancelSend already set UI state; keep it consistent
         } catch {
-            sendOutcome[id] = .failed
-            statusMessage = "Send failed: \(error.localizedDescription)"
+            // A cancelled NWConnection surfaces as a transport error, not CancellationError — treat
+            // an explicitly-cancelled task as cancelled rather than failed.
+            sendOutcome[id] = Task.isCancelled ? .cancelled : .failed
+            if !Task.isCancelled {
+                statusMessage = "Send failed: \(error.localizedDescription)"
+            }
         }
     }
 }

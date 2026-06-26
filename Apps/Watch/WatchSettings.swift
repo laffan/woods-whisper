@@ -10,6 +10,15 @@ final class WatchSettings {
     private enum Key {
         static let transport = "transport"
         static let deviceLink = "deviceLink"
+        static let walkingMode = "walkingMode"
+    }
+
+    /// When on, recordings are *not* auto-sent after capture (handy on a walk with no iPad nearby).
+    /// They queue up and the user sends them all at once later. Stored under the same key the
+    /// Watch UI reads via `@AppStorage("walkingMode")`.
+    var walkingMode: Bool {
+        get { defaults.bool(forKey: Key.walkingMode) }
+        set { defaults.set(newValue, forKey: Key.walkingMode) }
     }
 
     /// `.phoneSession` (default) uses the paired iPhone; `.localNetwork` sends straight to iPad.

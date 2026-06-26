@@ -6,10 +6,13 @@ struct SettingsView: View {
     @State private var selectedModel = AppSettings.shared.model
     @State private var selectedSpeechModel = AppSettings.shared.speechModel
     @State private var localServerEnabled = AppSettings.shared.localServerEnabled
+    @State private var micOptions: [AudioRecorder.InputOption] = []
+    @State private var selectedMicUID: String? = AppSettings.shared.preferredMicUID
 
     var body: some View {
         NavigationStack {
             Form {
+                microphoneSection
                 speechModelSection
                 languageModelSection
                 presetsSection
@@ -17,6 +20,29 @@ struct SettingsView: View {
                 aboutSection
             }
             .navigationTitle("Settings")
+            .onAppear { micOptions = AudioRecorder.availableInputs() }
+        }
+    }
+
+    // MARK: Microphone
+
+    private var microphoneSection: some View {
+        Section {
+            Picker("Microphone", selection: $selectedMicUID) {
+                Text("Automatic").tag(String?.none)
+                ForEach(micOptions) { option in
+                    Text(option.name).tag(String?.some(option.id))
+                }
+            }
+            .onChange(of: selectedMicUID) { _, newValue in
+                AppSettings.shared.preferredMicUID = newValue
+                AudioRecorder.preferredInputUID = newValue
+            }
+        } header: {
+            Text("Microphone")
+        } footer: {
+            Text("Choose which microphone to record with — built-in, wired, or Bluetooth. "
+                 + "“Automatic” lets the system pick (usually the most recently connected).")
         }
     }
 
@@ -64,7 +90,7 @@ struct SettingsView: View {
         Section {
             Picker("Model", selection: $selectedModel) {
                 ForEach(LanguageModelChoice.allCases) { m in
-                    Text(m.displayName).tag(m)
+                    Text(m.pickerLabel).tag(m)
                 }
             }
             .onChange(of: selectedModel) { _, newValue in
@@ -75,17 +101,20 @@ struct SettingsView: View {
                     await model.refreshReadiness()
                 }
             }
-            Text(selectedModel.approxRAMNote)
-                .font(.caption).foregroundStyle(.secondary)
 
             ModelSetupRow(title: "Model weights", systemImage: "brain",
                           ready: model.modelReady, progress: model.llmProgress)
             if !model.modelReady {
-                Button(downloadTitle(preparing: model.isPreparingLLM,
-                                     started: model.llmProgress != nil)) {
-                    Task { await model.prepareLanguageModel() }
+                if model.isPreparingLLM {
+                    Button("Cancel Download", role: .destructive) {
+                        model.cancelLanguageModelDownload()
+                    }
+                } else {
+                    Button(downloadTitle(preparing: false,
+                                         started: model.llmProgress != nil)) {
+                        model.startLanguageModelDownload()
+                    }
                 }
-                .disabled(model.isPreparingLLM)
             }
         } header: {
             Text("Language Model")

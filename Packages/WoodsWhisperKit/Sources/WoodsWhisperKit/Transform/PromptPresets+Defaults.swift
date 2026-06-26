@@ -4,40 +4,32 @@ public extension PromptPreset {
     /// Presets seeded on first launch. Users can edit, delete, or add their own.
     static let builtIns: [PromptPreset] = [
         PromptPreset(
-            name: "Clean Up",
-            template: "Lightly clean up the following transcript: fix punctuation, capitalization, "
-                + "and obvious speech-to-text errors. Do not change wording or meaning.\n\n"
-                + transcriptToken,
+            name: "Clean Transcript",
+            template: "The following text was automatically transcribed from dictation and does not "
+                + "contain correct punctuation or formatting. Begin by removing all paragraph breaks, "
+                + "attempted punctuation and bracketed text. Then, without changing any words, please "
+                + "format and punctuate properly so that the sentences flow as best they can, adding "
+                + "new paragraph breaks where appropriate.\n\n" + transcriptToken,
             temperature: 0.3,
             isBuiltIn: true
         ),
         PromptPreset(
-            name: "Summarize",
-            template: "Summarize the following transcript into a few concise bullet points "
-                + "capturing the key ideas:\n\n" + transcriptToken,
+            name: "Summarize Points",
+            template: "Summarize the following in to a series of salient bullet points that capture "
+                + "the main ideas.\n\n" + transcriptToken,
             temperature: 0.4,
             isBuiltIn: true
         ),
         PromptPreset(
             name: "Action Items",
-            template: "Extract any tasks, commitments, or action items from this transcript as a "
-                + "checklist. If there are none, say so.\n\n" + transcriptToken,
+            template: "Extract any tasks, commitments, or action items from this transcript. Write "
+                + "each item as a single line of plain text, and separate each item from the next "
+                + "with a blank line. Do not use bullets, dashes, numbers, or any markdown "
+                + "formatting. If there are none, reply with a single line saying so.\n\n"
+                + transcriptToken,
             temperature: 0.3,
-            isBuiltIn: true
-        ),
-        PromptPreset(
-            name: "Formal Email",
-            template: "Rewrite the following spoken notes as a clear, professional email. "
-                + "Keep it concise.\n\n" + transcriptToken,
-            temperature: 0.7,
-            isBuiltIn: true
-        ),
-        PromptPreset(
-            name: "Journal Entry",
-            template: "Rewrite these spoken notes as a reflective first-person journal entry, "
-                + "preserving the speaker's voice.\n\n" + transcriptToken,
-            temperature: 0.8,
             isBuiltIn: true
         )
     ]
 }
+
