@@ -817,6 +817,7 @@ struct InboxView: View {
     @State private var selectionMode = false
     @State private var selected: Set<UUID> = []
     @State private var showingBatchMove = false
+    @State private var moveRecordingID: UUID?
 
     private var inbox: Document? { model.documents.document(with: documentID) }
     private var recordings: [Recording] { inbox?.recordings ?? [] }
@@ -846,6 +847,12 @@ struct InboxView: View {
                 .swipeActions(edge: .trailing) {
                     Button("Delete", role: .destructive) {
                         model.documents.deleteRecording(recording.id, fromDocument: documentID)
+                    }
+                }
+                .swipeActions(edge: .leading) {
+                    if !documentTargets.isEmpty {
+                        Button("Move") { moveRecordingID = recording.id }
+                            .tint(.blue)
                     }
                 }
             }
@@ -903,6 +910,19 @@ struct InboxView: View {
                 Button(target.title) {
                     model.documents.moveRecordings(selected, from: documentID, to: target.id)
                     exitSelection()
+                }
+            }
+        }
+        .confirmationDialog("Move to…",
+                            isPresented: Binding(get: { moveRecordingID != nil },
+                                                 set: { if !$0 { moveRecordingID = nil } }),
+                            titleVisibility: .visible) {
+            ForEach(documentTargets) { target in
+                Button(target.title) {
+                    if let id = moveRecordingID {
+                        model.documents.moveRecording(id, from: documentID, to: target.id)
+                    }
+                    moveRecordingID = nil
                 }
             }
         }
