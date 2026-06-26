@@ -211,6 +211,22 @@ public final class DocumentStore: ObservableObject {
         touch(docIdx)
     }
 
+    /// Replace a paragraph with the result of splitting `text` on blank lines — so paragraph breaks
+    /// introduced while editing (or produced by a transform) become separate sections, each with its
+    /// own inter-paragraph insert button. An empty result removes the paragraph.
+    public func replaceParagraph(_ paragraphID: UUID, in documentID: UUID, withTextSplitInto text: String) {
+        guard let docIdx = index(of: documentID),
+              let pIdx = documents[docIdx].paragraphs.firstIndex(where: { $0.id == paragraphID })
+        else { return }
+        let replacements = Document.paragraphs(from: text)
+        if replacements.isEmpty {
+            documents[docIdx].paragraphs.remove(at: pIdx)
+        } else {
+            documents[docIdx].paragraphs.replaceSubrange(pIdx...pIdx, with: replacements)
+        }
+        touch(docIdx)
+    }
+
     public func deleteParagraph(_ paragraphID: UUID, in documentID: UUID) {
         guard let docIdx = index(of: documentID) else { return }
         documents[docIdx].paragraphs.removeAll { $0.id == paragraphID }
@@ -278,18 +294,30 @@ public final class DocumentStore: ObservableObject {
 
     // MARK: Persistence
 
+    /// Bump when the shipped built-in presets change, so existing installs re-seed them (custom
+    /// presets are preserved) instead of keeping the old set forever.
+    private static let presetsSeedVersion = 1
+    private let presetsSeedVersionKey = "ww.presetsSeedVersion"
+
     private func load() {
         if let data = try? Data(contentsOf: documentsURL),
            let decoded = try? JSONDecoder.iso.decode([Document].self, from: data) {
             documents = decoded.sorted { $0.updatedAt > $1.updatedAt }
         }
+        let defaults = UserDefaults.standard
         if let data = try? Data(contentsOf: presetsURL),
            let decoded = try? JSONDecoder.iso.decode([PromptPreset].self, from: data),
            !decoded.isEmpty {
             presets = decoded
+            // Migrate the built-in set to the current ones when behind (keeps user presets).
+            if defaults.integer(forKey: presetsSeedVersionKey) < Self.presetsSeedVersion {
+                resetBuiltInPresets()
+                defaults.set(Self.presetsSeedVersion, forKey: presetsSeedVersionKey)
+            }
         } else {
             presets = PromptPreset.builtIns
             persistPresets()
+            defaults.set(Self.presetsSeedVersion, forKey: presetsSeedVersionKey)
         }
     }
 

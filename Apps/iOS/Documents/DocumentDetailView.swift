@@ -80,7 +80,8 @@ struct DocumentDetailView: View {
         }
         .sheet(item: $editingParagraph) { para in
             TextEditorSheet(title: "Edit Paragraph", text: $editingText) {
-                model.documents.updateParagraph(para.id, in: documentID, to: editingText)
+                // Blank lines added while editing split into separate sections.
+                model.documents.replaceParagraph(para.id, in: documentID, withTextSplitInto: editingText)
             }
         }
         .sheet(isPresented: $showingDocEditor) {
@@ -705,13 +706,7 @@ struct RecordingSheet: View {
     @State private var errorMessage: String?
 
     var body: some View {
-        VStack(spacing: 14) {
-            HStack {
-                Button("Cancel") { cancel() }
-                    .font(.subheadline)
-                Spacer()
-            }
-
+        VStack(spacing: 16) {
             Text(timeString(recorder.elapsed))
                 .font(.title2.monospacedDigit())
                 .foregroundStyle(recorder.isPaused ? .secondary : .primary)
@@ -719,6 +714,15 @@ struct RecordingSheet: View {
             LevelMeter(level: recorder.currentLevel)
 
             HStack(spacing: 12) {
+                Button { cancel() } label: {
+                    Image(systemName: "xmark")
+                        .font(.title2)
+                        .frame(maxWidth: .infinity, minHeight: 50)
+                }
+                .buttonStyle(.bordered)
+                .tint(.gray)
+                .accessibilityLabel("Cancel")
+
                 Button { finish() } label: {
                     Image(systemName: "stop.fill")
                         .font(.title2)
@@ -740,11 +744,11 @@ struct RecordingSheet: View {
                 .accessibilityLabel(recorder.isPaused ? "Continue" : "Pause")
             }
         }
-        .padding(.top, 16)
-        .padding(.horizontal, 24)
+        .padding(.top, 24)
+        .padding(.horizontal, 20)
         .padding(.bottom, 12)
         .frame(maxWidth: .infinity)
-        .presentationDetents([.height(230)])
+        .presentationDetents([.height(210)])
         .interactiveDismissDisabled(true)
         .task { await begin() }
         .onDisappear { discardIfUnfinished() }

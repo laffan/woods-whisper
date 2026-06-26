@@ -225,7 +225,7 @@ final class AppModel: ObservableObject {
             if let text = documents.document(with: documentID)?
                 .recordings.first(where: { $0.id == recording.id })?.transcript,
                !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                documents.updateParagraph(paragraphID, in: documentID, to: text)
+                documents.replaceParagraph(paragraphID, in: documentID, withTextSplitInto: text)
             }
         }
     }
@@ -452,7 +452,7 @@ final class AppModel: ObservableObject {
         wwLog("Transforming a paragraph with “\(preset.name)”…", .transform)
         do {
             let result = try await transform.transform(transcript: source, with: preset, onToken: onToken)
-            documents.updateParagraph(paragraphID, in: documentID, to: result.answer)
+            documents.replaceParagraph(paragraphID, in: documentID, withTextSplitInto: result.answer)
             wwLog(String(format: "Paragraph transform “%@” finished (%d chars)", preset.name,
                          result.answer.count), .transform)
         } catch {
