@@ -103,7 +103,9 @@ struct SettingsView: View {
                     }
                 }
             }
-            .pickerStyle(.navigationLink)
+            .pickerStyle(.menu)
+            .labelsHidden()
+            .frame(maxWidth: .infinity, alignment: .leading)
             .onChange(of: selectedModel) { _, newValue in
                 model.selectLanguageModel(newValue)
             }

@@ -257,18 +257,13 @@ struct DocumentDetailView: View {
                         docEditorText = document.combinedText
                         showingDocEditor = true
                     }
+                    docActionButton("Transform", "wand.and.stars") {
+                        withAnimation(.snappy(duration: 0.22)) { showingDocTransform = true }
+                    }
+                    .disabled(!model.modelReady || isTransformingDoc)
                 }
                 .frame(maxWidth: .infinity)
                 .listRowInsets(EdgeInsets(top: 6, leading: 8, bottom: 6, trailing: 8))
-
-                Button {
-                    withAnimation(.snappy(duration: 0.22)) { showingDocTransform = true }
-                } label: {
-                    Label("Transform", systemImage: "wand.and.stars").frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(!model.modelReady || isTransformingDoc)
-                .listRowInsets(EdgeInsets(top: 4, leading: 8, bottom: 8, trailing: 8))
             }
         }
     }
