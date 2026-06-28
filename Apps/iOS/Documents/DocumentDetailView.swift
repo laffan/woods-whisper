@@ -42,6 +42,7 @@ struct DocumentDetailView: View {
 
     // Share
     @State private var shareItem: ShareItem?
+    @State private var audioShareItem: AudioShareItem?
 
     // Document rename (tap the title)
     @State private var showingRename = false
@@ -92,7 +93,10 @@ struct DocumentDetailView: View {
             }
         }
         .sheet(item: $shareItem) { item in
-            ActivityView(text: item.text)
+            ActivityView(activityItems: [item.text])
+        }
+        .sheet(item: $audioShareItem) { item in
+            ActivityView(activityItems: [item.url])
         }
         .confirmationDialog("Move recording to…",
                             isPresented: Binding(get: { movingRecording != nil },
@@ -133,10 +137,14 @@ struct DocumentDetailView: View {
             recordingsSection(for: document)
         }
         .environment(\.editMode, $editMode)
-        .safeAreaInset(edge: .bottom) { bottomBar(for: document) }
         .overlay(alignment: .top) {
             if isTransformingDoc {
                 BusyBanner(message: "Transforming document…").padding(.top, 8)
+            }
+        }
+        .overlay {
+            if showingDocTransform {
+                transformOverlay(for: document)
             }
         }
         .sheet(item: $creatingTransform) { preset in
@@ -252,6 +260,15 @@ struct DocumentDetailView: View {
                 }
                 .frame(maxWidth: .infinity)
                 .listRowInsets(EdgeInsets(top: 6, leading: 8, bottom: 6, trailing: 8))
+
+                Button {
+                    withAnimation(.snappy(duration: 0.22)) { showingDocTransform = true }
+                } label: {
+                    Label("Transform", systemImage: "wand.and.stars").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!model.modelReady || isTransformingDoc)
+                .listRowInsets(EdgeInsets(top: 4, leading: 8, bottom: 8, trailing: 8))
             }
         }
     }
@@ -282,17 +299,25 @@ struct DocumentDetailView: View {
                         onPlay: { playback.toggle(recording, url: model.documents.audioURL(for: recording)) }
                     )
                     .onLongPressGesture { withAnimation { editMode = .active } }
-                    // Swipe left → Delete
+                    // Swipe left → Delete / Share the audio file
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                         Button("Delete", role: .destructive) {
                             model.documents.deleteRecording(recording.id, fromDocument: documentID)
                         }
+                        Button("Share") {
+                            audioShareItem = AudioShareItem(url: model.documents.audioURL(for: recording))
+                        }.tint(.indigo)
                     }
-                    // Swipe right → Re-record / Move
+                    // Swipe right → Transcribe (re-run STT) / Append its transcript to the body / Move
                     .swipeActions(edge: .leading, allowsFullSwipe: false) {
-                        Button("Re-record") { recorderTask = .rerecord(recordingID: recording.id) }.tint(.orange)
+                        Button("Transcribe") {
+                            Task { await model.transcribe(recordingID: recording.id, inDocument: documentID) }
+                        }.tint(.blue)
+                        Button("Append") {
+                            model.appendRecordingToBody(recordingID: recording.id, in: documentID)
+                        }.tint(.green)
                         if !otherDocuments.isEmpty {
-                            Button("Move") { movingRecording = recording }.tint(.blue)
+                            Button("Move") { movingRecording = recording }.tint(.orange)
                         }
                     }
                 }
@@ -357,59 +382,52 @@ struct DocumentDetailView: View {
         }
     }
 
-    // MARK: Bottom bar
+    // MARK: Transform pane
 
+    /// Floating transform pane: a dimmed scrim (tap anywhere outside to dismiss) with the pane
+    /// anchored at the bottom. Opened by the Transform button in the document-actions section.
     @ViewBuilder
-    private func bottomBar(for document: Document) -> some View {
-        if !editMode.isEditing {
-            VStack(spacing: 0) {
-                // The pane pushes up out of the Transform button (the button stays attached to it).
-                if showingDocTransform {
-                    transformPane(for: document)
-                    Divider()
-                }
-                Button {
-                    withAnimation(.snappy(duration: 0.22)) { showingDocTransform.toggle() }
-                } label: {
-                    HStack {
-                        Label("Transform — \(AppSettings.shared.model.shortName)",
-                              systemImage: "wand.and.stars")
-                        Spacer()
-                        Image(systemName: showingDocTransform ? "chevron.down" : "chevron.up")
-                            .font(.footnote.weight(.semibold))
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(!model.modelReady || isTransformingDoc || document.combinedText.isEmpty)
-                .padding()
-            }
-            .background(.bar)
+    private func transformOverlay(for document: Document) -> some View {
+        ZStack(alignment: .bottom) {
+            Color.black.opacity(0.2)
+                .ignoresSafeArea()
+                .onTapGesture { withAnimation(.snappy(duration: 0.22)) { showingDocTransform = false } }
+            transformPane(for: document)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .padding(.horizontal, 12)
+                .padding(.bottom, 8)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
         }
     }
 
-    /// The transform pane: one row per preset (a run button plus a twirl-down arrow revealing the
-    /// prompt and Duplicate / Edit), then "Add New Transform…". Sits directly above the Transform
-    /// button so the two read as one attached surface.
+    /// The pane: a "Transform — <model>" header, one row per preset (a run button plus a twirl-down
+    /// arrow revealing the prompt and Duplicate / Edit), then "Add New Transform…".
     @ViewBuilder
     private func transformPane(for document: Document) -> some View {
-        ScrollView {
-            VStack(spacing: 0) {
-                ForEach(model.documents.presets) { preset in
-                    transformRow(preset, on: document)
-                    Divider().padding(.leading, 16)
-                }
-                Button {
-                    withAnimation(.snappy(duration: 0.22)) { showingDocTransform = false }
-                    creatingTransform = PromptPreset(name: "", template: PromptPreset.transcriptToken)
-                } label: {
-                    Label("Add New Transform…", systemImage: "plus")
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 16).padding(.vertical, 12)
+        VStack(spacing: 0) {
+            Text("Transform — \(AppSettings.shared.model.shortName)")
+                .font(.headline)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16).padding(.top, 16).padding(.bottom, 12)
+            Divider()
+            ScrollView {
+                VStack(spacing: 0) {
+                    ForEach(model.documents.presets) { preset in
+                        transformRow(preset, on: document)
+                        Divider().padding(.leading, 16)
+                    }
+                    Button {
+                        withAnimation(.snappy(duration: 0.22)) { showingDocTransform = false }
+                        creatingTransform = PromptPreset(name: "", template: PromptPreset.transcriptToken)
+                    } label: {
+                        Label("Add New Transform…", systemImage: "plus")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 16).padding(.vertical, 12)
+                    }
                 }
             }
+            .frame(maxHeight: 320)
         }
-        .frame(maxHeight: 320)
     }
 
     @ViewBuilder
@@ -455,7 +473,7 @@ struct DocumentDetailView: View {
                             duplicatePreset(preset)
                         } label: { Label("Duplicate", systemImage: "plus.square.on.square") }
                         Button {
-                            showingDocTransform = false
+                            withAnimation(.snappy(duration: 0.22)) { showingDocTransform = false }
                             editingPreset = preset
                         } label: { Label("Edit", systemImage: "pencil") }
                         Spacer()
@@ -611,12 +629,18 @@ struct ShareItem: Identifiable {
     let text: String
 }
 
+/// Wraps an audio file URL so it can drive a `.sheet(item:)` share presentation (share the clip).
+struct AudioShareItem: Identifiable {
+    let id = UUID()
+    let url: URL
+}
+
 #if canImport(UIKit)
-/// Bridges `UIActivityViewController` for share sheets.
+/// Bridges `UIActivityViewController` for share sheets — shares text or a file URL.
 struct ActivityView: UIViewControllerRepresentable {
-    let text: String
+    let activityItems: [Any]
     func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: [text], applicationActivities: nil)
+        UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
     }
     func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }

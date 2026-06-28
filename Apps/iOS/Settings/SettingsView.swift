@@ -91,7 +91,7 @@ struct SettingsView: View {
         Section {
             // Split into on-device vs online sections; each row carries a status icon — green dot =
             // downloaded on device, orange dot = not downloaded, WiFi = streams from the cloud.
-            Picker("Model", selection: $selectedModel) {
+            Picker("", selection: $selectedModel) {
                 Section("On-device") {
                     ForEach(LanguageModelChoice.allCases.filter { !$0.isOnline }) { m in
                         modelPickerRow(m).tag(m)
@@ -169,7 +169,9 @@ struct SettingsView: View {
             Text(m.displayName)
         } icon: {
             if m.isOnline {
-                Image(systemName: "wifi").foregroundStyle(.primary)
+                Image(systemName: "wifi")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.primary)
             } else {
                 Image(systemName: "circle.fill")
                     .font(.system(size: 10))

@@ -106,7 +106,7 @@ struct DocumentsView: View {
                 }
             }
             .sheet(item: $shareItem) { item in
-                ActivityView(text: item.text)
+                ActivityView(activityItems: [item.text])
             }
             .sheet(item: $editingDoc) { doc in
                 TextEditorSheet(title: doc.title, text: $editingText) {

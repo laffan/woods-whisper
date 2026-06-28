@@ -262,6 +262,25 @@ final class AppModel: ObservableObject {
         documents.appendParagraph(text, to: documentID)
     }
 
+    /// "Append": add the recording's transcript as a new paragraph at the bottom of the document
+    /// body. If the recording hasn't been transcribed yet, transcribe it first. (Unlike
+    /// `retranscribeIntoBody`, this reuses an existing transcript rather than always re-running STT.)
+    func appendRecordingToBody(recordingID: UUID, in documentID: UUID) {
+        func currentTranscript() -> String {
+            documents.document(with: documentID)?
+                .recordings.first(where: { $0.id == recordingID })?.transcript?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        }
+        Task {
+            if currentTranscript().isEmpty {
+                await transcribe(recordingID: recordingID, inDocument: documentID)
+            }
+            let text = currentTranscript()
+            guard !text.isEmpty else { return }
+            documents.appendParagraph(text, to: documentID)
+        }
+    }
+
     private func deviceOrigin() -> Recording.Origin {
         #if os(iOS)
         return UIDevice.current.userInterfaceIdiom == .pad ? .pad : .phone
