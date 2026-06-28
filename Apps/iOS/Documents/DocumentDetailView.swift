@@ -996,10 +996,8 @@ struct InboxView: View {
                     }
                 }
                 .swipeActions(edge: .leading) {
-                    if !documentTargets.isEmpty {
-                        Button("Move") { moveRecordingID = recording.id }
-                            .tint(.blue)
-                    }
+                    Button("Move") { withAnimation(.snappy(duration: 0.22)) { moveRecordingID = recording.id } }
+                        .tint(.blue)
                 }
             }
         }
@@ -1059,18 +1057,75 @@ struct InboxView: View {
                 }
             }
         }
-        .confirmationDialog("Move to…",
-                            isPresented: Binding(get: { moveRecordingID != nil },
-                                                 set: { if !$0 { moveRecordingID = nil } }),
-                            titleVisibility: .visible) {
-            ForEach(documentTargets) { target in
-                Button(target.title) {
-                    if let id = moveRecordingID {
-                        model.documents.moveRecording(id, from: documentID, to: target.id)
+        .overlay {
+            if let id = moveRecordingID {
+                moveOverlay(recordingID: id)
+            }
+        }
+    }
+
+    // MARK: Move-to-document pane
+
+    /// Floating pane (swipe a recording right → Move): the same design as the document Transform
+    /// pane — a dimmed scrim you tap to dismiss, with the pane anchored at the bottom. Lists the
+    /// destination documents and, below them, a "New Document" button that makes a fresh document
+    /// and moves the recording into it.
+    @ViewBuilder
+    private func moveOverlay(recordingID: UUID) -> some View {
+        ZStack(alignment: .bottom) {
+            Color.black.opacity(0.2)
+                .ignoresSafeArea()
+                .onTapGesture { withAnimation(.snappy(duration: 0.22)) { moveRecordingID = nil } }
+            movePane(recordingID: recordingID)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .padding(.horizontal, 12)
+                .padding(.bottom, 8)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+        }
+    }
+
+    /// The pane body: a "Move to Document" header, one row per destination document, then a
+    /// "New Document" row (mirroring "Add New Transform…" on the Transform pane).
+    @ViewBuilder
+    private func movePane(recordingID: UUID) -> some View {
+        VStack(spacing: 0) {
+            Text("Move to Document")
+                .font(.headline)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16).padding(.top, 16).padding(.bottom, 12)
+            Divider()
+            ScrollView {
+                VStack(spacing: 0) {
+                    ForEach(documentTargets) { target in
+                        Button {
+                            withAnimation(.snappy(duration: 0.22)) {
+                                model.documents.moveRecording(recordingID, from: documentID, to: target.id)
+                                moveRecordingID = nil
+                            }
+                        } label: {
+                            Text(target.title)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 16).padding(.vertical, 12)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        Divider().padding(.leading, 16)
                     }
-                    moveRecordingID = nil
+                    Button {
+                        withAnimation(.snappy(duration: 0.22)) {
+                            let doc = model.documents.createDocument()
+                            model.documents.moveRecording(recordingID, from: documentID, to: doc.id)
+                            moveRecordingID = nil
+                        }
+                    } label: {
+                        Label("New Document", systemImage: "plus")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 16).padding(.vertical, 12)
+                    }
                 }
             }
+            .frame(maxHeight: 320)
         }
     }
 
