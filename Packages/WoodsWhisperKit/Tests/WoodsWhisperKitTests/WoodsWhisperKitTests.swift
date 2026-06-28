@@ -93,9 +93,9 @@ final class WoodsWhisperKitTests: XCTestCase {
         XCTAssertEqual(LanguageModelChoice.claudeHaiku.rawValue, "claude-haiku-4-5")
     }
 
-    func testOnlinePickerLabelMentionsSignalNotDownloadSize() {
-        XCTAssertTrue(LanguageModelChoice.claudeSonnet.pickerLabel.contains("signal"))
-        XCTAssertTrue(LanguageModelChoice.gemma3_4B.pickerLabel.contains("GB"))
+    func testShortNamesAreConcise() {
+        XCTAssertEqual(LanguageModelChoice.claudeHaiku.shortName, "Haiku 4.5")
+        XCTAssertEqual(LanguageModelChoice.gemma3_4B.shortName, "Gemma 3 4B")
     }
 
     // MARK: Pairing / subnet math

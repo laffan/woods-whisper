@@ -89,18 +89,23 @@ struct SettingsView: View {
 
     private var languageModelSection: some View {
         Section {
+            // Split into on-device vs online sections; each row carries a status icon — green dot =
+            // downloaded on device, orange dot = not downloaded, WiFi = streams from the cloud.
             Picker("Model", selection: $selectedModel) {
-                ForEach(LanguageModelChoice.allCases) { m in
-                    Text(m.pickerLabel).tag(m)
+                Section("On-device") {
+                    ForEach(LanguageModelChoice.allCases.filter { !$0.isOnline }) { m in
+                        modelPickerRow(m).tag(m)
+                    }
+                }
+                Section("Online") {
+                    ForEach(LanguageModelChoice.allCases.filter(\.isOnline)) { m in
+                        modelPickerRow(m).tag(m)
+                    }
                 }
             }
+            .pickerStyle(.navigationLink)
             .onChange(of: selectedModel) { _, newValue in
-                AppSettings.shared.model = newValue
-                Task {
-                    do { try await model.transform.setModel(newValue) }
-                    catch { model.setupError = error.localizedDescription }
-                    await model.refreshReadiness()
-                }
+                model.selectLanguageModel(newValue)
             }
 
             if selectedModel.isOnline {
@@ -113,16 +118,19 @@ struct SettingsView: View {
             } else {
                 ModelSetupRow(title: "Model weights", systemImage: "brain",
                               ready: model.modelReady, progress: model.llmProgress)
-                if !model.modelReady {
-                    if model.isPreparingLLM {
-                        Button("Cancel Download", role: .destructive) {
-                            model.cancelLanguageModelDownload()
-                        }
-                    } else {
-                        Button(downloadTitle(preparing: false,
-                                             started: model.llmProgress != nil)) {
-                            model.startLanguageModelDownload()
-                        }
+                if model.isPreparingLLM {
+                    Button("Cancel Download", role: .destructive) {
+                        model.cancelLanguageModelDownload()
+                    }
+                } else if model.isLanguageModelDownloaded {
+                    // Downloaded models stay on device and auto-load when selected; this frees them.
+                    Button("Remove Download", role: .destructive) {
+                        model.removeLanguageModelDownload()
+                    }
+                } else if !model.modelReady {
+                    Button(downloadTitle(started: model.llmProgress != nil,
+                                         size: selectedModel.approxDownloadSize)) {
+                        model.startLanguageModelDownload()
                     }
                 }
             }
@@ -130,10 +138,10 @@ struct SettingsView: View {
             Text("Language Model")
         } footer: {
             Text("Rewrites transcripts. The on-device models (Qwen3, Llama 3.2, Gemma 3) download "
-                 + "once while online and then work offline. The online Claude models stream from "
-                 + "Anthropic — pick one when you have a cell signal and tap Authenticate to add "
-                 + "your API key (no download). Switching to an on-device model requires "
-                 + "downloading it.")
+                 + "once while online and then work offline; a downloaded model reloads "
+                 + "automatically when you pick it (tap Remove Download to free its space). The "
+                 + "online Claude models stream from Anthropic — pick one when you have a cell "
+                 + "signal and tap Authenticate to add your API key (no download).")
         }
         .sheet(isPresented: $showingAuthSheet) {
             AnthropicAuthView(isAuthenticated: model.isAuthenticated) { key in
@@ -146,6 +154,28 @@ struct SettingsView: View {
     private func downloadTitle(preparing: Bool, started: Bool) -> String {
         if preparing { return "Downloading…" }
         return started ? "Resume Download" : "Download"
+    }
+
+    /// Language-model Download label, with the on-disk size on the button: "Download (~2.4 GB)" or
+    /// "Resume Download (~2.4 GB)" if a previous attempt was interrupted.
+    private func downloadTitle(started: Bool, size: String) -> String {
+        "\(started ? "Resume Download" : "Download") (\(size))"
+    }
+
+    /// One row in the model picker: the model's name with a status icon — a green dot when its
+    /// weights are downloaded on device, an orange dot when not, or a WiFi glyph for online models.
+    private func modelPickerRow(_ m: LanguageModelChoice) -> some View {
+        Label {
+            Text(m.displayName)
+        } icon: {
+            if m.isOnline {
+                Image(systemName: "wifi").foregroundStyle(.primary)
+            } else {
+                Image(systemName: "circle.fill")
+                    .font(.system(size: 10))
+                    .foregroundStyle(AppSettings.shared.isModelDownloaded(m.rawValue) ? .green : .orange)
+            }
+        }
     }
 
     // MARK: Presets

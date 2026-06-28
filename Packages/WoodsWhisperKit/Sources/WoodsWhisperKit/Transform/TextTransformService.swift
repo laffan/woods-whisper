@@ -83,11 +83,23 @@ public enum LanguageModelChoice: String, CaseIterable, Codable, Sendable, Identi
     public var displayName: String {
         switch self {
         case .gemma3_4B:    return "Gemma 3 · 4B (default)"
-        case .qwen3_4B:     return "Qwen3 · 4B (shows reasoning)"
+        case .qwen3_4B:     return "Qwen3 · 4B (reasoning)"
         case .llama3_2_3B:  return "Llama 3.2 · 3B"
         case .gemma3_1B:    return "Gemma 3 · 1B (fastest)"
-        case .claudeSonnet: return "Claude Sonnet 4.6 (online)"
-        case .claudeHaiku:  return "Claude Haiku 4.5 (online)"
+        case .claudeSonnet: return "Claude Sonnet 4.6"
+        case .claudeHaiku:  return "Claude Haiku 4.5"
+        }
+    }
+
+    /// A compact label for inline use (e.g. the document Transform button: "Transform — Haiku 4.5").
+    public var shortName: String {
+        switch self {
+        case .gemma3_4B:    return "Gemma 3 4B"
+        case .qwen3_4B:     return "Qwen3 4B"
+        case .llama3_2_3B:  return "Llama 3.2 3B"
+        case .gemma3_1B:    return "Gemma 3 1B"
+        case .claudeSonnet: return "Sonnet 4.6"
+        case .claudeHaiku:  return "Haiku 4.5"
         }
     }
 
@@ -113,12 +125,6 @@ public enum LanguageModelChoice: String, CaseIterable, Codable, Sendable, Identi
         case .gemma3_1B:                  return "~0.7 GB"
         case .claudeSonnet, .claudeHaiku: return "no download"
         }
-    }
-
-    /// Picker label combining the model name and what it costs to enable, e.g. "Gemma 3 · 4B —
-    /// ~2.4 GB" for an on-device model or "Claude Sonnet 4.6 (online) — needs cell signal" online.
-    public var pickerLabel: String {
-        isOnline ? "\(displayName) — needs cell signal" : "\(displayName) — \(approxDownloadSize)"
     }
 
     /// Extra stop strings beyond the tokenizer's own end-of-sequence token. Chat models mark the

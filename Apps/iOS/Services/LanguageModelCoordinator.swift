@@ -45,6 +45,13 @@ final class LanguageModelCoordinator: TextTransformService {
         try await backend.prepare(progress: progress)
     }
 
+    /// Delete the active on-device model's downloaded weights (no-op for online models, which have
+    /// nothing on disk). Backs Settings' "Remove Download".
+    func removeActiveDownload() {
+        guard !activeModel.isOnline else { return }
+        onDevice.removeDownload()
+    }
+
     @discardableResult
     func transform(
         transcript: String,

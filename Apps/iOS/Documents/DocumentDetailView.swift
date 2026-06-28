@@ -25,7 +25,9 @@ struct DocumentDetailView: View {
     @State private var movingRecording: Recording?
 
     // Transform
-    @State private var showingDocTransform = false
+    @State private var showingDocTransform = false        // drives the bottom transform pane
+    @State private var expandedPresetID: UUID?            // which preset row is twirled open
+    @State private var editingPreset: PromptPreset?       // "Edit" from a pane row
     @State private var paragraphTransformTarget: UUID?
     @State private var isTransformingDoc = false
     @State private var transformingParagraphID: UUID?
@@ -137,19 +139,13 @@ struct DocumentDetailView: View {
                 BusyBanner(message: "Transforming document…").padding(.top, 8)
             }
         }
-        .confirmationDialog("Transform document with…", isPresented: $showingDocTransform,
-                            titleVisibility: .visible) {
-            ForEach(model.documents.presets) { preset in
-                Button(preset.name) { runDocumentTransform(preset, on: document) }
-            }
-            Button("Add New Transform…") {
-                creatingTransform = PromptPreset(name: "", template: PromptPreset.transcriptToken)
-            }
-        }
         .sheet(item: $creatingTransform) { preset in
             PresetEditorView(preset: preset, isNew: true, saveTitle: "Save & Run") { saved in
                 runDocumentTransform(saved, on: document)
             }
+        }
+        .sheet(item: $editingPreset) { preset in
+            PresetEditorView(preset: preset, isNew: false)
         }
         .confirmationDialog("Transform paragraph with…",
                             isPresented: Binding(get: { paragraphTransformTarget != nil },
@@ -366,15 +362,108 @@ struct DocumentDetailView: View {
     @ViewBuilder
     private func bottomBar(for document: Document) -> some View {
         if !editMode.isEditing {
-            Button {
-                showingDocTransform = true
-            } label: {
-                Label("Transform", systemImage: "wand.and.stars").frame(maxWidth: .infinity)
+            VStack(spacing: 0) {
+                // The pane pushes up out of the Transform button (the button stays attached to it).
+                if showingDocTransform {
+                    transformPane(for: document)
+                    Divider()
+                }
+                Button {
+                    withAnimation(.snappy(duration: 0.22)) { showingDocTransform.toggle() }
+                } label: {
+                    HStack {
+                        Label("Transform — \(AppSettings.shared.model.shortName)",
+                              systemImage: "wand.and.stars")
+                        Spacer()
+                        Image(systemName: showingDocTransform ? "chevron.down" : "chevron.up")
+                            .font(.footnote.weight(.semibold))
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!model.modelReady || isTransformingDoc || document.combinedText.isEmpty)
+                .padding()
             }
-            .buttonStyle(.borderedProminent)
-            .disabled(!model.modelReady || isTransformingDoc || document.combinedText.isEmpty)
-            .padding()
             .background(.bar)
+        }
+    }
+
+    /// The transform pane: one row per preset (a run button plus a twirl-down arrow revealing the
+    /// prompt and Duplicate / Edit), then "Add New Transform…". Sits directly above the Transform
+    /// button so the two read as one attached surface.
+    @ViewBuilder
+    private func transformPane(for document: Document) -> some View {
+        ScrollView {
+            VStack(spacing: 0) {
+                ForEach(model.documents.presets) { preset in
+                    transformRow(preset, on: document)
+                    Divider().padding(.leading, 16)
+                }
+                Button {
+                    withAnimation(.snappy(duration: 0.22)) { showingDocTransform = false }
+                    creatingTransform = PromptPreset(name: "", template: PromptPreset.transcriptToken)
+                } label: {
+                    Label("Add New Transform…", systemImage: "plus")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 16).padding(.vertical, 12)
+                }
+            }
+        }
+        .frame(maxHeight: 320)
+    }
+
+    @ViewBuilder
+    private func transformRow(_ preset: PromptPreset, on document: Document) -> some View {
+        let isExpanded = expandedPresetID == preset.id
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                // Main action: run this transform on the whole document.
+                Button {
+                    withAnimation(.snappy(duration: 0.22)) { showingDocTransform = false }
+                    runDocumentTransform(preset, on: document)
+                } label: {
+                    Text(preset.name)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 16).padding(.vertical, 12)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+
+                // Twirl-down: reveal the prompt + Duplicate / Edit.
+                Button {
+                    withAnimation(.snappy(duration: 0.2)) {
+                        expandedPresetID = isExpanded ? nil : preset.id
+                    }
+                } label: {
+                    Image(systemName: "chevron.down")
+                        .rotationEffect(.degrees(isExpanded ? 0 : -90))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 16).padding(.vertical, 12)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(preset.template)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    HStack(spacing: 16) {
+                        Button {
+                            duplicatePreset(preset)
+                        } label: { Label("Duplicate", systemImage: "plus.square.on.square") }
+                        Button {
+                            showingDocTransform = false
+                            editingPreset = preset
+                        } label: { Label("Edit", systemImage: "pencil") }
+                        Spacer()
+                    }
+                    .font(.callout)
+                }
+                .padding(.horizontal, 16).padding(.bottom, 12)
+            }
         }
     }
 
@@ -386,6 +475,18 @@ struct DocumentDetailView: View {
             await model.transformDocument(preset, on: document)
             isTransformingDoc = false
         }
+    }
+
+    /// Duplicate a preset into a new editable copy (handy for tweaking a built-in without losing it).
+    private func duplicatePreset(_ preset: PromptPreset) {
+        let copy = PromptPreset(name: preset.name + " copy",
+                                systemPrompt: preset.systemPrompt,
+                                template: preset.template,
+                                temperature: preset.temperature,
+                                maxTokens: preset.maxTokens,
+                                isBuiltIn: false)
+        model.documents.add(preset: copy)
+        wwLog("Duplicated transform “\(preset.name)”", .general)
     }
 
     private func runParagraphTransform(_ preset: PromptPreset, paragraphID: UUID) {

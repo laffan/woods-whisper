@@ -94,4 +94,12 @@ final class AppSettings {
         guard set.insert(rawValue).inserted else { return }
         defaults.set(Array(set), forKey: Key.downloadedModels)
     }
+
+    /// Forget a model's download (called when the user taps "Remove Download" and the cached
+    /// weights are deleted), so it shows as not-downloaded again.
+    func unmarkModelDownloaded(_ rawValue: String) {
+        var set = downloadedModels
+        guard set.remove(rawValue) != nil else { return }
+        defaults.set(Array(set), forKey: Key.downloadedModels)
+    }
 }

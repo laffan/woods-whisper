@@ -15,7 +15,8 @@ final class AppModel: ObservableObject {
     let documents = DocumentStore()
 
     let transcription: TranscriptionService = SpeechTranscriptionCoordinator(model: AppSettings.shared.speechModel)
-    let transform: TextTransformService = LanguageModelCoordinator(model: AppSettings.shared.model)
+    private let languageModels = LanguageModelCoordinator(model: AppSettings.shared.model)
+    var transform: TextTransformService { languageModels }
 
     @Published var transcriptionReady = false
     @Published var modelReady = false
@@ -378,6 +379,40 @@ final class AppModel: ObservableObject {
         }
         isPreparingLLM = false
         if !isPreparingSpeech { busyMessage = nil }
+    }
+
+    // MARK: Language-model selection
+
+    /// Switch the active language model. On-device models that were previously downloaded load
+    /// automatically from cache (no need to re-tap Download); online models become ready as soon
+    /// as an API key is present. Backs the Settings model picker.
+    func selectLanguageModel(_ choice: LanguageModelChoice) {
+        AppSettings.shared.model = choice
+        Task {
+            do { try await transform.setModel(choice) }
+            catch { setupError = error.localizedDescription }
+            await refreshReadiness()
+            if !choice.isOnline, !modelReady, AppSettings.shared.isModelDownloaded(choice.rawValue) {
+                await prepareLanguageModel()   // reload the cached weights for an on-device model
+            }
+        }
+    }
+
+    /// Whether the active on-device model's weights are downloaded (drives "Download" vs "Remove
+    /// Download"). Always false for online models, which have nothing on disk.
+    var isLanguageModelDownloaded: Bool {
+        let choice = AppSettings.shared.model
+        return !choice.isOnline && AppSettings.shared.isModelDownloaded(choice.rawValue)
+    }
+
+    /// Delete the active on-device model's downloaded weights and forget the download. Backs the
+    /// Settings "Remove Download" button.
+    func removeLanguageModelDownload() {
+        let choice = AppSettings.shared.model
+        languageModels.removeActiveDownload()
+        AppSettings.shared.unmarkModelDownloaded(choice.rawValue)
+        llmProgress = nil
+        modelReady = false
     }
 
     // MARK: Online (Anthropic) authentication

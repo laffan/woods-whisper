@@ -212,6 +212,16 @@ public final class GemmaTransformService: TextTransformService {
         #endif
     }
 
+    /// Delete the active model's downloaded weights from disk and drop them from memory. Backs the
+    /// Settings "Remove Download" button; the next selection re-downloads.
+    public func removeDownload() {
+        #if canImport(MLXLLM)
+        container = nil
+        URLSessionHubDownloader.removeSnapshot(for: activeModel.rawValue)
+        wwLog("Deleted downloaded weights for \(activeModel.displayName)", .model)
+        #endif
+    }
+
     public func prepare(progress: (@Sendable (DownloadProgress) -> Void)? = nil) async throws {
         #if canImport(MLXLLM)
         // Downloads weights on first run (re-running resumes via the HF cache), then loads from
@@ -471,6 +481,12 @@ final class URLSessionHubDownloader: Downloader, @unchecked Sendable {
     static func hasUsableSnapshot(for id: String) -> Bool {
         guard let dir = try? modelDirectory(for: id) else { return false }
         return hasUsableSnapshot(at: dir)
+    }
+
+    /// Delete `id`'s cached snapshot directory (the downloaded weights + config + tokenizer).
+    static func removeSnapshot(for id: String) {
+        guard let dir = try? modelDirectory(for: id) else { return }
+        try? FileManager.default.removeItem(at: dir)
     }
 
     /// A snapshot is usable once it has model weights, a `config.json`, and a tokenizer file. We
