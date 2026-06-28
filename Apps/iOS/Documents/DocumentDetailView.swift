@@ -145,6 +145,8 @@ struct DocumentDetailView: View {
         .overlay {
             if showingDocTransform {
                 transformOverlay(for: document)
+            } else if paragraphTransformTarget != nil {
+                paragraphTransformOverlay()
             }
         }
         .sheet(item: $creatingTransform) { preset in
@@ -154,16 +156,6 @@ struct DocumentDetailView: View {
         }
         .sheet(item: $editingPreset) { preset in
             PresetEditorView(preset: preset, isNew: false)
-        }
-        .confirmationDialog("Transform paragraph with…",
-                            isPresented: Binding(get: { paragraphTransformTarget != nil },
-                                                 set: { if !$0 { paragraphTransformTarget = nil } }),
-                            titleVisibility: .visible) {
-            ForEach(model.documents.presets) { preset in
-                Button(preset.name) {
-                    if let pid = paragraphTransformTarget { runParagraphTransform(preset, paragraphID: pid) }
-                }
-            }
         }
     }
 
@@ -216,7 +208,9 @@ struct DocumentDetailView: View {
                     }
                     // Swipe right → Transform / Edit
                     .swipeActions(edge: .leading, allowsFullSwipe: false) {
-                        Button("Transform") { paragraphTransformTarget = para.id }.tint(.purple)
+                        Button("Transform") {
+                            withAnimation(.snappy(duration: 0.22)) { paragraphTransformTarget = para.id }
+                        }.tint(.purple)
                         Button("Edit") { startEditing(para) }.tint(.blue)
                     }
                 }
@@ -379,15 +373,39 @@ struct DocumentDetailView: View {
 
     // MARK: Transform pane
 
-    /// Floating transform pane: a dimmed scrim (tap anywhere outside to dismiss) with the pane
-    /// anchored at the bottom. Opened by the Transform button in the document-actions section.
+    private var transformHeader: String { "Transform — \(AppSettings.shared.model.shortName)" }
+
+    /// Document transform: runs the chosen preset over the whole body; rows expose Duplicate / Edit.
     @ViewBuilder
     private func transformOverlay(for document: Document) -> some View {
+        transformOverlay(editing: true, dismiss: { showingDocTransform = false }) { preset in
+            showingDocTransform = false
+            runDocumentTransform(preset, on: document)
+        }
+    }
+
+    /// Paragraph transform (swipe → Transform): same pane, but runs over the one paragraph and omits
+    /// the row editing affordances.
+    @ViewBuilder
+    private func paragraphTransformOverlay() -> some View {
+        transformOverlay(editing: false, dismiss: { paragraphTransformTarget = nil }) { preset in
+            let pid = paragraphTransformTarget
+            paragraphTransformTarget = nil
+            if let pid { runParagraphTransform(preset, paragraphID: pid) }
+        }
+    }
+
+    /// Floating pane: a dimmed scrim (tap anywhere outside to dismiss) with the pane anchored at the
+    /// bottom. `editing` controls whether the per-row Duplicate / Edit and "Add New" are shown.
+    @ViewBuilder
+    private func transformOverlay(editing: Bool,
+                                  dismiss: @escaping () -> Void,
+                                  run: @escaping (PromptPreset) -> Void) -> some View {
         ZStack(alignment: .bottom) {
             Color.black.opacity(0.2)
                 .ignoresSafeArea()
-                .onTapGesture { withAnimation(.snappy(duration: 0.22)) { showingDocTransform = false } }
-            transformPane(for: document)
+                .onTapGesture { withAnimation(.snappy(duration: 0.22)) { dismiss() } }
+            transformPane(editing: editing, dismiss: dismiss, run: run)
                 .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .padding(.horizontal, 12)
                 .padding(.bottom, 8)
@@ -395,29 +413,34 @@ struct DocumentDetailView: View {
         }
     }
 
-    /// The pane: a "Transform — <model>" header, one row per preset (a run button plus a twirl-down
-    /// arrow revealing the prompt and Duplicate / Edit), then "Add New Transform…".
+    /// The pane body: a "Transform — <model>" header (kept on one line so a long model name widens
+    /// the pane rather than wrapping), one row per preset, then optionally "Add New Transform…".
     @ViewBuilder
-    private func transformPane(for document: Document) -> some View {
+    private func transformPane(editing: Bool,
+                               dismiss: @escaping () -> Void,
+                               run: @escaping (PromptPreset) -> Void) -> some View {
         VStack(spacing: 0) {
-            Text("Transform — \(AppSettings.shared.model.shortName)")
+            Text(transformHeader)
                 .font(.headline)
+                .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 16).padding(.top, 16).padding(.bottom, 12)
             Divider()
             ScrollView {
                 VStack(spacing: 0) {
                     ForEach(model.documents.presets) { preset in
-                        transformRow(preset, on: document)
+                        transformRow(preset, editing: editing, run: run)
                         Divider().padding(.leading, 16)
                     }
-                    Button {
-                        withAnimation(.snappy(duration: 0.22)) { showingDocTransform = false }
-                        creatingTransform = PromptPreset(name: "", template: PromptPreset.transcriptToken)
-                    } label: {
-                        Label("Add New Transform…", systemImage: "plus")
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 16).padding(.vertical, 12)
+                    if editing {
+                        Button {
+                            withAnimation(.snappy(duration: 0.22)) { dismiss() }
+                            creatingTransform = PromptPreset(name: "", template: PromptPreset.transcriptToken)
+                        } label: {
+                            Label("Add New Transform…", systemImage: "plus")
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 16).padding(.vertical, 12)
+                        }
                     }
                 }
             }
@@ -426,14 +449,15 @@ struct DocumentDetailView: View {
     }
 
     @ViewBuilder
-    private func transformRow(_ preset: PromptPreset, on document: Document) -> some View {
+    private func transformRow(_ preset: PromptPreset,
+                              editing: Bool,
+                              run: @escaping (PromptPreset) -> Void) -> some View {
         let isExpanded = expandedPresetID == preset.id
         VStack(spacing: 0) {
             HStack(spacing: 0) {
-                // Main action: run this transform on the whole document.
+                // Main action: run this transform.
                 Button {
-                    withAnimation(.snappy(duration: 0.22)) { showingDocTransform = false }
-                    runDocumentTransform(preset, on: document)
+                    withAnimation(.snappy(duration: 0.22)) { run(preset) }
                 } label: {
                     Text(preset.name)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -442,22 +466,24 @@ struct DocumentDetailView: View {
                 }
                 .buttonStyle(.plain)
 
-                // Twirl-down: reveal the prompt + Duplicate / Edit.
-                Button {
-                    withAnimation(.snappy(duration: 0.2)) {
-                        expandedPresetID = isExpanded ? nil : preset.id
+                if editing {
+                    // Twirl-down: reveal the prompt + Duplicate / Edit.
+                    Button {
+                        withAnimation(.snappy(duration: 0.2)) {
+                            expandedPresetID = isExpanded ? nil : preset.id
+                        }
+                    } label: {
+                        Image(systemName: "chevron.down")
+                            .rotationEffect(.degrees(isExpanded ? 0 : -90))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 16).padding(.vertical, 12)
+                            .contentShape(Rectangle())
                     }
-                } label: {
-                    Image(systemName: "chevron.down")
-                        .rotationEffect(.degrees(isExpanded ? 0 : -90))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 16).padding(.vertical, 12)
-                        .contentShape(Rectangle())
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             }
 
-            if isExpanded {
+            if editing && isExpanded {
                 VStack(alignment: .leading, spacing: 10) {
                     Text(preset.template)
                         .font(.caption)
