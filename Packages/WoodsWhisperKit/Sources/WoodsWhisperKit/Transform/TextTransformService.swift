@@ -48,9 +48,11 @@ public struct TransformResult: Sendable, Equatable {
     }
 }
 
-/// Available on-device language models. Gemma 3 4B is the default; Qwen3 4B (which shows its
-/// reasoning), Llama 3.2 3B, and Gemma 3 1B are selectable alternatives. All run 4-bit quantized
-/// via MLX on iPhone/iPad.
+/// Available language models. Most run **on-device** (4-bit quantized via MLX on iPhone/iPad):
+/// Gemma 3 4B is the default; Qwen3 4B (which shows its reasoning), Llama 3.2 3B, and Gemma 3 1B
+/// are selectable alternatives. Two **online** options — Anthropic's Claude Sonnet and Haiku — are
+/// also selectable for when the device has a cell signal; these call the Anthropic API instead of
+/// downloading weights, so they show an *Authenticate* step (an API key) rather than a *Download*.
 ///
 /// The Gemma entries use Google's **QAT** (quantization-aware-trained) 4-bit weights. The plain
 /// `…-it-4bit` community repos quantize some attention projections with a per-layer group size that
@@ -62,45 +64,68 @@ public enum LanguageModelChoice: String, CaseIterable, Codable, Sendable, Identi
     case qwen3_4B = "mlx-community/Qwen3-4B-4bit"
     case llama3_2_3B = "mlx-community/Llama-3.2-3B-Instruct-4bit"
     case gemma3_1B = "mlx-community/gemma-3-1b-it-qat-4bit"
+    // Online (Anthropic). The rawValue doubles as the API `model` id.
+    case claudeSonnet = "claude-sonnet-4-6"
+    case claudeHaiku = "claude-haiku-4-5"
 
     public var id: String { rawValue }
 
+    /// True for the cloud models (Anthropic). Online models stream from the Anthropic API over the
+    /// network instead of running locally, so they need a cell/WiFi signal and an API key rather
+    /// than a one-time weight download.
+    public var isOnline: Bool {
+        switch self {
+        case .claudeSonnet, .claudeHaiku:                       return true
+        case .gemma3_4B, .qwen3_4B, .llama3_2_3B, .gemma3_1B:   return false
+        }
+    }
+
     public var displayName: String {
         switch self {
-        case .gemma3_4B:   return "Gemma 3 · 4B (default)"
-        case .qwen3_4B:    return "Qwen3 · 4B (shows reasoning)"
-        case .llama3_2_3B: return "Llama 3.2 · 3B"
-        case .gemma3_1B:   return "Gemma 3 · 1B (fastest)"
+        case .gemma3_4B:    return "Gemma 3 · 4B (default)"
+        case .qwen3_4B:     return "Qwen3 · 4B (shows reasoning)"
+        case .llama3_2_3B:  return "Llama 3.2 · 3B"
+        case .gemma3_1B:    return "Gemma 3 · 1B (fastest)"
+        case .claudeSonnet: return "Claude Sonnet 4.6 (online)"
+        case .claudeHaiku:  return "Claude Haiku 4.5 (online)"
         }
     }
 
-    /// Rough minimum device RAM advisory, surfaced in Settings.
+    /// Rough minimum device RAM advisory, surfaced in Settings. Online models run server-side, so
+    /// they have no local RAM footprint.
     public var approxRAMNote: String {
         switch self {
-        case .gemma3_4B:   return "~3.5 GB"
-        case .qwen3_4B:    return "~3 GB"
-        case .llama3_2_3B: return "~2.5 GB"
-        case .gemma3_1B:   return "~1.5 GB"
+        case .gemma3_4B:                  return "~3.5 GB"
+        case .qwen3_4B:                   return "~3 GB"
+        case .llama3_2_3B:                return "~2.5 GB"
+        case .gemma3_1B:                  return "~1.5 GB"
+        case .claudeSonnet, .claudeHaiku: return "runs in the cloud"
         }
     }
 
-    /// Approximate on-disk download size (4-bit weights), shown inline in the model picker.
+    /// Approximate on-disk download size (4-bit weights), shown inline in the model picker. Online
+    /// models download nothing, so this reads "no download".
     public var approxDownloadSize: String {
         switch self {
-        case .gemma3_4B:   return "~2.4 GB"
-        case .qwen3_4B:    return "~2.3 GB"
-        case .llama3_2_3B: return "~1.8 GB"
-        case .gemma3_1B:   return "~0.7 GB"
+        case .gemma3_4B:                  return "~2.4 GB"
+        case .qwen3_4B:                   return "~2.3 GB"
+        case .llama3_2_3B:                return "~1.8 GB"
+        case .gemma3_1B:                  return "~0.7 GB"
+        case .claudeSonnet, .claudeHaiku: return "no download"
         }
     }
 
-    /// Picker label combining the model name and its download size, e.g. "Gemma 3 · 4B — ~2.4 GB".
-    public var pickerLabel: String { "\(displayName) — \(approxDownloadSize)" }
+    /// Picker label combining the model name and what it costs to enable, e.g. "Gemma 3 · 4B —
+    /// ~2.4 GB" for an on-device model or "Claude Sonnet 4.6 (online) — needs cell signal" online.
+    public var pickerLabel: String {
+        isOnline ? "\(displayName) — needs cell signal" : "\(displayName) — \(approxDownloadSize)"
+    }
 
     /// Extra stop strings beyond the tokenizer's own end-of-sequence token. Chat models mark the
     /// end of a turn with a special token (Gemma's `<end_of_turn>`, Qwen/ChatML's `<|im_end|>`,
     /// Llama's `<|eot_id|>`); if the streaming loop doesn't treat that marker as a stop, generation
-    /// runs away repeating it. The transform loop halts at the first of these it sees.
+    /// runs away repeating it. The transform loop halts at the first of these it sees. Online models
+    /// stream from the Anthropic API, which signals turn-end itself, so they need none.
     public var stopSequences: [String] {
         switch self {
         case .qwen3_4B:
@@ -109,6 +134,8 @@ public enum LanguageModelChoice: String, CaseIterable, Codable, Sendable, Identi
             return ["<|eot_id|>", "<|end_of_text|>"]
         case .gemma3_4B, .gemma3_1B:
             return ["<end_of_turn>", "<eos>"]
+        case .claudeSonnet, .claudeHaiku:
+            return []
         }
     }
 
@@ -116,8 +143,10 @@ public enum LanguageModelChoice: String, CaseIterable, Codable, Sendable, Identi
     /// out of the answer. Only the Qwen3 "thinking" model does.
     public var usesThinkTags: Bool {
         switch self {
-        case .qwen3_4B:                            return true
-        case .gemma3_4B, .llama3_2_3B, .gemma3_1B: return false
+        case .qwen3_4B:
+            return true
+        case .gemma3_4B, .llama3_2_3B, .gemma3_1B, .claudeSonnet, .claudeHaiku:
+            return false
         }
     }
 
@@ -126,6 +155,7 @@ public enum LanguageModelChoice: String, CaseIterable, Codable, Sendable, Identi
 
 public enum TextTransformError: Error, LocalizedError {
     case modelNotPrepared
+    case notAuthenticated
     case unsupportedPlatform
     case underlying(Error)
 
@@ -133,6 +163,8 @@ public enum TextTransformError: Error, LocalizedError {
         switch self {
         case .modelNotPrepared:
             return "Language model isn't downloaded yet. Complete setup while online once."
+        case .notAuthenticated:
+            return "This online model needs your Anthropic API key. Tap Authenticate in Settings → Language Model."
         case .unsupportedPlatform:
             return "The language model runs on iPhone/iPad, not on this device."
         case .underlying(let error):

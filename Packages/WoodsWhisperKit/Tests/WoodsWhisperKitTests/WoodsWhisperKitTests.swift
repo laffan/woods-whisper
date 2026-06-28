@@ -67,14 +67,35 @@ final class WoodsWhisperKitTests: XCTestCase {
         XCTAssertFalse(ids.contains { $0.contains("12b") })
     }
 
-    func testEveryLanguageModelHasStopSequences() {
-        XCTAssertTrue(LanguageModelChoice.allCases.allSatisfy { !$0.stopSequences.isEmpty })
+    func testEveryOnDeviceModelHasStopSequences() {
+        // Local models need explicit turn-end markers; online ones let the API signal end-of-turn.
+        let local = LanguageModelChoice.allCases.filter { !$0.isOnline }
+        XCTAssertTrue(local.allSatisfy { !$0.stopSequences.isEmpty })
+        XCTAssertTrue(LanguageModelChoice.claudeSonnet.stopSequences.isEmpty)
     }
 
     func testOnlyQwen3UsesThinkTags() {
         XCTAssertTrue(LanguageModelChoice.qwen3_4B.usesThinkTags)
         XCTAssertFalse(LanguageModelChoice.gemma3_4B.usesThinkTags)
         XCTAssertFalse(LanguageModelChoice.llama3_2_3B.usesThinkTags)
+        XCTAssertFalse(LanguageModelChoice.claudeSonnet.usesThinkTags)
+    }
+
+    func testOnlyClaudeModelsAreOnline() {
+        XCTAssertTrue(LanguageModelChoice.claudeSonnet.isOnline)
+        XCTAssertTrue(LanguageModelChoice.claudeHaiku.isOnline)
+        XCTAssertFalse(LanguageModelChoice.gemma3_4B.isOnline)
+        XCTAssertFalse(LanguageModelChoice.qwen3_4B.isOnline)
+    }
+
+    func testOnlineModelsUseApiModelIDAsRawValue() {
+        XCTAssertEqual(LanguageModelChoice.claudeSonnet.rawValue, "claude-sonnet-4-6")
+        XCTAssertEqual(LanguageModelChoice.claudeHaiku.rawValue, "claude-haiku-4-5")
+    }
+
+    func testOnlinePickerLabelMentionsSignalNotDownloadSize() {
+        XCTAssertTrue(LanguageModelChoice.claudeSonnet.pickerLabel.contains("signal"))
+        XCTAssertTrue(LanguageModelChoice.gemma3_4B.pickerLabel.contains("GB"))
     }
 
     // MARK: Pairing / subnet math

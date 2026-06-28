@@ -8,6 +8,7 @@ struct SettingsView: View {
     @State private var localServerEnabled = AppSettings.shared.localServerEnabled
     @State private var micOptions: [AudioRecorder.InputOption] = []
     @State private var selectedMicUID: String? = AppSettings.shared.preferredMicUID
+    @State private var showingAuthSheet = false
 
     var body: some View {
         NavigationStack {
@@ -102,27 +103,42 @@ struct SettingsView: View {
                 }
             }
 
-            ModelSetupRow(title: "Model weights", systemImage: "brain",
-                          ready: model.modelReady, progress: model.llmProgress)
-            if !model.modelReady {
-                if model.isPreparingLLM {
-                    Button("Cancel Download", role: .destructive) {
-                        model.cancelLanguageModelDownload()
-                    }
-                } else {
-                    Button(downloadTitle(preparing: false,
-                                         started: model.llmProgress != nil)) {
-                        model.startLanguageModelDownload()
+            if selectedModel.isOnline {
+                // Online (Anthropic) model: authenticate with an API key instead of downloading.
+                ModelSetupRow(title: "Cloud model", systemImage: "cloud",
+                              ready: model.isAuthenticated, progress: nil)
+                Button(model.isAuthenticated ? "Edit Authentication" : "Authenticate") {
+                    showingAuthSheet = true
+                }
+            } else {
+                ModelSetupRow(title: "Model weights", systemImage: "brain",
+                              ready: model.modelReady, progress: model.llmProgress)
+                if !model.modelReady {
+                    if model.isPreparingLLM {
+                        Button("Cancel Download", role: .destructive) {
+                            model.cancelLanguageModelDownload()
+                        }
+                    } else {
+                        Button(downloadTitle(preparing: false,
+                                             started: model.llmProgress != nil)) {
+                            model.startLanguageModelDownload()
+                        }
                     }
                 }
             }
         } header: {
             Text("Language Model")
         } footer: {
-            Text("Rewrites transcripts on-device (Qwen3, Llama 3.2, or Gemma 3). Download once "
-                 + "while online (a few GB depending on model); works offline afterward, and "
-                 + "reloads automatically on launch. If interrupted, tap to resume. Switching "
-                 + "model requires downloading it.")
+            Text("Rewrites transcripts. The on-device models (Qwen3, Llama 3.2, Gemma 3) download "
+                 + "once while online and then work offline. The online Claude models stream from "
+                 + "Anthropic — pick one when you have a cell signal and tap Authenticate to add "
+                 + "your API key (no download). Switching to an on-device model requires "
+                 + "downloading it.")
+        }
+        .sheet(isPresented: $showingAuthSheet) {
+            AnthropicAuthView(isAuthenticated: model.isAuthenticated) { key in
+                model.saveAnthropicAPIKey(key)
+            }
         }
     }
 
@@ -184,6 +200,61 @@ struct StatusDot: View {
         HStack(spacing: 6) {
             Circle().fill(ready ? .green : .orange).frame(width: 10, height: 10)
             Text(ready ? "Ready" : "Not ready").font(.caption).foregroundStyle(.secondary)
+        }
+    }
+}
+
+/// Collects (or updates) the Anthropic API key for the online Claude models. The current key is
+/// never shown back — the field starts empty and the user pastes a fresh key to set or replace it,
+/// or taps Remove Key to clear it. The key is stored in the Keychain by `AppModel.saveAnthropicAPIKey`.
+struct AnthropicAuthView: View {
+    let isAuthenticated: Bool
+    let onSave: (String) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var apiKey = ""
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    SecureField("sk-ant-…", text: $apiKey)
+                        .textContentType(.password)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                } header: {
+                    Text("Anthropic API Key")
+                } footer: {
+                    Text("Used to stream Claude Sonnet / Haiku for the online Language Model. Create "
+                         + "a key at console.anthropic.com → API Keys. It's stored in your device "
+                         + "Keychain and sent only to Anthropic.")
+                }
+
+                if isAuthenticated {
+                    Section {
+                        Button("Remove Key", role: .destructive) {
+                            onSave("")
+                            dismiss()
+                        }
+                    } footer: {
+                        Text("A key is already saved. Enter a new one above to replace it, or remove it.")
+                    }
+                }
+            }
+            .navigationTitle(isAuthenticated ? "Edit Authentication" : "Authenticate")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        onSave(apiKey)
+                        dismiss()
+                    }
+                    .disabled(apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
         }
     }
 }

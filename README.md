@@ -8,7 +8,9 @@ lightweight on-device **Gemma 3** model driven by reusable prompt presets.
 
 > **No internet required after first-run setup.** The only time the network is used is to
 > download the two models once. Everything after that — recording, transfer, transcription,
-> and transformation — happens locally.
+> and transformation — happens locally. (Optionally, when you have a signal, you can pick an
+> online **Claude** model for the rewrite step — see *Models* below — but the on-device models
+> remain the default and the offline path is unchanged.)
 
 ---
 
@@ -83,7 +85,8 @@ hardware; the Simulator can't use the ANE).
 > nothing else in the app depends on the SDK surface.
 
 First launch: open **Settings** while online once and tap **Download** under both the
-**Speech Model** and **Language Model** sections.
+**Speech Model** and **Language Model** sections. (If you pick one of the online Claude models for
+the Language Model, tap **Authenticate** and paste your Anthropic API key instead of downloading.)
 
 See **`docs/SETUP.md`** for the full first-run walkthrough and **`docs/ARCHITECTURE.md`** for
 how the pieces fit together.
@@ -96,6 +99,7 @@ how the pieces fit together.
 |               | Whisper tiny / base / small (selectable) | WhisperKit | iPhone / iPad |
 | Text rewrite  | **Gemma 3 4B** (default)      | MLX Swift  | iPhone / iPad      |
 |               | Qwen3 4B / Llama 3.2 3B / Gemma 3 1B (selectable) | |            |
+|               | Claude Sonnet 4.6 / Haiku 4.5 (online, selectable) | Anthropic API | cloud (needs signal) |
 
 **Speech model.** Parakeet TDT v3 is the default — most accurate and multilingual. The smaller
 **Whisper** variants (tiny/base/small) are lighter, faster downloads; pick one in
@@ -106,3 +110,11 @@ how the pieces fit together.
 Model**. Each downloads once while online and is reloaded automatically from cache on subsequent
 launches (no need to re-tap Download). **Qwen3 4B** is a "thinking" model — its reasoning is shown
 in a collapsible **Reasoning** section above each result and kept out of the saved output.
+
+**Online models (optional).** When you have a cell signal, you can instead pick **Claude Sonnet
+4.6** or **Claude Haiku 4.5** from the same picker. These stream from Anthropic's API rather than
+running on-device, so there's nothing to download — instead the **Download** button becomes
+**Authenticate** (or **Edit Authentication** once a key is saved). Tap it, paste an Anthropic API
+key (from console.anthropic.com), and it's stored in the device Keychain and sent only to
+Anthropic. Recording and transcription stay fully on-device; only the rewrite step of a cloud
+model leaves the device, and only when one is selected — the offline models remain the default.

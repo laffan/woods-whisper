@@ -204,6 +204,14 @@ public final class GemmaTransformService: TextTransformService {
         #endif
     }
 
+    /// Drop the loaded weights to free memory — used when the coordinator switches to an online
+    /// model so the (sizeable) MLX container isn't held while the cloud model is active.
+    public func unload() {
+        #if canImport(MLXLLM)
+        container = nil
+        #endif
+    }
+
     public func prepare(progress: (@Sendable (DownloadProgress) -> Void)? = nil) async throws {
         #if canImport(MLXLLM)
         // Downloads weights on first run (re-running resumes via the HF cache), then loads from

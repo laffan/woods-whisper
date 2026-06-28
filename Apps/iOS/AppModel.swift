@@ -15,7 +15,7 @@ final class AppModel: ObservableObject {
     let documents = DocumentStore()
 
     let transcription: TranscriptionService = SpeechTranscriptionCoordinator(model: AppSettings.shared.speechModel)
-    let transform: TextTransformService = GemmaTransformService(model: AppSettings.shared.model)
+    let transform: TextTransformService = LanguageModelCoordinator(model: AppSettings.shared.model)
 
     @Published var transcriptionReady = false
     @Published var modelReady = false
@@ -378,6 +378,19 @@ final class AppModel: ObservableObject {
         }
         isPreparingLLM = false
         if !isPreparingSpeech { busyMessage = nil }
+    }
+
+    // MARK: Online (Anthropic) authentication
+
+    /// Whether an Anthropic API key has been saved (the online model's "is it set up?" state).
+    var isAuthenticated: Bool { AnthropicAPIKeyStore.hasKey }
+
+    /// Save (or clear) the Anthropic API key, then refresh readiness so the online model becomes
+    /// usable immediately without re-selecting it.
+    func saveAnthropicAPIKey(_ key: String) {
+        AnthropicAPIKeyStore.setKey(key)
+        wwLog("Anthropic API key \(AnthropicAPIKeyStore.hasKey ? "saved" : "cleared")", .model)
+        Task { await refreshReadiness() }
     }
 
     /// Start the language-model download as a cancellable task (used by the Settings Download button).
