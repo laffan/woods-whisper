@@ -962,8 +962,13 @@ struct InboxView: View {
     // Long-press-to-select (the Inbox's own batch mode).
     @State private var selectionMode = false
     @State private var selected: Set<UUID> = []
-    @State private var showingBatchMove = false
-    @State private var moveRecordingID: UUID?
+
+    // Move-to-document pane: the recordings being moved (one, from a swipe; or many, from batch).
+    @State private var movingIDs: Set<UUID>?
+
+    // New-document step: the recordings to drop into a fresh doc, plus its editable title.
+    @State private var pendingNewDocIDs: Set<UUID>?
+    @State private var newDocTitle = ""
 
     private var inbox: Document? { model.documents.document(with: documentID) }
     private var recordings: [Recording] { inbox?.recordings ?? [] }
@@ -996,7 +1001,7 @@ struct InboxView: View {
                     }
                 }
                 .swipeActions(edge: .leading) {
-                    Button("Move") { withAnimation(.snappy(duration: 0.22)) { moveRecordingID = recording.id } }
+                    Button("Move") { withAnimation(.snappy(duration: 0.22)) { movingIDs = [recording.id] } }
                         .tint(.blue)
                 }
             }
@@ -1018,13 +1023,16 @@ struct InboxView: View {
         }
         .safeAreaInset(edge: .bottom) {
             if selectionMode {
-                HStack(spacing: 24) {
+                HStack(spacing: 16) {
                     batchButton("Delete", "trash", role: .destructive) {
                         model.documents.deleteRecordings(selected, fromDocument: documentID)
                         exitSelection()
                     }
                     batchButton("Copy", "doc.on.doc") { copySelected() }
-                    batchButton("Move", "folder") { if !documentTargets.isEmpty { showingBatchMove = true } }
+                    batchButton("New", "doc.badge.plus") { startNewDocument(for: selected) }
+                    batchButton("Move", "folder") {
+                        withAnimation(.snappy(duration: 0.22)) { movingIDs = selected }
+                    }
                 }
                 .frame(maxWidth: .infinity)
                 .padding()
@@ -1048,35 +1056,33 @@ struct InboxView: View {
         .sheet(item: $detailRecording) { recording in
             TranscriptDetailView(recording: recording)
         }
-        .confirmationDialog("Move \(selected.count) to…", isPresented: $showingBatchMove,
-                            titleVisibility: .visible) {
-            ForEach(documentTargets) { target in
-                Button(target.title) {
-                    model.documents.moveRecordings(selected, from: documentID, to: target.id)
-                    exitSelection()
-                }
+        .overlay {
+            if let ids = movingIDs {
+                moveOverlay(ids: ids)
             }
         }
-        .overlay {
-            if let id = moveRecordingID {
-                moveOverlay(recordingID: id)
-            }
+        .alert("Rename document",
+               isPresented: Binding(get: { pendingNewDocIDs != nil },
+                                    set: { if !$0 { pendingNewDocIDs = nil } })) {
+            TextField("Title", text: $newDocTitle)
+            Button("Save") { confirmNewDocument() }
+            Button("Cancel", role: .cancel) { pendingNewDocIDs = nil }
         }
     }
 
     // MARK: Move-to-document pane
 
-    /// Floating pane (swipe a recording right → Move): the same design as the document Transform
-    /// pane — a dimmed scrim you tap to dismiss, with the pane anchored at the bottom. Lists the
-    /// destination documents and, below them, a "New Document" button that makes a fresh document
-    /// and moves the recording into it.
+    /// Floating pane (swipe a recording right → Move, or batch "Move"): the same design as the
+    /// document Transform pane — a dimmed scrim you tap to dismiss, with the pane anchored at the
+    /// bottom. Lists the destination documents and, below them, a "New Document" button that opens
+    /// the rename step and then moves the recording(s) into the fresh document.
     @ViewBuilder
-    private func moveOverlay(recordingID: UUID) -> some View {
+    private func moveOverlay(ids: Set<UUID>) -> some View {
         ZStack(alignment: .bottom) {
             Color.black.opacity(0.2)
                 .ignoresSafeArea()
-                .onTapGesture { withAnimation(.snappy(duration: 0.22)) { moveRecordingID = nil } }
-            movePane(recordingID: recordingID)
+                .onTapGesture { withAnimation(.snappy(duration: 0.22)) { movingIDs = nil } }
+            movePane(ids: ids)
                 .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .padding(.horizontal, 12)
                 .padding(.bottom, 8)
@@ -1087,7 +1093,7 @@ struct InboxView: View {
     /// The pane body: a "Move to Document" header, one row per destination document, then a
     /// "New Document" row (mirroring "Add New Transform…" on the Transform pane).
     @ViewBuilder
-    private func movePane(recordingID: UUID) -> some View {
+    private func movePane(ids: Set<UUID>) -> some View {
         VStack(spacing: 0) {
             Text("Move to Document")
                 .font(.headline)
@@ -1100,8 +1106,9 @@ struct InboxView: View {
                     ForEach(documentTargets) { target in
                         Button {
                             withAnimation(.snappy(duration: 0.22)) {
-                                model.documents.moveRecording(recordingID, from: documentID, to: target.id)
-                                moveRecordingID = nil
+                                model.documents.moveRecordings(ids, from: documentID, to: target.id)
+                                movingIDs = nil
+                                exitSelection()
                             }
                         } label: {
                             Text(target.title)
@@ -1113,11 +1120,8 @@ struct InboxView: View {
                         Divider().padding(.leading, 16)
                     }
                     Button {
-                        withAnimation(.snappy(duration: 0.22)) {
-                            let doc = model.documents.createDocument()
-                            model.documents.moveRecording(recordingID, from: documentID, to: doc.id)
-                            moveRecordingID = nil
-                        }
+                        withAnimation(.snappy(duration: 0.22)) { movingIDs = nil }
+                        startNewDocument(for: ids)
                     } label: {
                         Label("New Document", systemImage: "plus")
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -1127,6 +1131,42 @@ struct InboxView: View {
             }
             .frame(maxHeight: 320)
         }
+    }
+
+    // MARK: New document (from a swipe or a batch selection)
+
+    /// Open the "Rename document" step, pre-filling the title with a suggested name drawn from the
+    /// recordings being filed away.
+    private func startNewDocument(for ids: Set<UUID>) {
+        guard let seed = recordings.first(where: { ids.contains($0.id) }) else { return }
+        newDocTitle = suggestedDocumentTitle(for: seed)
+        pendingNewDocIDs = ids
+    }
+
+    /// Confirm the rename step: create the document under the chosen title and move the
+    /// recording(s) into it.
+    private func confirmNewDocument() {
+        guard let ids = pendingNewDocIDs else { return }
+        let trimmed = newDocTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let doc = model.documents.createDocument(title: trimmed.isEmpty ? "New Document" : trimmed)
+        model.documents.moveRecordings(ids, from: documentID, to: doc.id)
+        pendingNewDocIDs = nil
+        exitSelection()
+    }
+
+    /// A suggested title for a document seeded from `recording`: the first two words of its
+    /// transcript, or — if it hasn't been transcribed yet — its capture time, e.g. "Aug 2, 2:15pm".
+    private func suggestedDocumentTitle(for recording: Recording) -> String {
+        let transcript = recording.transcript?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !transcript.isEmpty {
+            let words = transcript.split(whereSeparator: \.isWhitespace).prefix(2)
+            if !words.isEmpty { return words.joined(separator: " ") }
+        }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d, h:mma"
+        formatter.amSymbol = "am"
+        formatter.pmSymbol = "pm"
+        return formatter.string(from: recording.createdAt)
     }
 
     private func enterSelection(with id: UUID) {
