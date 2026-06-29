@@ -142,8 +142,24 @@ struct WatchRootView: View {
 
     private var recordingsTab: some View {
         List {
-            // Clips whose last send failed or was cancelled — surfaced at the top with a Resend
-            // button (switch targets in Pairing first if needed).
+            // Clips captured during a walk (Walking mode) that haven't been sent yet — flush them
+            // all with one tap once you're back in range.
+            if !model.walkingRecordings.isEmpty {
+                Section {
+                    ForEach(model.walkingRecordings) { recordingRow($0) }
+                    Button {
+                        model.sendWalkingClips()
+                    } label: {
+                        Label("Send Walking Clips", systemImage: "figure.walk").frame(maxWidth: .infinity)
+                    }
+                    .tint(.green)
+                } header: {
+                    Text("Walking")
+                }
+            }
+
+            // Clips whose last send failed or was cancelled — surfaced with a Resend button
+            // (switch targets in Pairing first if needed).
             if !needsResend.isEmpty {
                 Section {
                     ForEach(needsResend) { recordingRow($0) }
@@ -235,7 +251,9 @@ struct WatchRootView: View {
     }
 
     private var others: [Recording] {
-        model.recordings.recordings.filter { !isFailedOrCancelled($0.id) }
+        model.recordings.recordings.filter {
+            !isFailedOrCancelled($0.id) && !model.walkingClipIDs.contains($0.id)
+        }
     }
 
     private func isFailedOrCancelled(_ id: UUID) -> Bool {

@@ -20,6 +20,10 @@ final class WatchModel: ObservableObject {
     @Published var sendProgress: [UUID: Double] = [:]
     /// Outcome of the last send attempt per recording, for the ✓ / retry affordances.
     @Published var sendOutcome: [UUID: SendOutcome] = [:]
+    /// Clips captured while Walking mode was on that haven't entered the send pipeline yet.
+    /// Surfaced in a "Walking" section so they can be flushed after a walk. A clip leaves this set
+    /// the moment a send is started for it (manually or via "Send Walking Clips").
+    @Published var walkingClipIDs: Set<UUID> = []
 
     enum SendOutcome: Equatable { case sent, failed, cancelled }
 
@@ -121,10 +125,21 @@ final class WatchModel: ObservableObject {
         recordings.add(recording)
         // Walking mode: queue locally and send the batch later, instead of uploading each clip now.
         if WatchSettings.shared.walkingMode {
+            walkingClipIDs.insert(recording.id)
             statusMessage = "Saved — walking mode, not sent yet."
         } else {
             startSend(recording)
         }
+    }
+
+    /// Clips queued during Walking mode, in list order.
+    var walkingRecordings: [Recording] {
+        recordings.recordings.filter { walkingClipIDs.contains($0.id) }
+    }
+
+    /// Send every clip queued during Walking mode (the "Send Walking Clips" button).
+    func sendWalkingClips() {
+        for recording in walkingRecordings { startSend(recording) }
     }
 
     /// Recordings that haven't been confirmed sent (queued in walking mode, or failed/cancelled).
@@ -144,6 +159,7 @@ final class WatchModel: ObservableObject {
     /// can be cancelled. No-op if a send for this clip is already in flight.
     func startSend(_ recording: Recording) {
         guard sendTasks[recording.id] == nil, !pendingSends.contains(recording.id) else { return }
+        walkingClipIDs.remove(recording.id)   // entering the send pipeline; no longer a queued walking clip
         sendTasks[recording.id] = Task { await self.send(recording) }
     }
 
@@ -176,6 +192,7 @@ final class WatchModel: ObservableObject {
         recordings.deleteAll()
         sendOutcome.removeAll()
         sendProgress.removeAll()
+        walkingClipIDs.removeAll()
         statusMessage = nil
     }
 
