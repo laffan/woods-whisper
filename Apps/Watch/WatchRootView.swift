@@ -1,4 +1,5 @@
 import SwiftUI
+import Foundation
 import AppIntents
 import WoodsWhisperKit
 
@@ -55,39 +56,58 @@ struct WatchRootView: View {
                     .font(.title3.monospacedDigit())
                     .foregroundStyle(recorder.isPaused ? .secondary : .primary)
                 LevelMeter(level: recorder.currentLevel)
-                // Stop and pause/continue side by side, same size (matches the iPhone recorder).
-                HStack(spacing: 24) {
+                // Cancel, stop, and pause/continue side by side, same size (matches the iPhone
+                // recorder's Cancel / Stop / Pause row).
+                HStack(spacing: 16) {
+                    Button {
+                        cancel()
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 44))
+                            .foregroundStyle(.gray)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Cancel")
                     Button {
                         Task { await toggle() }
                     } label: {
                         Image(systemName: "stop.circle.fill")
-                            .font(.system(size: 56))
+                            .font(.system(size: 44))
                             .foregroundStyle(.red)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Stop")
                     Button {
                         recorder.isPaused ? recorder.resume() : recorder.pause()
                     } label: {
                         Image(systemName: recorder.isPaused ? "play.circle.fill" : "pause.circle.fill")
-                            .font(.system(size: 56))
+                            .font(.system(size: 44))
                             .foregroundStyle(recorder.isPaused ? Color.accentColor : Color.secondary)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel(recorder.isPaused ? "Continue" : "Pause")
                 }
             } else {
-                Text("Tap to record").font(.caption).foregroundStyle(.secondary)
+                // Walking toggle (replaces the old "Tap to record" label): when on, clips queue
+                // locally and the record button turns green.
+                Toggle(isOn: $walkingMode) {
+                    Label("Walking", systemImage: "figure.walk")
+                }
+                .toggleStyle(.button)
+                .tint(.green)
+                .controlSize(.small)
                 Button {
                     Task { await toggle() }
                 } label: {
                     Image(systemName: "record.circle")
                         .font(.system(size: 56))
-                        .foregroundStyle(Color.accentColor)
+                        .foregroundStyle(walkingMode ? Color.green : Color.accentColor)
                 }
                 .buttonStyle(.plain)
             }
             if !model.pendingSends.isEmpty {
                 VStack(spacing: 4) {
-                    Text("Sending…").font(.caption2).foregroundStyle(.secondary)
+                    Text(sendingLabel).font(.caption2).foregroundStyle(.secondary)
                     if let fraction = model.sendProgress.values.max() {
                         ProgressView(value: fraction)
                     } else {
@@ -240,6 +260,18 @@ struct WatchRootView: View {
         case .localNetwork: return "Sending to \(iPad) over WiFi"
         case .bluetooth:    return "Sending to \(iPad) over Bluetooth"
         }
+    }
+
+    /// Short, destination-aware label shown while a clip uploads.
+    private var sendingLabel: String {
+        WatchSettings.shared.transport == .phoneSession ? "Sending to Phone" : "Sending Direct"
+    }
+
+    /// Stop recording and discard the in-progress clip (don't store or send it).
+    private func cancel() {
+        guard let result = recorder.stop() else { return }
+        try? FileManager.default.removeItem(at: result.url)
+        model.statusMessage = nil
     }
 
     private func toggle() async {

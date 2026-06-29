@@ -72,11 +72,17 @@ hardware; the Simulator can't use the ANE).
 > start a recording from **Siri, Spotlight, Shortcuts, the iOS Action Button, and a Lock Screen /
 > Control Center Shortcut** — no extra target or paid account needed.
 >
-> **Native complication / Control (optional).** Bespoke WidgetKit extensions for a watch complication
-> (`Apps/WatchComplication`) and an iOS Lock Screen widget + iOS 18 Control (`Apps/iOSWidgets`) are in
-> the repo but **not built by default** — provisioning their extra app-extension App IDs is painful on
-> a free Apple ID. To enable them, re-add the two `app-extension` targets to `project.yml` (see this
-> file's git history), embed them in the apps, and give them a signing team.
+> **Native watch complication (built in).** A bespoke WidgetKit complication (`Apps/WatchComplication`)
+> puts a **New Recording** button on the watch face; tapping it opens the app via the
+> `woodswhisper://record` deep link and starts capturing. It's a watchOS `app-extension` target
+> embedded in the watch app, so it builds with the default scheme (give it a signing team alongside the
+> other targets).
+>
+> **iOS Lock Screen widget / Control (optional).** A separate WidgetKit extension for an iOS Lock
+> Screen widget + iOS 18 Control (`Apps/iOSWidgets`) is in the repo but **not built by default** —
+> provisioning its extra app-extension App ID is painful on a free Apple ID. To enable it, re-add a
+> `WoodsWhisperWidgets` `app-extension` target to `project.yml` (see this file's git history), embed it
+> in the iOS app, and give it a signing team.
 
 > ⚠️ **The Swift package versions for FluidAudio, WhisperKit, and MLX move quickly.** Three
 > files — `ParakeetTranscriptionService.swift`, `WhisperTranscriptionService.swift`, and

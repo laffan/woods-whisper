@@ -180,6 +180,21 @@ public final class DocumentStore: ObservableObject {
         touch(idx)
     }
 
+    /// Reorder within just the subset of recordings matching `isRevision`, so the "Recordings" and
+    /// "Revisions" sections reorder independently while sharing one underlying array. The moved
+    /// elements stay in their subset's slots; the other subset is left untouched.
+    public func moveRecordings(in documentID: UUID, isRevision: Bool,
+                               from offsets: IndexSet, to destination: Int) {
+        guard let idx = index(of: documentID) else { return }
+        var all = documents[idx].recordings
+        let slots = all.indices.filter { all[$0].isRevision == isRevision }
+        var subset = slots.map { all[$0] }
+        subset.move(fromOffsets: offsets, toOffset: destination)
+        for (slot, element) in zip(slots, subset) { all[slot] = element }
+        documents[idx].recordings = all
+        touch(idx)
+    }
+
     /// Replace a recording's audio file and reset its transcript (used by "Re-record"). The old
     /// audio is removed; the caller has already written the new audio at `newFileName`.
     public func replaceRecordingAudio(_ recordingID: UUID, in documentID: UUID,

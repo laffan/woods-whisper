@@ -209,13 +209,16 @@ final class AppModel: ObservableObject {
     }
 
     /// Capture a clip (into the Recordings section), transcribe it, and replace the text of an
-    /// existing body paragraph with the result. Backs a paragraph's "Replace" swipe action.
-    func captureReplacingParagraph(audioURL: URL, duration: TimeInterval,
-                                   paragraphID: UUID, in documentID: UUID) {
+    /// existing body paragraph with the result. Backs a paragraph's "Revise" swipe action. The clip
+    /// is flagged `isRevision` so it's set aside in the "Revisions" section rather than mixed in with
+    /// the original recordings.
+    func captureRevisingParagraph(audioURL: URL, duration: TimeInterval,
+                                  paragraphID: UUID, in documentID: UUID) {
         let name = Recording.defaultName(for: Date(), duration: duration,
                                          byteCount: Recording.fileSize(at: audioURL))
         let recording = Recording(name: name, duration: duration,
-                                  audioFileName: audioURL.lastPathComponent, origin: deviceOrigin())
+                                  audioFileName: audioURL.lastPathComponent, origin: deviceOrigin(),
+                                  isRevision: true)
         documents.addRecording(recording, toDocument: documentID)
         guard transcriptionReady else {
             setupError = "Speech model isn't ready yet — the recording was saved; transcribe it once setup finishes."
@@ -241,12 +244,20 @@ final class AppModel: ObservableObject {
     }
 
     /// "Reset with Originals": rebuild the document body from the recordings' own transcripts, one
-    /// paragraph per recording, discarding any edits/transforms.
+    /// paragraph per recording, discarding any edits/transforms. Revision clips (captured via
+    /// "Revise") are kept separate: their transcripts are appended below the originals under a
+    /// "--- Revisions ---" heading.
     func resetWithOriginals(in documentID: UUID) {
         guard let doc = documents.document(with: documentID) else { return }
-        let paragraphs = doc.recordings.compactMap { recording -> Document.Paragraph? in
+        func paragraph(for recording: Recording) -> Document.Paragraph? {
             let text = recording.transcript?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             return text.isEmpty ? nil : Document.Paragraph(text: text)
+        }
+        var paragraphs = doc.recordings.filter { !$0.isRevision }.compactMap(paragraph)
+        let revisions = doc.recordings.filter { $0.isRevision }.compactMap(paragraph)
+        if !revisions.isEmpty {
+            paragraphs.append(Document.Paragraph(text: "--- Revisions ---"))
+            paragraphs.append(contentsOf: revisions)
         }
         documents.setParagraphs(paragraphs, in: documentID)
         wwLog("Reset “\(doc.title)” to original transcripts (\(paragraphs.count) paragraphs)", .general)

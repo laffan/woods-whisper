@@ -36,6 +36,11 @@ public struct Recording: Identifiable, Codable, Hashable, Sendable {
     /// Lifecycle of this recording's transcription.
     public var status: Status
 
+    /// True when this clip was captured via "Revise" (replacing a body paragraph) rather than as
+    /// part of the original document. Revisions are set aside in their own section and, on
+    /// "Reset with Originals", appended below the body under a "--- Revisions ---" heading.
+    public var isRevision: Bool
+
     public enum Origin: String, Codable, Sendable {
         case watch
         case phone
@@ -59,7 +64,8 @@ public struct Recording: Identifiable, Codable, Hashable, Sendable {
         origin: Origin,
         sourceDeviceID: String? = nil,
         transcript: String? = nil,
-        status: Status = .pending
+        status: Status = .pending,
+        isRevision: Bool = false
     ) {
         self.id = id
         self.name = name ?? Recording.defaultName(for: createdAt, duration: duration, byteCount: nil)
@@ -71,6 +77,29 @@ public struct Recording: Identifiable, Codable, Hashable, Sendable {
         self.sourceDeviceID = sourceDeviceID
         self.transcript = transcript
         self.status = status
+        self.isRevision = isRevision
+    }
+
+    // Custom decoding so recordings saved (or transmitted) by older builds — which had no
+    // `isRevision` key — still load: the missing key defaults to false rather than failing.
+    enum CodingKeys: String, CodingKey {
+        case id, name, createdAt, duration, audioFileName, sampleRate, origin,
+             sourceDeviceID, transcript, status, isRevision
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        createdAt = try c.decode(Date.self, forKey: .createdAt)
+        duration = try c.decode(TimeInterval.self, forKey: .duration)
+        audioFileName = try c.decode(String.self, forKey: .audioFileName)
+        sampleRate = try c.decode(Double.self, forKey: .sampleRate)
+        origin = try c.decode(Origin.self, forKey: .origin)
+        sourceDeviceID = try c.decodeIfPresent(String.self, forKey: .sourceDeviceID)
+        transcript = try c.decodeIfPresent(String.self, forKey: .transcript)
+        status = try c.decode(Status.self, forKey: .status)
+        isRevision = try c.decodeIfPresent(Bool.self, forKey: .isRevision) ?? false
     }
 
     /// The default, two-line display name:

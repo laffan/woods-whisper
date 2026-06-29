@@ -9,8 +9,8 @@ import UIKit
 /// separate "Recordings" section at the bottom.
 ///
 /// • The body reads top-to-bottom. Between paragraphs, a "+" inserts a fresh recording's transcript
-///   at that spot. Swipe a paragraph for Delete / Replace / Edit / Transform; long-press to enter
-///   reorder mode and drag to rearrange.
+///   at that spot. Swipe a paragraph for Delete / Revise / Edit / Transform; long-press to enter
+///   reorder mode and drag to rearrange. A "Revise" clip is set aside in a "Revisions" section.
 /// • Recordings are source material: play them, or "Re-transcribe" to append their text to the body.
 ///   Long-press a recording to enter selection mode for batch actions.
 /// • "Transform" rewrites the whole body in place.
@@ -85,6 +85,8 @@ struct DocumentDetailView: View {
             TextEditorSheet(title: "Edit Paragraph", text: $editingText) {
                 // Blank lines added while editing split into separate sections.
                 model.documents.replaceParagraph(para.id, in: documentID, withTextSplitInto: editingText)
+            } accessory: {
+                paragraphEditorActions(for: para)
             }
         }
         .sheet(isPresented: $showingDocEditor) {
@@ -204,7 +206,7 @@ struct DocumentDetailView: View {
                         Button("Delete", role: .destructive) {
                             model.documents.deleteParagraph(para.id, in: documentID)
                         }
-                        Button("Replace") { recorderTask = .replace(paragraphID: para.id) }.tint(.orange)
+                        Button("Revise") { recorderTask = .revise(paragraphID: para.id) }.tint(.orange)
                     }
                     // Swipe right → Transform / Edit
                     .swipeActions(edge: .leading, allowsFullSwipe: false) {
@@ -278,43 +280,30 @@ struct DocumentDetailView: View {
 
     @ViewBuilder
     private func recordingsSection(for document: Document) -> some View {
-        if !document.recordings.isEmpty {
+        let originals = document.recordings.filter { !$0.isRevision }
+        let revisions = document.recordings.filter { $0.isRevision }
+
+        if !originals.isEmpty {
             Section("Recordings") {
-                ForEach(document.recordings) { recording in
-                    RecordingRow(
-                        recording: recording,
-                        isActive: playback.playingID == recording.id,
-                        isPaused: playback.isPaused,
-                        onPlay: { playback.toggle(recording, url: model.documents.audioURL(for: recording)) }
-                    )
-                    .onLongPressGesture { withAnimation { editMode = .active } }
-                    // Swipe left → Delete / Share the audio file
-                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                        Button("Delete", role: .destructive) {
-                            model.documents.deleteRecording(recording.id, fromDocument: documentID)
-                        }
-                        Button("Share") {
-                            audioShareItem = AudioShareItem(url: model.documents.audioURL(for: recording))
-                        }.tint(.indigo)
-                    }
-                    // Swipe right → Transcribe (re-run STT) / Append its transcript to the body / Move
-                    .swipeActions(edge: .leading, allowsFullSwipe: false) {
-                        Button("Transcribe") {
-                            Task { await model.transcribe(recordingID: recording.id, inDocument: documentID) }
-                        }.tint(.blue)
-                        Button("Append") {
-                            model.appendRecordingToBody(recordingID: recording.id, in: documentID)
-                        }.tint(.green)
-                        if !otherDocuments.isEmpty {
-                            Button("Move") { movingRecording = recording }.tint(.orange)
-                        }
-                    }
-                }
+                ForEach(originals) { recordingRow($0) }
                 .onMove { offsets, destination in
-                    model.documents.moveRecordings(in: documentID, from: offsets, to: destination)
+                    model.documents.moveRecordings(in: documentID, isRevision: false,
+                                                   from: offsets, to: destination)
                 }
             }
+        }
 
+        if !revisions.isEmpty {
+            Section("Revisions") {
+                ForEach(revisions) { recordingRow($0) }
+                .onMove { offsets, destination in
+                    model.documents.moveRecordings(in: documentID, isRevision: true,
+                                                   from: offsets, to: destination)
+                }
+            }
+        }
+
+        if !document.recordings.isEmpty {
             if document.recordings.contains(where: { $0.transcript?.isEmpty == false }) {
                 Section {
                     Button(role: .destructive) {
@@ -326,6 +315,40 @@ struct DocumentDetailView: View {
                 } footer: {
                     Text("Replaces the document body with the recordings' original transcripts, discarding edits and transforms.")
                 }
+            }
+        }
+    }
+
+    /// One row in the Recordings (or Revisions) section: the play control + transcript, plus the
+    /// swipe actions shared by both sections.
+    @ViewBuilder
+    private func recordingRow(_ recording: Recording) -> some View {
+        RecordingRow(
+            recording: recording,
+            isActive: playback.playingID == recording.id,
+            isPaused: playback.isPaused,
+            onPlay: { playback.toggle(recording, url: model.documents.audioURL(for: recording)) }
+        )
+        .onLongPressGesture { withAnimation { editMode = .active } }
+        // Swipe left → Delete / Share the audio file
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            Button("Delete", role: .destructive) {
+                model.documents.deleteRecording(recording.id, fromDocument: documentID)
+            }
+            Button("Share") {
+                audioShareItem = AudioShareItem(url: model.documents.audioURL(for: recording))
+            }.tint(.indigo)
+        }
+        // Swipe right → Transcribe (re-run STT) / Append its transcript to the body / Move
+        .swipeActions(edge: .leading, allowsFullSwipe: false) {
+            Button("Transcribe") {
+                Task { await model.transcribe(recordingID: recording.id, inDocument: documentID) }
+            }.tint(.blue)
+            Button("Append") {
+                model.appendRecordingToBody(recordingID: recording.id, in: documentID)
+            }.tint(.green)
+            if !otherDocuments.isEmpty {
+                Button("Move") { movingRecording = recording }.tint(.orange)
             }
         }
     }
@@ -546,9 +569,9 @@ struct DocumentDetailView: View {
         case .insertBody(let position):
             model.addDeviceRecording(audioURL: url, duration: duration, toDocument: documentID,
                                      body: .at(position))
-        case .replace(let paragraphID):
-            model.captureReplacingParagraph(audioURL: url, duration: duration,
-                                            paragraphID: paragraphID, in: documentID)
+        case .revise(let paragraphID):
+            model.captureRevisingParagraph(audioURL: url, duration: duration,
+                                           paragraphID: paragraphID, in: documentID)
         case .rerecord(let recordingID):
             model.rerecordRecording(recordingID, in: documentID, audioURL: url, duration: duration)
         }
@@ -561,18 +584,44 @@ struct DocumentDetailView: View {
         editingParagraph = para
     }
 
+    /// Bottom action bar inside the Edit Paragraph sheet: Revise (record a replacement) and
+    /// Transform (rewrite this paragraph). Each dismisses the editor first, then triggers its flow
+    /// once the sheet is gone (so a recorder sheet / transform pane doesn't fight the dismissal).
+    @ViewBuilder
+    private func paragraphEditorActions(for para: Document.Paragraph) -> some View {
+        Divider()
+        HStack(spacing: 0) {
+            docActionButton("Revise", "mic.fill") {
+                editingParagraph = nil
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                    recorderTask = .revise(paragraphID: para.id)
+                }
+            }
+            docActionButton("Transform", "wand.and.stars") {
+                editingParagraph = nil
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                    withAnimation(.snappy(duration: 0.22)) { paragraphTransformTarget = para.id }
+                }
+            }
+            .disabled(!model.modelReady)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 8)
+        .padding(.horizontal, 8)
+    }
+
     /// What a presented `RecordingSheet` should do with the finished clip.
     enum RecorderTask: Identifiable, Equatable {
         case addToRecordings
         case insertBody(at: Int)
-        case replace(paragraphID: UUID)
+        case revise(paragraphID: UUID)
         case rerecord(recordingID: UUID)
 
         var id: String {
             switch self {
             case .addToRecordings:        return "add"
             case .insertBody(let i):      return "insert-\(i)"
-            case .replace(let pid):       return "replace-\(pid)"
+            case .revise(let pid):        return "revise-\(pid)"
             case .rerecord(let rid):      return "rerecord-\(rid)"
             }
         }
@@ -581,7 +630,7 @@ struct DocumentDetailView: View {
             switch self {
             case .addToRecordings: return "New Recording"
             case .insertBody:      return "Insert Recording"
-            case .replace:         return "Replace Paragraph"
+            case .revise:          return "Revise Paragraph"
             case .rerecord:        return "Re-record"
             }
         }
@@ -619,26 +668,37 @@ private struct InsertHereButton: View {
 // MARK: - Text editor sheet
 
 /// A full-screen text editor used for editing a single paragraph, the whole document, or a
-/// document from the list.
-struct TextEditorSheet: View {
+/// document from the list. An optional `accessory` is pinned below the editor (used by the
+/// paragraph editor to offer Revise / Transform).
+struct TextEditorSheet<Accessory: View>: View {
     let title: String
     @Binding var text: String
     let onSave: () -> Void
+    @ViewBuilder var accessory: () -> Accessory
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
-            TextEditor(text: $text)
-                .padding()
-                .navigationTitle(title)
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("Save") { onSave(); dismiss() }
-                    }
+            VStack(spacing: 0) {
+                TextEditor(text: $text)
+                    .padding()
+                accessory()
+            }
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") { onSave(); dismiss() }
                 }
+            }
         }
+    }
+}
+
+extension TextEditorSheet where Accessory == EmptyView {
+    init(title: String, text: Binding<String>, onSave: @escaping () -> Void) {
+        self.init(title: title, text: text, onSave: onSave) { EmptyView() }
     }
 }
 
@@ -1143,13 +1203,15 @@ struct InboxView: View {
         pendingNewDocIDs = ids
     }
 
-    /// Confirm the rename step: create the document under the chosen title and move the
-    /// recording(s) into it.
+    /// Confirm the rename step: create the document under the chosen title, move the recording(s)
+    /// into it, and seed the body with their transcripts (so the new document reads like the
+    /// recordings without needing a manual "Reset with Originals").
     private func confirmNewDocument() {
         guard let ids = pendingNewDocIDs else { return }
         let trimmed = newDocTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         let doc = model.documents.createDocument(title: trimmed.isEmpty ? "New Document" : trimmed)
         model.documents.moveRecordings(ids, from: documentID, to: doc.id)
+        model.resetWithOriginals(in: doc.id)
         pendingNewDocIDs = nil
         exitSelection()
     }

@@ -7,17 +7,9 @@ struct WatchSettingsView: View {
     @EnvironmentObject private var model: WatchModel
     @State private var sendToiPad = WatchSettings.shared.transport != .phoneSession
     @State private var pairedLink = WatchSettings.shared.deviceLink
-    @AppStorage("walkingMode") private var walkingMode = false
 
     var body: some View {
         List {
-            Section {
-                Toggle("Walking mode", isOn: $walkingMode)
-            } footer: {
-                Text("Don't upload after each recording — queue them and send the batch later "
-                     + "(useful when the iPad isn't nearby).")
-            }
-
             Section("Send recordings to") {
                 Picker("Destination", selection: $sendToiPad) {
                     Text("iPhone").tag(false)

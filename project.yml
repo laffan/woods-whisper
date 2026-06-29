@@ -82,6 +82,7 @@ targets:
       - path: Apps/Watch
     dependencies:
       - package: WoodsWhisperKit
+      - target: WoodsWhisperWatchComplication   # embed the "New Recording" complication
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.woodswhisper.app.watchkitapp
@@ -89,12 +90,26 @@ targets:
         WATCHOS_DEPLOYMENT_TARGET: "10.0"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
 
-# The native "New Recording" complication (Apps/WatchComplication) and iOS Lock Screen widget +
-# Control (Apps/iOSWidgets) live in the repo but are NOT built by default — on a free Apple ID the
-# extra app-extension App IDs are painful to provision. To enable them, re-add the two app-extension
-# targets (see git history of this file) and give them a signing team. The "New Recording" action is
-# still available without them via App Intents (Siri / Shortcuts / Action Button / a Lock Screen
-# Shortcut), which need no separate target.
+  # watchOS complication: the bespoke "New Recording" face that starts a recording via the
+  # woodswhisper://record deep link.
+  WoodsWhisperWatchComplication:
+    type: app-extension
+    platform: watchOS
+    sources:
+      - path: Apps/WatchComplication
+    dependencies:
+      - package: WoodsWhisperKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.woodswhisper.app.watchkitapp.complication
+        INFOPLIST_FILE: Apps/WatchComplication/Info.plist
+        WATCHOS_DEPLOYMENT_TARGET: "10.0"
+
+# The iOS Lock Screen widget + Control (Apps/iOSWidgets) lives in the repo but is NOT built by
+# default — on a free Apple ID the extra app-extension App ID is painful to provision. To enable it,
+# re-add a WoodsWhisperWidgets app-extension target (see git history of this file) and give it a
+# signing team. The "New Recording" action is still available without it via App Intents (Siri /
+# Shortcuts / Action Button / a Lock Screen Shortcut), which need no separate target.
 
 schemes:
   WoodsWhisper:
