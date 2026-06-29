@@ -101,7 +101,7 @@ targets:
       - package: WoodsWhisperKit
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.woodswhisper.app.watchkitapp.complication
+        PRODUCT_BUNDLE_IDENTIFIER: com.woodswhisper.app.watchkitapp.complications
         INFOPLIST_FILE: Apps/WatchComplication/Info.plist
         WATCHOS_DEPLOYMENT_TARGET: "10.0"
 

@@ -23,16 +23,20 @@ struct WatchRootView: View {
             }
             .tabViewStyle(.verticalPage)
         }
-        // Launched by the "New Recording" complication / Shortcut: jump to the record screen and
-        // start capturing.
+        // Launched by the "New Recording" Shortcut / Siri (App Intent): the intent sets
+        // `launcher.pending`; jump to the record screen and start capturing.
         .onChange(of: launcher.pending) { _, pending in
             if pending { Task { await startFromIntent() } }
         }
         .task {
             if launcher.pending { await startFromIntent() }
         }
+        // Launched by the "New Recording" complication via its `woodswhisper://record` deep link.
+        // Start capturing directly rather than bouncing through the launcher, so a cold launch from
+        // the complication reliably begins recording.
         .onOpenURL { url in
-            if url == woodsWhisperRecordURL { launcher.request() }
+            guard url.scheme == woodsWhisperRecordURL.scheme else { return }
+            Task { await startFromIntent() }
         }
     }
 
@@ -46,7 +50,11 @@ struct WatchRootView: View {
             return
         }
         let new = model.recordings.newAudioURL()
-        try? recorder.start(to: new.url)
+        do {
+            try recorder.start(to: new.url)
+        } catch {
+            model.statusMessage = "Couldn't start recording: \(error.localizedDescription)"
+        }
     }
 
     private var recordTab: some View {

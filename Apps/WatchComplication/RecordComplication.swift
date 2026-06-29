@@ -33,7 +33,7 @@ struct RecordComplicationView: View {
         case .accessoryCorner:
             Image(systemName: "mic.fill")
                 .font(.title3)
-                .widgetLabel("Record")
+                .widgetLabel("Dictate")
         case .accessoryInline:
             Label("New Recording", systemImage: "mic.fill")
         case .accessoryRectangular:

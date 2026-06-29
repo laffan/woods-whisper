@@ -1114,7 +1114,7 @@ struct InboxView: View {
             }
         }
         .sheet(item: $detailRecording) { recording in
-            TranscriptDetailView(recording: recording)
+            TranscriptDetailView(model: model, recordingID: recording.id, documentID: documentID)
         }
         .overlay {
             if let ids = movingIDs {
@@ -1341,24 +1341,88 @@ private struct InboxRecordingRow: View {
     }
 }
 
-/// Full-transcript reader for a single recording, shown when a preview row is tapped.
+/// Full-transcript reader/editor for a single Inbox recording, shown when a preview row is tapped.
+/// Offers Transform (rewrite the transcript in place with a preset) and Reset (re-transcribe the
+/// audio, restoring the original transcription).
 private struct TranscriptDetailView: View {
-    let recording: Recording
+    @ObservedObject var model: AppModel
+    let recordingID: UUID
+    let documentID: UUID
     @Environment(\.dismiss) private var dismiss
+
+    @State private var working = false
+    @State private var showingTransform = false
+
+    /// Looked up live so the view reflects transform/reset edits.
+    private var recording: Recording? {
+        model.documents.document(with: documentID)?.recordings.first { $0.id == recordingID }
+    }
+
+    private var transcript: String {
+        recording?.transcript?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                Text(recording.transcript?.isEmpty == false ? recording.transcript! : "(no speech detected)")
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding()
+            VStack(spacing: 0) {
+                ScrollView {
+                    Text(transcript.isEmpty ? "(no speech detected)" : transcript)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding()
+                }
+                Divider()
+                HStack(spacing: 0) {
+                    actionButton("Transform", "wand.and.stars") { showingTransform = true }
+                        .disabled(!model.modelReady || working || transcript.isEmpty)
+                    actionButton("Reset", "arrow.uturn.backward") { reset() }
+                        .disabled(working)
+                }
+                .padding(.vertical, 8).padding(.horizontal, 8)
+            }
+            .overlay(alignment: .top) {
+                if working { BusyBanner(message: "Working…").padding(.top, 8) }
             }
             .navigationTitle("Transcript")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
             }
+            .confirmationDialog("Transform — \(AppSettings.shared.model.shortName)",
+                                isPresented: $showingTransform, titleVisibility: .visible) {
+                ForEach(model.documents.presets) { preset in
+                    Button(preset.name) { transform(preset) }
+                }
+            }
+        }
+    }
+
+    private func actionButton(_ title: String, _ icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 4) {
+                Image(systemName: icon).font(.title3)
+                Text(title).font(.caption)
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.tint)
+    }
+
+    private func transform(_ preset: PromptPreset) {
+        working = true
+        Task {
+            await model.transformRecordingTranscript(preset, recordingID: recordingID, in: documentID)
+            working = false
+        }
+    }
+
+    /// Re-run speech-to-text on the audio to restore the original transcription.
+    private func reset() {
+        working = true
+        Task {
+            await model.transcribe(recordingID: recordingID, inDocument: documentID)
+            working = false
         }
     }
 }

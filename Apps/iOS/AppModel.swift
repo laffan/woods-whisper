@@ -519,6 +519,32 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Run a preset against a recording's transcript, replacing the transcript in place. Backs the
+    /// Inbox transcript editor's "Transform" button. ("Reset" there just re-transcribes the audio
+    /// via `transcribe`, restoring the original transcription.)
+    func transformRecordingTranscript(_ preset: PromptPreset,
+                                      recordingID: UUID,
+                                      in documentID: UUID) async {
+        guard var recording = documents.document(with: documentID)?
+            .recordings.first(where: { $0.id == recordingID }) else { return }
+        let source = recording.transcript?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !source.isEmpty else {
+            setupError = "Nothing to transform yet — transcribe this recording first."
+            return
+        }
+        wwLog("Transforming transcript of “\(recording.name)” with “\(preset.name)”…", .transform)
+        do {
+            let result = try await transform.transform(transcript: source, with: preset, onToken: nil)
+            recording.transcript = result.answer
+            documents.updateRecording(recording, inDocument: documentID)
+            wwLog(String(format: "Transcript transform “%@” finished (%d chars)", preset.name,
+                         result.answer.count), .transform)
+        } catch {
+            setupError = error.localizedDescription
+            wwLog("Transform failed: \(error.localizedDescription)", .error)
+        }
+    }
+
     /// Run a preset against a single paragraph, replacing that paragraph's text in place.
     func transformParagraph(_ preset: PromptPreset,
                             paragraphID: UUID,
