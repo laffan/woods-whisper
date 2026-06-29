@@ -5,21 +5,27 @@ import WoodsWhisperKit
 /// manage the iPad pairing.
 struct WatchSettingsView: View {
     @EnvironmentObject private var model: WatchModel
-    @State private var sendToiPad = WatchSettings.shared.transport != .phoneSession
     @State private var pairedLink = WatchSettings.shared.deviceLink
+
+    // Single source of truth for the destination, backed by the same UserDefaults key WatchSettings
+    // reads. Binding the picker straight to this (rather than a separate @State Bool) avoids the
+    // two drifting apart — which is what made selecting "iPhone" snap back to "iPad".
+    @AppStorage("transport") private var transport: DeviceLink.Transport = .phoneSession
+
+    private var sendToiPad: Binding<Bool> {
+        Binding(
+            get: { transport != .phoneSession },
+            // "iPad" uses whatever transport pairing established (Bluetooth or WiFi).
+            set: { transport = $0 ? (pairedLink?.transport ?? .localNetwork) : .phoneSession }
+        )
+    }
 
     var body: some View {
         List {
             Section("Send recordings to") {
-                Picker("Destination", selection: $sendToiPad) {
+                Picker("Destination", selection: sendToiPad) {
                     Text("iPhone").tag(false)
                     Text("iPad (direct)").tag(true)
-                }
-                .onChange(of: sendToiPad) { _, toiPad in
-                    // "iPad" uses whatever transport pairing established (Bluetooth or WiFi).
-                    WatchSettings.shared.transport = toiPad
-                        ? (pairedLink?.transport ?? .localNetwork)
-                        : .phoneSession
                 }
             }
 
@@ -31,8 +37,7 @@ struct WatchSettingsView: View {
                     Button("Forget iPad", role: .destructive) {
                         WatchSettings.shared.deviceLink = nil
                         pairedLink = nil
-                        sendToiPad = false
-                        WatchSettings.shared.transport = .phoneSession
+                        transport = .phoneSession
                     }
                 }
             }
@@ -41,7 +46,9 @@ struct WatchSettingsView: View {
                 NavigationLink {
                     WatchPairingView(onPaired: {
                         pairedLink = WatchSettings.shared.deviceLink
-                        sendToiPad = true
+                        // Pairing already set the transport to the link's; mirror it here so the
+                        // picker reflects the new iPad destination immediately.
+                        transport = WatchSettings.shared.deviceLink?.transport ?? .localNetwork
                     })
                 } label: {
                     Label(pairedLink == nil ? "Pair with iPad" : "Re-pair iPad",

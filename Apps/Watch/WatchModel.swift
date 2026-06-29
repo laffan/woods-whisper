@@ -169,6 +169,16 @@ final class WatchModel: ObservableObject {
         statusMessage = "Send cancelled."
     }
 
+    /// Delete every recording on the Watch (the "Delete All" action): cancel any in-flight sends,
+    /// wipe the store, and clear per-recording send state.
+    func deleteAllRecordings() {
+        cancelAllSends()
+        recordings.deleteAll()
+        sendOutcome.removeAll()
+        sendProgress.removeAll()
+        statusMessage = nil
+    }
+
     /// Resend everything that previously failed or was cancelled (after, perhaps, switching targets).
     func resendFailed() {
         for recording in recordings.recordings

@@ -71,6 +71,15 @@ public final class RecordingStore: ObservableObject {
         persist()
     }
 
+    /// Remove every recording and its audio file (the "Delete All" action).
+    public func deleteAll() {
+        for recording in recordings {
+            try? FileManager.default.removeItem(at: audioURL(for: recording))
+        }
+        recordings.removeAll()
+        persist()
+    }
+
     public func recording(with id: UUID) -> Recording? {
         recordings.first { $0.id == id }
     }

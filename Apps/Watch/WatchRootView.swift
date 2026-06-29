@@ -9,6 +9,7 @@ struct WatchRootView: View {
     @State private var tab: Tab = .record
     @AppStorage("walkingMode") private var walkingMode = false
     @ObservedObject private var launcher = RecordingLauncher.shared
+    @State private var showingDeleteAll = false
 
     /// Screen order top-to-bottom: Pairing, Record, List. Record is the default, so you swipe up
     /// to the list and down to pairing.
@@ -64,35 +65,36 @@ struct WatchRootView: View {
                     .font(.title3.monospacedDigit())
                     .foregroundStyle(recorder.isPaused ? .secondary : .primary)
                 LevelMeter(level: recorder.currentLevel)
-                // Cancel, stop, and pause/continue side by side, same size (matches the iPhone
-                // recorder's Cancel / Stop / Pause row).
-                HStack(spacing: 16) {
+                // Cancel / Stop / Pause as equal-width rectangular buttons that scale to fit the
+                // watch width (matches the iPhone recorder's Cancel / Stop / Pause row) — circular
+                // glyphs were getting clipped at the screen edge.
+                HStack(spacing: 6) {
                     Button {
                         cancel()
                     } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 44))
-                            .foregroundStyle(.gray)
+                        Image(systemName: "xmark")
+                            .frame(maxWidth: .infinity, minHeight: 38)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.bordered)
+                    .tint(.gray)
                     .accessibilityLabel("Cancel")
                     Button {
                         Task { await toggle() }
                     } label: {
-                        Image(systemName: "stop.circle.fill")
-                            .font(.system(size: 44))
-                            .foregroundStyle(.red)
+                        Image(systemName: "stop.fill")
+                            .frame(maxWidth: .infinity, minHeight: 38)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.borderedProminent)
+                    .tint(.red)
                     .accessibilityLabel("Stop")
                     Button {
                         recorder.isPaused ? recorder.resume() : recorder.pause()
                     } label: {
-                        Image(systemName: recorder.isPaused ? "play.circle.fill" : "pause.circle.fill")
-                            .font(.system(size: 44))
-                            .foregroundStyle(recorder.isPaused ? Color.accentColor : Color.secondary)
+                        Image(systemName: recorder.isPaused ? "play.fill" : "pause.fill")
+                            .frame(maxWidth: .infinity, minHeight: 38)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.bordered)
+                    .tint(recorder.isPaused ? Color.accentColor : Color.secondary)
                     .accessibilityLabel(recorder.isPaused ? "Continue" : "Pause")
                 }
             } else {
@@ -134,18 +136,6 @@ struct WatchRootView: View {
             } else if let status = model.statusMessage {
                 Text(status).font(.caption2).foregroundStyle(.secondary).lineLimit(2)
             }
-
-            // Walking mode: clips queue locally; offer a one-tap batch send.
-            if walkingMode, model.pendingSends.isEmpty, !model.unsentRecordings.isEmpty {
-                Button {
-                    model.sendAllUnsent()
-                } label: {
-                    Label("Send All (\(model.unsentRecordings.count))", systemImage: "paperplane.fill")
-                }
-                .font(.caption2)
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-            }
         }
         .padding()
     }
@@ -171,11 +161,38 @@ struct WatchRootView: View {
             Section {
                 ForEach(others) { recordingRow($0) }
             }
+
+            // Batch actions at the bottom of the list: send everything not yet sent, or wipe the
+            // Watch's local recordings (with confirmation). Independent of Walking mode.
+            if !model.recordings.recordings.isEmpty {
+                Section {
+                    Button {
+                        model.sendAllUnsent()
+                    } label: {
+                        Label("Send All", systemImage: "paperplane.fill").frame(maxWidth: .infinity)
+                    }
+                    .tint(.blue)
+                    .disabled(model.unsentRecordings.isEmpty)
+
+                    Button(role: .destructive) {
+                        showingDeleteAll = true
+                    } label: {
+                        Label("Delete All", systemImage: "trash").frame(maxWidth: .infinity)
+                    }
+                }
+            }
         }
         .overlay {
             if model.recordings.recordings.isEmpty {
                 Text("No recordings").font(.caption).foregroundStyle(.secondary)
             }
+        }
+        .confirmationDialog("Delete all recordings?", isPresented: $showingDeleteAll,
+                            titleVisibility: .visible) {
+            Button("Delete All", role: .destructive) { model.deleteAllRecordings() }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("This permanently deletes every recording on this Watch.")
         }
     }
 
@@ -262,11 +279,11 @@ struct WatchRootView: View {
     }
 
     private var destinationLabel: String {
-        let iPad = WatchSettings.shared.deviceLink?.displayName ?? "iPad"
         switch WatchSettings.shared.transport {
-        case .phoneSession: return "Sending to paired iPhone"
-        case .localNetwork: return "Sending to \(iPad) over WiFi"
-        case .bluetooth:    return "Sending to \(iPad) over Bluetooth"
+        case .phoneSession:
+            return "Sending to Phone"
+        case .localNetwork, .bluetooth:
+            return "Sending to \(WatchSettings.shared.deviceLink?.displayName ?? "iPad")"
         }
     }
 
