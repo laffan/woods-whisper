@@ -90,6 +90,8 @@ final class AppModel: ObservableObject {
         phone.onReceive = { [weak self] transfer, data in
             self?.ingest(transfer: transfer, data: data)
         }
+        // Answer the Watch's "Refresh Documents" request with the current list.
+        phone.onDocumentsRequested = { [weak self] in self?.documents.documentDescriptors ?? [] }
         try? phone.start()
         #endif
 

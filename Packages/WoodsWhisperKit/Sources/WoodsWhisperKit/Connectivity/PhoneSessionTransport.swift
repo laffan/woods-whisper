@@ -18,10 +18,16 @@ public final class PhoneSessionTransport: NSObject, RecordingSender, RecordingRe
     /// Watch to refresh its record-target picker.
     public var onReceiveDocuments: (@MainActor ([DocumentDescriptor]) -> Void)?
 
+    /// Supplies the current document list on demand (iPhone side), so a Watch "Refresh Documents"
+    /// request can be answered live.
+    public var onDocumentsRequested: (@MainActor () -> [DocumentDescriptor])?
+
     private let session: WCSession?
 
     /// Key under which the synced document list rides in the WatchConnectivity application context.
     private static let documentsContextKey = "documents"
+    /// Message key the Watch sends to pull a fresh document list from the iPhone.
+    private static let requestDocumentsKey = "requestDocuments"
 
     public override init() {
         session = WCSession.isSupported() ? WCSession.default : nil
@@ -67,6 +73,31 @@ public final class PhoneSessionTransport: NSObject, RecordingSender, RecordingRe
         return decoded
     }
 
+    /// Pull a fresh document list from the iPhone now (Watch side, backs "Refresh Documents"). Sends
+    /// an interactive message when the iPhone is reachable and replies with the fresh list; when it
+    /// isn't reachable, falls back to whatever context is already retained on this device. `reply` is
+    /// always called once, on the main actor.
+    public func requestDocuments(reply: @escaping @MainActor ([DocumentDescriptor]) -> Void) {
+        guard let session, session.isReachable else {
+            let cached = latestReceivedDocuments
+            Task { @MainActor in reply(cached) }
+            return
+        }
+        session.sendMessage([Self.requestDocumentsKey: true], replyHandler: { response in
+            let descriptors: [DocumentDescriptor]
+            if let data = response[Self.documentsContextKey] as? Data,
+               let decoded = try? JSONDecoder.iso.decode([DocumentDescriptor].self, from: data) {
+                descriptors = decoded
+            } else {
+                descriptors = []
+            }
+            Task { @MainActor in reply(descriptors) }
+        }, errorHandler: { [weak self] _ in
+            let cached = self?.latestReceivedDocuments ?? []
+            Task { @MainActor in reply(cached) }
+        })
+    }
+
     // MARK: RecordingSender (Watch side)
 
     public func send(_ transfer: RecordingTransfer, audioURL: URL,
@@ -97,12 +128,40 @@ extension PhoneSessionTransport: WCSessionDelegate {
         } else {
             wwLog("WatchConnectivity activated (state: \(state.rawValue))", .transfer)
         }
+        // Deliver any document list retained from a previous push now that the session is active —
+        // `didReceiveApplicationContext` only fires for *new* contexts, so the Watch would otherwise
+        // never adopt a list that arrived before it launched. (No-op on iPhone, which doesn't set
+        // `onReceiveDocuments`.)
+        if let data = session.receivedApplicationContext[Self.documentsContextKey] as? Data,
+           let descriptors = try? JSONDecoder.iso.decode([DocumentDescriptor].self, from: data) {
+            let handler = onReceiveDocuments
+            Task { @MainActor in handler?(descriptors) }
+        }
     }
 
     #if os(iOS)
     public func sessionDidBecomeInactive(_ session: WCSession) {}
     public func sessionDidDeactivate(_ session: WCSession) { session.activate() }
     #endif
+
+    // MARK: Document request (iPhone side)
+
+    public func session(_ session: WCSession, didReceiveMessage message: [String: Any],
+                        replyHandler: @escaping ([String: Any]) -> Void) {
+        guard message[Self.requestDocumentsKey] != nil else { replyHandler([:]); return }
+        let provider = onDocumentsRequested
+        Task { @MainActor in
+            let descriptors = provider?() ?? []
+            if let data = try? JSONEncoder.iso.encode(descriptors) {
+                replyHandler([Self.documentsContextKey: data])
+                // Also refresh the retained context so future launches have it without a request.
+                self.sendDocuments(descriptors)
+            } else {
+                replyHandler([:])
+            }
+            wwLog("Answered Watch document refresh (\(descriptors.count) documents)", .transfer)
+        }
+    }
 
     // MARK: Document sync receiver (Watch side)
 

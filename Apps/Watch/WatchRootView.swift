@@ -182,6 +182,25 @@ struct WatchRootView: View {
                     Text("Documents from your iPhone appear here once it's paired and open.")
                 }
             }
+
+            // Manual pull, in case the automatic iPhone → Watch sync hasn't landed yet.
+            Section {
+                Button {
+                    model.refreshDocuments()
+                } label: {
+                    if model.isRefreshingDocuments {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                            Text("Refreshing…")
+                        }
+                        .frame(maxWidth: .infinity)
+                    } else {
+                        Label("Refresh Documents", systemImage: "arrow.clockwise")
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+                .disabled(model.isRefreshingDocuments)
+            }
         }
         .navigationTitle("Target")
     }

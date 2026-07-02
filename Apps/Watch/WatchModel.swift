@@ -82,6 +82,24 @@ final class WatchModel: ObservableObject {
         WatchSettings.shared.targetDocumentID = id
     }
 
+    /// True while a manual "Refresh Documents" pull is in flight (drives the button's spinner).
+    @Published var isRefreshingDocuments = false
+
+    /// Manually pull the document list from the iPhone (backs "Refresh Documents"). Adopts any
+    /// already-retained list immediately, then asks the iPhone for a fresh one when it's reachable.
+    func refreshDocuments() {
+        #if canImport(WatchConnectivity)
+        let cached = phone.latestReceivedDocuments
+        if !cached.isEmpty { updateDocuments(cached) }
+        isRefreshingDocuments = true
+        phone.requestDocuments { [weak self] descriptors in
+            guard let self else { return }
+            self.isRefreshingDocuments = false
+            if !descriptors.isEmpty { self.updateDocuments(descriptors) }
+        }
+        #endif
+    }
+
     /// Display name of the current target ("Inbox" when none is chosen or it's gone missing).
     var targetName: String {
         guard let id = targetDocumentID else { return "Inbox" }
