@@ -29,6 +29,15 @@ public extension PromptPreset {
                 + transcriptToken,
             temperature: 0.3,
             isBuiltIn: true
+        ),
+        // Applied locally (see PromptPreset.isNumberParagraphs), not run through the LLM — the
+        // template is only descriptive text for the editor.
+        PromptPreset(
+            id: numberParagraphsID,
+            name: "Number Paragraphs",
+            template: "Prefix each paragraph with its number.\n\n" + transcriptToken,
+            temperature: 0.0,
+            isBuiltIn: true
         )
     ]
 }

@@ -52,6 +52,24 @@ the rest of the app depends on.
 
    The standard **Watch → iPhone** path uses WatchConnectivity and needs no configuration.
 
+## Capturing and organizing
+
+- **Inbox is its own tab.** Watch clips and one-tap "New Recording" captures land in the **Inbox**,
+  now a top-level section alongside Documents rather than a row inside the documents list.
+- **Record straight to a document from the Watch.** The iPhone syncs your document list to the Watch
+  over WatchConnectivity; swipe left on the Watch's record screen to pick a target document (or the
+  Inbox). The chosen target's name shows on the record screen, and clips captured there are filed into
+  that document on the iPhone/iPad instead of the Inbox. (Targets sync over the paired-iPhone path; the
+  direct-to-iPad transports still file into the Inbox.)
+- **Pin documents.** Swipe a document and tap **Pin** to hold it at the top of the list.
+- **Insert while editing.** The paragraph editor has an **Insert** button that records a clip,
+  transcribes it, and splices the text in at the cursor — the clip is saved with the document's other
+  recordings.
+- **Share audio in.** Send an audio file to Woods Whisper from the iOS share sheet / "Open in…"; it's
+  imported into the Inbox and transcribed like any other recording.
+- **Number Paragraphs.** A built-in transform that numbers the paragraphs (applied locally, so it needs
+  no language model).
+
 ## Building
 
 This repo contains source only — no checked-in `.xcodeproj` (it's generated). On a Mac with

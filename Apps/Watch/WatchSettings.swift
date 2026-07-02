@@ -11,6 +11,32 @@ final class WatchSettings {
         static let transport = "transport"
         static let deviceLink = "deviceLink"
         static let walkingMode = "walkingMode"
+        static let targetDocumentID = "targetDocumentID"
+        static let documents = "syncedDocuments"
+    }
+
+    /// The document new recordings should be filed into on the iOS host, chosen in the Watch's
+    /// document picker. `nil` means the Inbox (the default). Persisted so the choice survives relaunch.
+    var targetDocumentID: UUID? {
+        get { defaults.string(forKey: Key.targetDocumentID).flatMap(UUID.init(uuidString:)) }
+        set {
+            if let newValue { defaults.set(newValue.uuidString, forKey: Key.targetDocumentID) }
+            else { defaults.removeObject(forKey: Key.targetDocumentID) }
+        }
+    }
+
+    /// The most recent document list synced from the iPhone, cached so the picker is populated at
+    /// launch before a fresh sync arrives.
+    var documents: [DocumentDescriptor] {
+        get {
+            guard let data = defaults.data(forKey: Key.documents) else { return [] }
+            return (try? JSONDecoder.iso.decode([DocumentDescriptor].self, from: data)) ?? []
+        }
+        set {
+            if let data = try? JSONEncoder.iso.encode(newValue) {
+                defaults.set(data, forKey: Key.documents)
+            }
+        }
     }
 
     /// When on, recordings are *not* auto-sent after capture (handy on a walk with no iPad nearby).

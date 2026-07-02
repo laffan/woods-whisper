@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import Combine
+import AVFoundation
 import WoodsWhisperKit
 
 /// Top-level coordinator for the iOS/iPadOS app. Owns the document store and on-device
@@ -55,11 +56,31 @@ final class AppModel: ObservableObject {
         // DocumentStore is a separate ObservableObject; forward its changes so views observing
         // AppModel re-render on async updates (e.g. a recording arriving from the Watch).
         documents.objectWillChange
-            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .sink { [weak self] _ in
+                self?.objectWillChange.send()
+                // Keep the Watch's record-target picker in sync. `objectWillChange` fires before the
+                // store mutates, so defer to the next tick to read the settled document set; the push
+                // is a no-op when the id/title/order list is unchanged.
+                Task { @MainActor in self?.syncDocumentsToWatch() }
+            }
             .store(in: &cancellables)
 
         AudioRecorder.preferredInputUID = AppSettings.shared.preferredMicUID
         configureReceivers()
+    }
+
+    /// The document descriptor list most recently pushed to the Watch, so identical pushes are skipped.
+    private var lastSyncedDescriptors: [DocumentDescriptor]?
+
+    /// Push the current (pinned-first) document list to the Watch over WatchConnectivity, unless it
+    /// matches the last one sent. Called on document changes and at launch.
+    func syncDocumentsToWatch() {
+        #if os(iOS)
+        let current = documents.documentDescriptors
+        guard current != lastSyncedDescriptors else { return }
+        lastSyncedDescriptors = current
+        phone.sendDocuments(current)
+        #endif
     }
 
     // MARK: Receivers
@@ -154,17 +175,20 @@ final class AppModel: ObservableObject {
         bluetoothServer?.endPairing()
     }
 
-    /// A recording arrived from the Watch: file it in the Inbox document and auto-transcribe.
+    /// A recording arrived from the Watch: file it into its chosen target document (if one was set on
+    /// the Watch and still exists), otherwise the Inbox, then auto-transcribe.
     private func ingest(transfer: RecordingTransfer, data: Data) {
         let kb = Double(data.count) / 1024
         wwLog(String(format: "Received recording “%@” (%.0f KB) from %@", transfer.recording.name,
                      kb, transfer.recording.origin.rawValue), .transfer)
         var recording = transfer.recording
         recording.status = .pending
-        let inbox = documents.inboxDocument()
-        documents.addRecording(recording, audioData: data, toDocument: inbox.id)
-        wwLog("Filed “\(recording.name)” into \(inbox.title)", .transfer)
-        autoTranscribe(recordingID: recording.id, inDocument: inbox.id)
+        // Honour a Watch-chosen target document if it still exists; fall back to the Inbox.
+        let target = recording.targetDocumentID.flatMap { documents.document(with: $0) }
+            ?? documents.inboxDocument()
+        documents.addRecording(recording, audioData: data, toDocument: target.id)
+        wwLog("Filed “\(recording.name)” into \(target.title)", .transfer)
+        autoTranscribe(recordingID: recording.id, inDocument: target.id)
     }
 
     // MARK: Capture on this device
@@ -298,6 +322,52 @@ final class AppModel: ObservableObject {
         #else
         return .phone
         #endif
+    }
+
+    /// Capture-for-insert: register a just-recorded clip in `documentID`'s Recordings section (a
+    /// normal recording, saved at the bottom like the rest), transcribe it, and return the transcript
+    /// so the editor can splice it in at the caret. Returns nil if the speech model isn't ready or
+    /// nothing was transcribed. Backs the editor's "Insert" action.
+    func captureForInsertion(audioURL: URL, duration: TimeInterval, in documentID: UUID) async -> String? {
+        let name = Recording.defaultName(for: Date(), duration: duration,
+                                         byteCount: Recording.fileSize(at: audioURL))
+        let recording = Recording(name: name, duration: duration,
+                                  audioFileName: audioURL.lastPathComponent, origin: deviceOrigin())
+        documents.addRecording(recording, toDocument: documentID)
+        wwLog("Captured “\(recording.name)” to insert", .general)
+        guard transcriptionReady else {
+            setupError = "Speech model isn't ready yet — the recording was saved; transcribe it once setup finishes."
+            return nil
+        }
+        await transcribe(recordingID: recording.id, inDocument: documentID)
+        let text = documents.document(with: documentID)?
+            .recordings.first(where: { $0.id == recording.id })?
+            .transcript?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return text.isEmpty ? nil : text
+    }
+
+    /// Import an audio file shared into the app (share sheet / "Open in…"). Treated exactly like a
+    /// normal recording: copied into the store, filed in the Inbox, and auto-transcribed.
+    func importSharedAudio(from url: URL) {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        guard let data = try? Data(contentsOf: url) else {
+            setupError = "Couldn't read the shared audio file."
+            wwLog("Failed to read shared audio “\(url.lastPathComponent)”", .error)
+            return
+        }
+        let ext = url.pathExtension.isEmpty ? "m4a" : url.pathExtension
+        let id = UUID()
+        let fileName = "\(id.uuidString).\(ext)"
+        let duration = (try? AVAudioPlayer(data: data))?.duration ?? 0
+        let name = Recording.defaultName(for: Date(), duration: duration, byteCount: data.count)
+        let recording = Recording(id: id, name: name, duration: duration,
+                                  audioFileName: fileName, origin: deviceOrigin())
+        let inbox = documents.inboxDocument()
+        documents.addRecording(recording, audioData: data, toDocument: inbox.id)
+        wwLog(String(format: "Imported shared audio “%@” (%.0f KB) into %@", name,
+                     Double(data.count) / 1024, inbox.title), .transfer)
+        autoTranscribe(recordingID: recording.id, inDocument: inbox.id)
     }
 
     // MARK: Transcription
@@ -506,6 +576,13 @@ final class AppModel: ObservableObject {
             setupError = "Nothing to transform yet — record and transcribe something first."
             return
         }
+        // "Number Paragraphs" is deterministic — number the paragraphs locally, no model needed.
+        if preset.isNumberParagraphs {
+            documents.setParagraphs(Document.paragraphs(from: PromptPreset.numberParagraphs(in: source)),
+                                    in: document.id)
+            wwLog("Numbered paragraphs of “\(document.title)”", .transform)
+            return
+        }
         wwLog("Transforming “\(document.title)” with “\(preset.name)”…", .transform)
         let start = Date()
         do {
@@ -532,6 +609,12 @@ final class AppModel: ObservableObject {
             setupError = "Nothing to transform yet — transcribe this recording first."
             return
         }
+        if preset.isNumberParagraphs {
+            recording.transcript = PromptPreset.numberParagraphs(in: source)
+            documents.updateRecording(recording, inDocument: documentID)
+            wwLog("Numbered paragraphs of transcript “\(recording.name)”", .transform)
+            return
+        }
         wwLog("Transforming transcript of “\(recording.name)” with “\(preset.name)”…", .transform)
         do {
             let result = try await transform.transform(transcript: source, with: preset, onToken: nil)
@@ -553,6 +636,12 @@ final class AppModel: ObservableObject {
         guard let source = documents.document(with: documentID)?
             .paragraphs.first(where: { $0.id == paragraphID })?.text,
               !source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        if preset.isNumberParagraphs {
+            documents.replaceParagraph(paragraphID, in: documentID,
+                                       withTextSplitInto: PromptPreset.numberParagraphs(in: source))
+            wwLog("Numbered a paragraph", .transform)
+            return
+        }
         wwLog("Transforming a paragraph with “\(preset.name)”…", .transform)
         do {
             let result = try await transform.transform(transcript: source, with: preset, onToken: onToken)

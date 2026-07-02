@@ -22,13 +22,17 @@ public struct Document: Identifiable, Codable, Hashable, Sendable {
     /// their own "Recordings" section.
     public var recordings: [Recording]
 
+    /// Pinned documents are held at the top of the Documents list, above the unpinned ones.
+    public var isPinned: Bool
+
     public init(
         id: UUID = UUID(),
         title: String,
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         paragraphs: [Paragraph] = [],
-        recordings: [Recording] = []
+        recordings: [Recording] = [],
+        isPinned: Bool = false
     ) {
         self.id = id
         self.title = title
@@ -36,6 +40,7 @@ public struct Document: Identifiable, Codable, Hashable, Sendable {
         self.updatedAt = updatedAt
         self.paragraphs = paragraphs
         self.recordings = recordings
+        self.isPinned = isPinned
     }
 
     /// The whole body as plain text — the input for a whole-document transform.
@@ -75,7 +80,7 @@ public struct Document: Identifiable, Codable, Hashable, Sendable {
     // Custom decoding so documents saved by older builds (which stored `transformations` and no
     // `paragraphs`) still load: missing keys default to empty rather than failing the decode.
     enum CodingKeys: String, CodingKey {
-        case id, title, createdAt, updatedAt, paragraphs, recordings
+        case id, title, createdAt, updatedAt, paragraphs, recordings, isPinned
     }
 
     public init(from decoder: Decoder) throws {
@@ -86,5 +91,6 @@ public struct Document: Identifiable, Codable, Hashable, Sendable {
         updatedAt = try c.decode(Date.self, forKey: .updatedAt)
         paragraphs = try c.decodeIfPresent([Paragraph].self, forKey: .paragraphs) ?? []
         recordings = try c.decodeIfPresent([Recording].self, forKey: .recordings) ?? []
+        isPinned = try c.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
     }
 }

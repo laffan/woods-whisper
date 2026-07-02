@@ -41,6 +41,12 @@ public struct Recording: Identifiable, Codable, Hashable, Sendable {
     /// "Reset with Originals", appended below the body under a "--- Revisions ---" heading.
     public var isRevision: Bool
 
+    /// The document this recording should be filed into when it reaches the iOS/iPadOS host. Set on
+    /// the Watch when a target document has been chosen (see the Watch's document picker); nil means
+    /// "file into the Inbox". The host honours it only if a matching document still exists, otherwise
+    /// it falls back to the Inbox.
+    public var targetDocumentID: UUID?
+
     public enum Origin: String, Codable, Sendable {
         case watch
         case phone
@@ -65,7 +71,8 @@ public struct Recording: Identifiable, Codable, Hashable, Sendable {
         sourceDeviceID: String? = nil,
         transcript: String? = nil,
         status: Status = .pending,
-        isRevision: Bool = false
+        isRevision: Bool = false,
+        targetDocumentID: UUID? = nil
     ) {
         self.id = id
         self.name = name ?? Recording.defaultName(for: createdAt, duration: duration, byteCount: nil)
@@ -78,13 +85,15 @@ public struct Recording: Identifiable, Codable, Hashable, Sendable {
         self.transcript = transcript
         self.status = status
         self.isRevision = isRevision
+        self.targetDocumentID = targetDocumentID
     }
 
     // Custom decoding so recordings saved (or transmitted) by older builds — which had no
-    // `isRevision` key — still load: the missing key defaults to false rather than failing.
+    // `isRevision` / `targetDocumentID` keys — still load: the missing keys default rather than
+    // failing.
     enum CodingKeys: String, CodingKey {
         case id, name, createdAt, duration, audioFileName, sampleRate, origin,
-             sourceDeviceID, transcript, status, isRevision
+             sourceDeviceID, transcript, status, isRevision, targetDocumentID
     }
 
     public init(from decoder: Decoder) throws {
@@ -100,6 +109,7 @@ public struct Recording: Identifiable, Codable, Hashable, Sendable {
         transcript = try c.decodeIfPresent(String.self, forKey: .transcript)
         status = try c.decode(Status.self, forKey: .status)
         isRevision = try c.decodeIfPresent(Bool.self, forKey: .isRevision) ?? false
+        targetDocumentID = try c.decodeIfPresent(UUID.self, forKey: .targetDocumentID)
     }
 
     /// The default, two-line display name:

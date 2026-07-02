@@ -14,7 +14,14 @@ public final class PhoneSessionTransport: NSObject, RecordingSender, RecordingRe
 
     public var onReceive: (@MainActor (RecordingTransfer, Data) -> Void)?
 
+    /// Called on the main actor when an updated document list arrives (iPhone → Watch). Used by the
+    /// Watch to refresh its record-target picker.
+    public var onReceiveDocuments: (@MainActor ([DocumentDescriptor]) -> Void)?
+
     private let session: WCSession?
+
+    /// Key under which the synced document list rides in the WatchConnectivity application context.
+    private static let documentsContextKey = "documents"
 
     public override init() {
         session = WCSession.isSupported() ? WCSession.default : nil
@@ -32,6 +39,33 @@ public final class PhoneSessionTransport: NSObject, RecordingSender, RecordingRe
     }
 
     public func stop() { /* WCSession has no deactivate; nothing to do. */ }
+
+    // MARK: Document sync (iPhone → Watch)
+
+    /// Push the current document list to the Watch. Uses `updateApplicationContext`, which keeps only
+    /// the latest state and delivers it in the background — exactly right for a small, replace-wholesale
+    /// list that only the most recent version matters for. Safe to call often; identical contexts throw
+    /// and are ignored.
+    public func sendDocuments(_ descriptors: [DocumentDescriptor]) {
+        guard let session else { return }
+        guard let data = try? JSONEncoder.iso.encode(descriptors) else { return }
+        do {
+            try session.updateApplicationContext([Self.documentsContextKey: data])
+            wwLog("Synced \(descriptors.count) document(s) to Watch", .transfer)
+        } catch {
+            // WCSession throws if the payload is unchanged, or if the session isn't activated yet —
+            // neither is worth surfacing.
+        }
+    }
+
+    /// The most recently received document list, read from WCSession's retained application context so
+    /// the Watch has targets immediately on launch (before a fresh push arrives).
+    public var latestReceivedDocuments: [DocumentDescriptor] {
+        guard let data = session?.receivedApplicationContext[Self.documentsContextKey] as? Data,
+              let decoded = try? JSONDecoder.iso.decode([DocumentDescriptor].self, from: data)
+        else { return [] }
+        return decoded
+    }
 
     // MARK: RecordingSender (Watch side)
 
@@ -69,6 +103,17 @@ extension PhoneSessionTransport: WCSessionDelegate {
     public func sessionDidBecomeInactive(_ session: WCSession) {}
     public func sessionDidDeactivate(_ session: WCSession) { session.activate() }
     #endif
+
+    // MARK: Document sync receiver (Watch side)
+
+    public func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
+        guard let data = applicationContext[Self.documentsContextKey] as? Data,
+              let descriptors = try? JSONDecoder.iso.decode([DocumentDescriptor].self, from: data)
+        else { return }
+        wwLog("Received \(descriptors.count) document(s) from iPhone", .transfer)
+        let handler = onReceiveDocuments
+        Task { @MainActor in handler?(descriptors) }
+    }
 
     // MARK: RecordingReceiver (iPhone side)
 

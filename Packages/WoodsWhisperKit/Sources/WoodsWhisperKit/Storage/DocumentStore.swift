@@ -57,6 +57,33 @@ public final class DocumentStore: ObservableObject {
         touch(idx)
     }
 
+    /// Pin or unpin a document. Pinning deliberately does not bump `updatedAt` (the pin is metadata,
+    /// not an edit); the Documents list surfaces pinned documents at the top.
+    public func setPinned(_ pinned: Bool, for documentID: UUID) {
+        guard let idx = index(of: documentID) else { return }
+        guard documents[idx].isPinned != pinned else { return }
+        documents[idx].isPinned = pinned
+        persistDocuments()
+    }
+
+    /// Ordered, lightweight snapshots of the user's documents (Inbox excluded), pinned first then by
+    /// most-recently-updated — the list pushed to the Watch as record targets.
+    public var documentDescriptors: [DocumentDescriptor] {
+        Self.descriptors(from: documents)
+    }
+
+    /// The pinned-first, most-recent-next document descriptor ordering, as a pure function so callers
+    /// observing the `documents` publisher can compute it from a freshly-published array.
+    public static func descriptors(from documents: [Document]) -> [DocumentDescriptor] {
+        documents
+            .filter { $0.title != Self.inboxTitle }
+            .sorted { lhs, rhs in
+                if lhs.isPinned != rhs.isPinned { return lhs.isPinned && !rhs.isPinned }
+                return lhs.updatedAt > rhs.updatedAt
+            }
+            .map(DocumentDescriptor.init)
+    }
+
     public func delete(_ document: Document) {
         if let idx = index(of: document.id) {
             for recording in documents[idx].recordings { removeAudio(recording) }
@@ -344,7 +371,7 @@ public final class DocumentStore: ObservableObject {
 
     /// Bump when the shipped built-in presets change, so existing installs re-seed them (custom
     /// presets are preserved) instead of keeping the old set forever.
-    private static let presetsSeedVersion = 1
+    private static let presetsSeedVersion = 2
     private let presetsSeedVersionKey = "ww.presetsSeedVersion"
 
     private func load() {

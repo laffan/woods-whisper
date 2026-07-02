@@ -11,6 +11,9 @@ struct ContentView: View {
             DocumentsView()
                 .tabItem { Label("Documents", systemImage: "doc.text") }
 
+            InboxTab()
+                .tabItem { Label("Inbox", systemImage: "tray.and.arrow.down") }
+
             LogView()
                 .tabItem { Label("Log", systemImage: "terminal") }
 
@@ -42,7 +45,12 @@ struct ContentView: View {
             }
         }
         .onOpenURL { url in
-            if url == woodsWhisperRecordURL { launcher.request() }
+            if url == woodsWhisperRecordURL {
+                launcher.request()
+            } else if url.isFileURL {
+                // Audio shared into the app (share sheet / "Open in…") — import as a normal recording.
+                model.importSharedAudio(from: url)
+            }
         }
     }
 }
@@ -63,6 +71,29 @@ struct WoodsWhisperShortcuts: AppShortcutsProvider {
             shortTitle: "New Recording",
             systemImageName: "mic.fill"
         )
+    }
+}
+
+// MARK: - Inbox tab
+
+/// Hosts the Inbox as a top-level section. The Inbox document is created on demand and the flat
+/// recordings list (`InboxView`) is wrapped in its own navigation stack so it reads like a peer of
+/// Documents rather than a row buried inside it.
+struct InboxTab: View {
+    @EnvironmentObject private var model: AppModel
+    @State private var inboxID: UUID?
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if let inboxID {
+                    InboxView(documentID: inboxID)
+                } else {
+                    ProgressView()
+                }
+            }
+        }
+        .task { inboxID = model.documents.inboxDocument().id }
     }
 }
 

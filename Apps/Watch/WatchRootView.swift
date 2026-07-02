@@ -11,6 +11,10 @@ struct WatchRootView: View {
     @ObservedObject private var launcher = RecordingLauncher.shared
     @State private var showingDeleteAll = false
 
+    /// Horizontal paging within the Record tab: 0 = the recorder, 1 = the document-target picker
+    /// (swipe left from the recorder to reach it).
+    @State private var recordPage = 0
+
     /// Screen order top-to-bottom: Pairing, Record, List. Record is the default, so you swipe up
     /// to the list and down to pairing.
     private enum Tab { case pairing, record, list }
@@ -45,6 +49,7 @@ struct WatchRootView: View {
     private func startFromIntent() async {
         launcher.pending = false
         tab = .record
+        recordPage = 0
         guard !recorder.isRecording else { return }
         guard await recorder.requestPermission() else {
             model.statusMessage = "Microphone permission needed."
@@ -58,7 +63,17 @@ struct WatchRootView: View {
         }
     }
 
+    /// The Record tab pages horizontally: the recorder itself, and — one swipe left — a picker for
+    /// the document new recordings are filed into.
     private var recordTab: some View {
+        TabView(selection: $recordPage) {
+            recordScreen.tag(0)
+            documentPickerScreen.tag(1)
+        }
+        .tabViewStyle(.page)
+    }
+
+    private var recordScreen: some View {
         VStack(spacing: 10) {
             if recorder.isRecording {
                 Text(timeString(recorder.elapsed))
@@ -98,6 +113,17 @@ struct WatchRootView: View {
                     .accessibilityLabel(recorder.isPaused ? "Continue" : "Pause")
                 }
             } else {
+                // Current record target — tap (or swipe left) to change where clips are filed.
+                Button {
+                    withAnimation { recordPage = 1 }
+                } label: {
+                    Label(model.targetName, systemImage: "tray.and.arrow.down")
+                        .font(.caption2)
+                        .lineLimit(1)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+
                 // Walking toggle (replaces the old "Tap to record" label): when on, clips queue
                 // locally and the record button turns green.
                 Toggle(isOn: $walkingMode) {
@@ -138,6 +164,43 @@ struct WatchRootView: View {
             }
         }
         .padding()
+    }
+
+    /// Document-target picker (swipe left from the recorder): Inbox on top, then the documents synced
+    /// from the iPhone. Tapping one selects it and swipes back to the recorder.
+    private var documentPickerScreen: some View {
+        List {
+            Section {
+                targetRow(id: nil, title: "Inbox", icon: "tray.and.arrow.down")
+                ForEach(model.documents) { doc in
+                    targetRow(id: doc.id, title: doc.title, icon: "doc.text")
+                }
+            } header: {
+                Text("Record to")
+            } footer: {
+                if model.documents.isEmpty {
+                    Text("Documents from your iPhone appear here once it's paired and open.")
+                }
+            }
+        }
+        .navigationTitle("Target")
+    }
+
+    /// One selectable target row: shows a checkmark on the current selection.
+    @ViewBuilder
+    private func targetRow(id: UUID?, title: String, icon: String) -> some View {
+        Button {
+            model.selectTarget(id)
+            withAnimation { recordPage = 0 }
+        } label: {
+            HStack {
+                Label(title, systemImage: icon).lineLimit(1)
+                Spacer()
+                if model.targetDocumentID == id {
+                    Image(systemName: "checkmark").foregroundStyle(.tint)
+                }
+            }
+        }
     }
 
     private var recordingsTab: some View {

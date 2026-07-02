@@ -14,39 +14,24 @@ struct DocumentsView: View {
     @State private var editingText = ""
 
     private var allDocuments: [Document] { model.documents.documents }
-    private var inbox: Document? { allDocuments.first { $0.title == DocumentStore.inboxTitle } }
     private var userDocuments: [Document] { allDocuments.filter { $0.title != DocumentStore.inboxTitle } }
+    private var pinnedDocuments: [Document] { userDocuments.filter { $0.isPinned } }
+    private var unpinnedDocuments: [Document] { userDocuments.filter { !$0.isPinned } }
 
     var body: some View {
         NavigationStack {
             List {
-                // Inbox is pinned at the top: a flat list of recordings (Watch clips and
-                // "New Recording" land here), not a document.
-                if let inbox {
-                    Section {
-                        NavigationLink(value: Route.inbox(inbox.id)) {
-                            Label { InboxRow(document: inbox) } icon: {
-                                Image(systemName: "tray.and.arrow.down")
-                            }
-                        }
+                // Pinned documents are held at the top in their own section.
+                if !pinnedDocuments.isEmpty {
+                    Section("Pinned") {
+                        ForEach(pinnedDocuments) { documentRow($0) }
                     }
                 }
 
                 Section {
-                    ForEach(userDocuments) { doc in
-                        NavigationLink(value: Route.document(doc.id)) { DocumentRow(document: doc) }
-                            .swipeActions(edge: .trailing) {
-                                Button("Delete", role: .destructive) { model.documents.moveToTrash(doc) }
-                                Button("Rename") { startRename(doc) }.tint(.blue)
-                            }
-                            .swipeActions(edge: .leading) {
-                                Button("Copy") { copy(doc) }.tint(.gray)
-                                Button("Share") { shareItem = ShareItem(text: doc.combinedText) }.tint(.indigo)
-                                Button("Edit") { startEdit(doc) }.tint(.blue)
-                            }
-                    }
+                    ForEach(unpinnedDocuments) { documentRow($0) }
                 } header: {
-                    if inbox != nil && !userDocuments.isEmpty { Text("Documents") }
+                    if !pinnedDocuments.isEmpty && !unpinnedDocuments.isEmpty { Text("Documents") }
                 }
 
                 if !model.documents.trash.isEmpty {
@@ -65,7 +50,6 @@ struct DocumentsView: View {
             .navigationDestination(for: Route.self) { route in
                 switch route {
                 case .document(let id): DocumentDetailView(documentID: id)
-                case .inbox(let id):    InboxView(documentID: id)
                 case .trash:            TrashView()
                 }
             }
@@ -83,10 +67,10 @@ struct DocumentsView: View {
                 }
             }
             .overlay {
-                if allDocuments.isEmpty {
+                if userDocuments.isEmpty {
                     ContentUnavailableView("No documents yet",
                                            systemImage: "doc.text",
-                                           description: Text("Tap ✎ to start a document, or the mic to record straight to your Inbox. Watch recordings land in “Inbox.”"))
+                                           description: Text("Tap ✎ to start a document, or the mic to record straight to your Inbox. Watch recordings land in the Inbox tab."))
                 }
             }
             .alert("Rename document", isPresented: Binding(get: { renameTarget != nil },
@@ -116,6 +100,24 @@ struct DocumentsView: View {
         }
     }
 
+    /// One document row with its swipe actions, shared by the Pinned and Documents sections.
+    @ViewBuilder
+    private func documentRow(_ doc: Document) -> some View {
+        NavigationLink(value: Route.document(doc.id)) { DocumentRow(document: doc) }
+            .swipeActions(edge: .trailing) {
+                Button("Delete", role: .destructive) { model.documents.moveToTrash(doc) }
+                Button("Rename") { startRename(doc) }.tint(.blue)
+                Button(doc.isPinned ? "Unpin" : "Pin") {
+                    model.documents.setPinned(!doc.isPinned, for: doc.id)
+                }.tint(.yellow)
+            }
+            .swipeActions(edge: .leading) {
+                Button("Copy") { copy(doc) }.tint(.gray)
+                Button("Share") { shareItem = ShareItem(text: doc.combinedText) }.tint(.indigo)
+                Button("Edit") { startEdit(doc) }.tint(.blue)
+            }
+    }
+
     private func startRename(_ document: Document) {
         renameText = document.title
         renameTarget = document
@@ -136,7 +138,6 @@ struct DocumentsView: View {
     /// Navigation routes by document id so views always read live store state, not a stale copy.
     enum Route: Hashable {
         case document(UUID)
-        case inbox(UUID)
         case trash
     }
 }
@@ -145,7 +146,14 @@ private struct DocumentRow: View {
     let document: Document
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(document.title)
+            HStack(spacing: 6) {
+                if document.isPinned {
+                    Image(systemName: "pin.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                Text(document.title)
+            }
             Text(subtitle)
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -157,22 +165,6 @@ private struct DocumentRow: View {
         let count = document.recordings.count
         let clips = count == 0 ? "" : " · \(count) recording\(count == 1 ? "" : "s")"
         return body + clips
-    }
-}
-
-private struct InboxRow: View {
-    let document: Document
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(DocumentStore.inboxTitle)
-            Text(subtitle)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-    }
-    private var subtitle: String {
-        let count = document.recordings.count
-        return count == 0 ? "No recordings" : "\(count) recording\(count == 1 ? "" : "s")"
     }
 }
 

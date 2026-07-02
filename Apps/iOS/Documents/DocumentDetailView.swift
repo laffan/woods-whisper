@@ -34,7 +34,6 @@ struct DocumentDetailView: View {
 
     // Paragraph editing
     @State private var editingParagraph: Document.Paragraph?
-    @State private var editingText = ""
 
     // Whole-document editing (the "Edit" action)
     @State private var showingDocEditor = false
@@ -82,12 +81,32 @@ struct DocumentDetailView: View {
             }
         }
         .sheet(item: $editingParagraph) { para in
-            TextEditorSheet(title: "Edit Paragraph", text: $editingText) {
-                // Blank lines added while editing split into separate sections.
-                model.documents.replaceParagraph(para.id, in: documentID, withTextSplitInto: editingText)
-            } accessory: {
-                paragraphEditorActions(for: para)
-            }
+            ParagraphEditorSheet(
+                initialText: para.text,
+                modelReady: model.modelReady,
+                onSave: { text in
+                    // Blank lines added while editing split into separate sections.
+                    model.documents.replaceParagraph(para.id, in: documentID, withTextSplitInto: text)
+                },
+                onRevise: {
+                    editingParagraph = nil
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                        recorderTask = .revise(paragraphID: para.id)
+                    }
+                },
+                onTransform: {
+                    editingParagraph = nil
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                        withAnimation(.snappy(duration: 0.22)) { paragraphTransformTarget = para.id }
+                    }
+                },
+                onInsert: { text, caret in
+                    editingParagraph = nil
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                        recorderTask = .insertAtCaret(paragraphID: para.id, caret: caret, baseText: text)
+                    }
+                }
+            )
         }
         .sheet(isPresented: $showingDocEditor) {
             TextEditorSheet(title: "Edit Document", text: $docEditorText) {
@@ -574,40 +593,36 @@ struct DocumentDetailView: View {
                                            paragraphID: paragraphID, in: documentID)
         case .rerecord(let recordingID):
             model.rerecordRecording(recordingID, in: documentID, audioURL: url, duration: duration)
+        case .insertAtCaret(let paragraphID, let caret, let baseText):
+            Task {
+                let transcript = await model.captureForInsertion(audioURL: url, duration: duration,
+                                                                 in: documentID)
+                // Always write back the user's in-progress edits; splice the transcript in when we
+                // got one (so edits are never lost even if nothing transcribed).
+                let newText = transcript.map { Self.splice(baseText, insert: $0, at: caret) } ?? baseText
+                model.documents.replaceParagraph(paragraphID, in: documentID, withTextSplitInto: newText)
+            }
         }
+    }
+
+    /// Insert `insert` into `base` at character offset `caret`, adding a single separating space on
+    /// either side only where the neighbouring character isn't already whitespace.
+    static func splice(_ base: String, insert: String, at caret: Int) -> String {
+        let ns = base as NSString
+        let loc = max(0, min(caret, ns.length))
+        let before = ns.substring(to: loc)
+        let after = ns.substring(from: loc)
+        let piece = insert.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !piece.isEmpty else { return base }
+        let lead = (before.last.map { !$0.isWhitespace } ?? false) ? " " : ""
+        let trail = (after.first.map { !$0.isWhitespace } ?? false) ? " " : ""
+        return before + lead + piece + trail + after
     }
 
     // MARK: Paragraph editing
 
     private func startEditing(_ para: Document.Paragraph) {
-        editingText = para.text
         editingParagraph = para
-    }
-
-    /// Bottom action bar inside the Edit Paragraph sheet: Revise (record a replacement) and
-    /// Transform (rewrite this paragraph). Each dismisses the editor first, then triggers its flow
-    /// once the sheet is gone (so a recorder sheet / transform pane doesn't fight the dismissal).
-    @ViewBuilder
-    private func paragraphEditorActions(for para: Document.Paragraph) -> some View {
-        Divider()
-        HStack(spacing: 0) {
-            docActionButton("Revise", "mic.fill") {
-                editingParagraph = nil
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                    recorderTask = .revise(paragraphID: para.id)
-                }
-            }
-            docActionButton("Transform", "wand.and.stars") {
-                editingParagraph = nil
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                    withAnimation(.snappy(duration: 0.22)) { paragraphTransformTarget = para.id }
-                }
-            }
-            .disabled(!model.modelReady)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 8)
-        .padding(.horizontal, 8)
     }
 
     /// What a presented `RecordingSheet` should do with the finished clip.
@@ -616,6 +631,9 @@ struct DocumentDetailView: View {
         case insertBody(at: Int)
         case revise(paragraphID: UUID)
         case rerecord(recordingID: UUID)
+        /// Record a clip, transcribe it, and splice the transcript into `baseText` at `caret`, then
+        /// replace the paragraph — the editor's "Insert" action.
+        case insertAtCaret(paragraphID: UUID, caret: Int, baseText: String)
 
         var id: String {
             switch self {
@@ -623,6 +641,7 @@ struct DocumentDetailView: View {
             case .insertBody(let i):      return "insert-\(i)"
             case .revise(let pid):        return "revise-\(pid)"
             case .rerecord(let rid):      return "rerecord-\(rid)"
+            case .insertAtCaret(let pid, _, _): return "insert-caret-\(pid)"
             }
         }
 
@@ -632,6 +651,7 @@ struct DocumentDetailView: View {
             case .insertBody:      return "Insert Recording"
             case .revise:          return "Revise Paragraph"
             case .rerecord:        return "Re-record"
+            case .insertAtCaret:   return "Insert Recording"
             }
         }
     }
@@ -701,6 +721,136 @@ extension TextEditorSheet where Accessory == EmptyView {
         self.init(title: title, text: text, onSave: onSave) { EmptyView() }
     }
 }
+
+// MARK: - Paragraph editor (caret-aware, with Insert)
+
+/// The single-paragraph editor. Unlike the generic `TextEditorSheet` it tracks the caret (via a
+/// `UITextView`) so the "Insert" action can record a clip, transcribe it, and splice the text in at
+/// the cursor. Also offers Revise (re-record the whole paragraph) and Transform.
+///
+/// It owns its own text/selection state, seeded from the paragraph; the parent is handed the final
+/// text on Save, or — for Insert — the current text and caret offset so it can splice after the
+/// recording finishes. Lives here so the app target picks it up without an xcodegen regen.
+struct ParagraphEditorSheet: View {
+    let modelReady: Bool
+    let onSave: (String) -> Void
+    let onRevise: () -> Void
+    let onTransform: () -> Void
+    /// Called with the current text and caret offset; the parent starts the record→transcribe→splice
+    /// flow (this sheet dismisses first).
+    let onInsert: (_ text: String, _ caret: Int) -> Void
+
+    @State private var text: String
+    @State private var selection: NSRange
+    @Environment(\.dismiss) private var dismiss
+
+    init(initialText: String,
+         modelReady: Bool,
+         onSave: @escaping (String) -> Void,
+         onRevise: @escaping () -> Void,
+         onTransform: @escaping () -> Void,
+         onInsert: @escaping (_ text: String, _ caret: Int) -> Void) {
+        self.modelReady = modelReady
+        self.onSave = onSave
+        self.onRevise = onRevise
+        self.onTransform = onTransform
+        self.onInsert = onInsert
+        _text = State(initialValue: initialText)
+        _selection = State(initialValue: NSRange(location: (initialText as NSString).length, length: 0))
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                #if canImport(UIKit)
+                CaretTrackingTextEditor(text: $text, selection: $selection)
+                    .padding(8)
+                #else
+                TextEditor(text: $text).padding()
+                #endif
+                Divider()
+                HStack(spacing: 0) {
+                    editorAction("Revise", "mic.fill") { onRevise() }
+                    editorAction("Insert", "text.insert") {
+                        onInsert(text, selection.location)
+                    }
+                    editorAction("Transform", "wand.and.stars") { onTransform() }
+                        .disabled(!modelReady)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
+                .padding(.horizontal, 8)
+            }
+            .navigationTitle("Edit Paragraph")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") { onSave(text); dismiss() }
+                }
+            }
+        }
+    }
+
+    private func editorAction(_ title: String, _ icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 4) {
+                Image(systemName: icon).font(.title3)
+                Text(title).font(.caption)
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.tint)
+    }
+}
+
+#if canImport(UIKit)
+/// A thin `UITextView` wrapper that surfaces the caret/selection so text can be spliced in at the
+/// cursor. Two-way bindings keep `text` and `selection` in sync with the view.
+struct CaretTrackingTextEditor: UIViewRepresentable {
+    @Binding var text: String
+    @Binding var selection: NSRange
+
+    func makeUIView(context: Context) -> UITextView {
+        let view = UITextView()
+        view.delegate = context.coordinator
+        view.font = UIFont.preferredFont(forTextStyle: .body)
+        view.backgroundColor = .clear
+        view.textContainerInset = UIEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
+        view.text = text
+        return view
+    }
+
+    func updateUIView(_ uiView: UITextView, context: Context) {
+        if uiView.text != text { uiView.text = text }
+        let clamped = clamp(selection, to: uiView.text as NSString)
+        if uiView.selectedRange != clamped { uiView.selectedRange = clamped }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    private func clamp(_ range: NSRange, to text: NSString) -> NSRange {
+        let loc = max(0, min(range.location, text.length))
+        let len = max(0, min(range.length, text.length - loc))
+        return NSRange(location: loc, length: len)
+    }
+
+    final class Coordinator: NSObject, UITextViewDelegate {
+        var parent: CaretTrackingTextEditor
+        init(_ parent: CaretTrackingTextEditor) { self.parent = parent }
+
+        func textViewDidChange(_ textView: UITextView) {
+            parent.text = textView.text
+            parent.selection = textView.selectedRange
+        }
+
+        func textViewDidChangeSelection(_ textView: UITextView) {
+            parent.selection = textView.selectedRange
+        }
+    }
+}
+#endif
 
 // MARK: - Share
 

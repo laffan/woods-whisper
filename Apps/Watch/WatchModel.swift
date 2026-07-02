@@ -25,6 +25,14 @@ final class WatchModel: ObservableObject {
     /// the moment a send is started for it (manually or via "Send Walking Clips").
     @Published var walkingClipIDs: Set<UUID> = []
 
+    /// Documents synced from the iPhone, shown in the record-target picker (Inbox is offered on top
+    /// of these). Seeded from the on-disk cache, refreshed as the iPhone pushes updates.
+    @Published var documents: [DocumentDescriptor] = WatchSettings.shared.documents
+
+    /// The chosen target document's id, or nil for the Inbox. Recordings captured while this is set
+    /// are stamped so the host files them into that document.
+    @Published var targetDocumentID: UUID? = WatchSettings.shared.targetDocumentID
+
     enum SendOutcome: Equatable { case sent, failed, cancelled }
 
     /// In-flight send tasks, kept so a send can be cancelled (e.g. the iPad is offline).
@@ -47,8 +55,37 @@ final class WatchModel: ObservableObject {
             .store(in: &cancellables)
 
         #if canImport(WatchConnectivity)
+        // Refresh the target picker whenever the iPhone pushes an updated document list, and adopt
+        // any list already retained in the session's application context at launch.
+        phone.onReceiveDocuments = { [weak self] descriptors in
+            self?.updateDocuments(descriptors)
+        }
         try? phone.start()
+        let cached = phone.latestReceivedDocuments
+        if !cached.isEmpty { updateDocuments(cached) }
         #endif
+    }
+
+    /// Adopt a freshly synced document list: publish it, persist it, and drop the selected target if
+    /// it no longer exists (so a deleted document can't strand recordings on the host).
+    func updateDocuments(_ descriptors: [DocumentDescriptor]) {
+        documents = descriptors
+        WatchSettings.shared.documents = descriptors
+        if let target = targetDocumentID, !descriptors.contains(where: { $0.id == target }) {
+            selectTarget(nil)
+        }
+    }
+
+    /// Choose the document new recordings should be filed into (nil = Inbox).
+    func selectTarget(_ id: UUID?) {
+        targetDocumentID = id
+        WatchSettings.shared.targetDocumentID = id
+    }
+
+    /// Display name of the current target ("Inbox" when none is chosen or it's gone missing).
+    var targetName: String {
+        guard let id = targetDocumentID else { return "Inbox" }
+        return documents.first(where: { $0.id == id })?.title ?? "Inbox"
     }
 
     private func sender() -> RecordingSender? {
@@ -121,7 +158,8 @@ final class WatchModel: ObservableObject {
         let fileName = audioURL.lastPathComponent
         let name = Recording.defaultName(for: Date(), duration: duration,
                                          byteCount: Recording.fileSize(at: audioURL))
-        let recording = Recording(name: name, duration: duration, audioFileName: fileName, origin: .watch)
+        let recording = Recording(name: name, duration: duration, audioFileName: fileName,
+                                  origin: .watch, targetDocumentID: targetDocumentID)
         recordings.add(recording)
         // Walking mode: queue locally and send the batch later, instead of uploading each clip now.
         if WatchSettings.shared.walkingMode {
