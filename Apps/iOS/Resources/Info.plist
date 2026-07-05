@@ -47,6 +47,28 @@
     <key>UILaunchScreen</key>
     <dict/>
 
+    <!-- iPad multitasking eligibility. An app is only re-laid-out (rather than bitmap-scaled)
+         as its window resizes in Split View / Slide Over / Stage Manager when it (a) ships a
+         launch screen, (b) supports all four iPad orientations, and (c) does not require full
+         screen. Missing these, iPadOS renders the UI at a fixed size and scales it down — text
+         and buttons shrink and the window won't go below ~half the screen. Declaring them makes
+         the SwiftUI layout reflow responsively at every window width instead. -->
+    <key>UIRequiresFullScreen</key>
+    <false/>
+    <key>UISupportedInterfaceOrientations</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+    </array>
+    <key>UISupportedInterfaceOrientations~ipad</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+        <string>UIInterfaceOrientationPortraitUpsideDown</string>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+    </array>
+
     <!-- Receive audio shared from other apps (share sheet / "Open in…"). Imported clips are
          treated like a normal recording and land in the Inbox. -->
     <key>CFBundleDocumentTypes</key>
