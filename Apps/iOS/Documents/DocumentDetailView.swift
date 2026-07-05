@@ -1069,57 +1069,61 @@ struct RecordingSheet: View {
     private var liveEnabled: Bool { showLiveTranscription && model.transcriptionReady }
 
     var body: some View {
-        VStack(spacing: 16) {
-            if liveEnabled {
-                livePanel
-            }
-
-            Text(timeString(recorder.elapsed))
-                .font(.title2.monospacedDigit())
-                .foregroundStyle(recorder.isPaused ? .secondary : .primary)
-
-            LevelMeter(level: recorder.currentLevel)
-
-            HStack(spacing: 12) {
-                Button { cancel() } label: {
-                    Image(systemName: "xmark")
-                        .font(.title2)
-                        .frame(maxWidth: .infinity, minHeight: 50)
+        GeometryReader { geo in
+            VStack(spacing: 16) {
+                if liveEnabled {
+                    // Size the live box to ~75% of the sheet height (the sheet uses the .large detent
+                    // when live transcription is on, so this is ~75% of the window).
+                    livePanel(boxHeight: geo.size.height * 0.75)
                 }
-                .buttonStyle(.bordered)
-                .tint(.gray)
-                .accessibilityLabel("Cancel")
 
-                Button { finish() } label: {
-                    Image(systemName: "stop.fill")
-                        .font(.title2)
-                        .frame(maxWidth: .infinity, minHeight: 50)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(.red)
-                .accessibilityLabel("Stop")
+                Text(timeString(recorder.elapsed))
+                    .font(.title2.monospacedDigit())
+                    .foregroundStyle(recorder.isPaused ? .secondary : .primary)
 
-                Button {
-                    if recorder.isPaused {
-                        recorder.resume(); live.setPaused(false)
-                    } else {
-                        recorder.pause(); live.setPaused(true)
+                LevelMeter(level: recorder.currentLevel)
+
+                HStack(spacing: 12) {
+                    Button { cancel() } label: {
+                        Image(systemName: "xmark")
+                            .font(.title2)
+                            .frame(maxWidth: .infinity, minHeight: 50)
                     }
-                } label: {
-                    Image(systemName: recorder.isPaused ? "play.fill" : "pause.fill")
-                        .font(.title2)
-                        .frame(maxWidth: .infinity, minHeight: 50)
+                    .buttonStyle(.bordered)
+                    .tint(.gray)
+                    .accessibilityLabel("Cancel")
+
+                    Button { finish() } label: {
+                        Image(systemName: "stop.fill")
+                            .font(.title2)
+                            .frame(maxWidth: .infinity, minHeight: 50)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.red)
+                    .accessibilityLabel("Stop")
+
+                    Button {
+                        if recorder.isPaused {
+                            recorder.resume(); live.setPaused(false)
+                        } else {
+                            recorder.pause(); live.setPaused(true)
+                        }
+                    } label: {
+                        Image(systemName: recorder.isPaused ? "play.fill" : "pause.fill")
+                            .font(.title2)
+                            .frame(maxWidth: .infinity, minHeight: 50)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(!recorder.isRecording)
+                    .accessibilityLabel(recorder.isPaused ? "Continue" : "Pause")
                 }
-                .buttonStyle(.bordered)
-                .disabled(!recorder.isRecording)
-                .accessibilityLabel(recorder.isPaused ? "Continue" : "Pause")
             }
+            .padding(.top, 24)
+            .padding(.horizontal, 20)
+            .padding(.bottom, 12)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: liveEnabled ? .top : .center)
         }
-        .padding(.top, 24)
-        .padding(.horizontal, 20)
-        .padding(.bottom, 12)
-        .frame(maxWidth: .infinity)
-        .presentationDetents([.height(liveEnabled ? 430 : 210)])
+        .presentationDetents([liveEnabled ? .large : .height(210)])
         .interactiveDismissDisabled(true)
         .task { await begin() }
         .onDisappear { discardIfUnfinished() }
@@ -1130,8 +1134,9 @@ struct RecordingSheet: View {
     }
 
     /// Scrolling live transcript of the clip-so-far, shown above the record controls when the
-    /// setting is on. Re-transcribed roughly once a second by `LiveTranscriber`.
-    private var livePanel: some View {
+    /// setting is on. Re-transcribed roughly once a second by `LiveTranscriber`. `boxHeight` sizes
+    /// the scroll area (≈75% of the sheet).
+    private func livePanel(boxHeight: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Label("Live Transcription", systemImage: "waveform")
@@ -1142,7 +1147,7 @@ struct RecordingSheet: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     Text(live.text.isEmpty ? "Listening…" : live.text)
-                        .font(.callout)
+                        .font(.system(size: 19))
                         .foregroundStyle(live.text.isEmpty ? .secondary : .primary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .id("liveTextEnd")
@@ -1151,7 +1156,7 @@ struct RecordingSheet: View {
                     withAnimation { proxy.scrollTo("liveTextEnd", anchor: .bottom) }
                 }
             }
-            .frame(maxHeight: 150)
+            .frame(height: boxHeight)
         }
         .padding(10)
         .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
