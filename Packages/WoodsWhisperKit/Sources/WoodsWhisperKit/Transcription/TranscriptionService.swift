@@ -21,6 +21,11 @@ public protocol TranscriptionService: AnyObject {
 
     /// Transcribe an audio file at `url` to text.
     func transcribe(audioFileAt url: URL) async throws -> TranscriptionResult
+
+    /// Transcribe already-decoded 16 kHz mono `Float` PCM samples to text. Used by the live
+    /// (in-progress) transcription path, which keeps audio in memory rather than on disk so it can
+    /// re-process the whole clip-so-far each pass without waiting on a finalized file.
+    func transcribe(samples: [Float]) async throws -> TranscriptionResult
 }
 
 /// Selectable on-device speech-to-text models. Parakeet (the default) runs via FluidAudio; the

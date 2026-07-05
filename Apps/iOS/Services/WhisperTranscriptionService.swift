@@ -100,4 +100,28 @@ final class WhisperTranscriptionService: SpeechModelBackend {
         throw TranscriptionError.unsupportedPlatform
         #endif
     }
+
+    func transcribe(samples: [Float]) async throws -> WoodsWhisperKit.TranscriptionResult {
+        #if canImport(WhisperKit)
+        guard let kit else { throw TranscriptionError.modelsNotPrepared }
+        let started = Date()
+        do {
+            // (1) WhisperKit accepts pre-decoded 16 kHz mono Float samples directly (the live path
+            // keeps audio in memory), returning one result per decoded window; join their text.
+            let results = try await kit.transcribe(audioArray: samples)
+            let text = results.map { $0.text }
+                .joined(separator: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return WoodsWhisperKit.TranscriptionResult(
+                text: text,
+                detectedLanguage: results.first?.language,
+                duration: Date().timeIntervalSince(started)
+            )
+        } catch {
+            throw TranscriptionError.underlying(error)
+        }
+        #else
+        throw TranscriptionError.unsupportedPlatform
+        #endif
+    }
 }

@@ -89,9 +89,17 @@ public final class ParakeetTranscriptionService: SpeechModelBackend {
 
     public func transcribe(audioFileAt url: URL) async throws -> TranscriptionResult {
         #if canImport(FluidAudio)
+        let samples = try Self.readMonoSamples(from: url)        // [Float] @16 kHz
+        return try await transcribe(samples: samples)
+        #else
+        throw TranscriptionError.unsupportedPlatform
+        #endif
+    }
+
+    public func transcribe(samples: [Float]) async throws -> TranscriptionResult {
+        #if canImport(FluidAudio)
         guard let manager else { throw TranscriptionError.modelsNotPrepared }
         let started = Date()
-        let samples = try Self.readMonoSamples(from: url)        // [Float] @16 kHz
         do {
             // Fresh decoder state per batch transcription (mirrors FluidAudio's own usage).
             var state = TdtDecoderState.make(decoderLayers: await manager.decoderLayerCount)

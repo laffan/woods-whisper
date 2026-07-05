@@ -10,6 +10,8 @@ protocol SpeechModelBackend: AnyObject {
     func prepare(model: SpeechModel,
                  progress: (@Sendable (DownloadProgress) -> Void)?) async throws
     func transcribe(audioFileAt url: URL) async throws -> TranscriptionResult
+    /// Transcribe already-decoded 16 kHz mono `Float` PCM samples (live-transcription path).
+    func transcribe(samples: [Float]) async throws -> TranscriptionResult
     /// Drop loaded weights to free memory (e.g. when the user switches engines).
     func unload()
 }
@@ -53,5 +55,9 @@ final class SpeechTranscriptionCoordinator: TranscriptionService {
 
     func transcribe(audioFileAt url: URL) async throws -> TranscriptionResult {
         try await backend.transcribe(audioFileAt: url)
+    }
+
+    func transcribe(samples: [Float]) async throws -> TranscriptionResult {
+        try await backend.transcribe(samples: samples)
     }
 }

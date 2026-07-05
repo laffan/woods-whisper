@@ -1056,13 +1056,24 @@ struct RecordingSheet: View {
     let onComplete: (URL, TimeInterval) -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var model: AppModel
     @StateObject private var recorder = AudioRecorder()
+    @StateObject private var live = LiveTranscriber()
+    @AppStorage("showLiveTranscription") private var showLiveTranscription = false
     @State private var startedURL: URL?
     @State private var didComplete = false
     @State private var errorMessage: String?
 
+    /// Whether the live-transcription panel is shown for this recording: the setting is on and the
+    /// speech model is loaded (nothing to transcribe against otherwise).
+    private var liveEnabled: Bool { showLiveTranscription && model.transcriptionReady }
+
     var body: some View {
         VStack(spacing: 16) {
+            if liveEnabled {
+                livePanel
+            }
+
             Text(timeString(recorder.elapsed))
                 .font(.title2.monospacedDigit())
                 .foregroundStyle(recorder.isPaused ? .secondary : .primary)
@@ -1089,7 +1100,11 @@ struct RecordingSheet: View {
                 .accessibilityLabel("Stop")
 
                 Button {
-                    recorder.isPaused ? recorder.resume() : recorder.pause()
+                    if recorder.isPaused {
+                        recorder.resume(); live.setPaused(false)
+                    } else {
+                        recorder.pause(); live.setPaused(true)
+                    }
                 } label: {
                     Image(systemName: recorder.isPaused ? "play.fill" : "pause.fill")
                         .font(.title2)
@@ -1104,7 +1119,7 @@ struct RecordingSheet: View {
         .padding(.horizontal, 20)
         .padding(.bottom, 12)
         .frame(maxWidth: .infinity)
-        .presentationDetents([.height(210)])
+        .presentationDetents([.height(liveEnabled ? 430 : 210)])
         .interactiveDismissDisabled(true)
         .task { await begin() }
         .onDisappear { discardIfUnfinished() }
@@ -1114,8 +1129,37 @@ struct RecordingSheet: View {
         } message: { Text(errorMessage ?? "") }
     }
 
+    /// Scrolling live transcript of the clip-so-far, shown above the record controls when the
+    /// setting is on. Re-transcribed roughly once a second by `LiveTranscriber`.
+    private var livePanel: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Label("Live Transcription", systemImage: "waveform")
+                    .font(.caption).foregroundStyle(.secondary)
+                if live.isProcessing { ProgressView().controlSize(.mini) }
+                Spacer()
+            }
+            ScrollViewReader { proxy in
+                ScrollView {
+                    Text(live.text.isEmpty ? "Listening…" : live.text)
+                        .font(.callout)
+                        .foregroundStyle(live.text.isEmpty ? .secondary : .primary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .id("liveTextEnd")
+                }
+                .onChange(of: live.text) { _, _ in
+                    withAnimation { proxy.scrollTo("liveTextEnd", anchor: .bottom) }
+                }
+            }
+            .frame(maxHeight: 150)
+        }
+        .padding(10)
+        .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+    }
+
     /// Discard the in-progress clip and close.
     private func cancel() {
+        live.stop()
         discardIfUnfinished()
         dismiss()
     }
@@ -1131,12 +1175,15 @@ struct RecordingSheet: View {
         do {
             try recorder.start(to: url)
             startedURL = url
+            // Live transcription runs a second, in-memory capture alongside the recorder.
+            if liveEnabled { live.start(using: model.transcription) }
         } catch {
             errorMessage = error.localizedDescription
         }
     }
 
     private func finish() {
+        live.stop()
         guard let result = recorder.stop() else { dismiss(); return }
         didComplete = true
         onComplete(result.url, result.duration)
@@ -1145,6 +1192,7 @@ struct RecordingSheet: View {
 
     /// Swiped away without stopping: drop the in-progress clip.
     private func discardIfUnfinished() {
+        live.stop()
         guard !didComplete else { return }
         _ = recorder.stop()
         if let url = startedURL { try? FileManager.default.removeItem(at: url) }

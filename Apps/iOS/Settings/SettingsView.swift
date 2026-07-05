@@ -9,6 +9,7 @@ struct SettingsView: View {
     @State private var micOptions: [AudioRecorder.InputOption] = []
     @State private var selectedMicUID: String? = AppSettings.shared.preferredMicUID
     @State private var showingAuthSheet = false
+    @State private var showLiveTranscription = AppSettings.shared.showLiveTranscription
 
     var body: some View {
         NavigationStack {
@@ -76,12 +77,21 @@ struct SettingsView: View {
                 }
                 .disabled(model.isPreparingSpeech)
             }
+
+            Toggle("Show live transcription during recording", isOn: $showLiveTranscription)
+                .onChange(of: showLiveTranscription) { _, on in
+                    AppSettings.shared.showLiveTranscription = on
+                }
         } header: {
             Text("Speech Model")
         } footer: {
             Text("Transcribes recordings to text on-device. Parakeet is the most accurate; the "
                  + "smaller Whisper models are lighter, faster downloads. Download once while "
-                 + "online; works offline afterward. Switching model requires downloading it.")
+                 + "online; works offline afterward. Switching model requires downloading it.\n\n"
+                 + "Live transcription shows a scrolling transcript above the record controls, "
+                 + "re-processing the whole clip-so-far about once a second so sentences and "
+                 + "punctuation settle as you speak. It runs a second on-device pass while "
+                 + "recording, so it uses more battery.")
         }
     }
 

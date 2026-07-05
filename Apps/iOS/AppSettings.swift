@@ -17,6 +17,14 @@ final class AppSettings {
         static let didCompleteSetup = "didCompleteSetup"
         static let downloadedModels = "downloadedModels"
         static let preferredMicUID = "preferredMicUID"
+        static let showLiveTranscription = "showLiveTranscription"
+    }
+
+    /// Whether to show a live, continuously-updating transcript above the record toast while
+    /// recording. Off by default (it runs a second capture + repeated on-device transcription).
+    var showLiveTranscription: Bool {
+        get { defaults.bool(forKey: Key.showLiveTranscription) }
+        set { defaults.set(newValue, forKey: Key.showLiveTranscription) }
     }
 
     /// Chosen capture microphone (port UID), or nil for the system default.
