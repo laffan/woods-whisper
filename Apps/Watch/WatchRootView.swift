@@ -260,6 +260,27 @@ struct WatchRootView: View {
                 ForEach(others) { recordingRow($0) }
             }
 
+            // Clips confirmed delivered to the paired device, filed into their own "Sent" folder
+            // and kept out of "Send All". Clear them to reclaim local space, or resend the batch.
+            if !model.sentRecordings.isEmpty {
+                Section {
+                    ForEach(model.sentRecordings) { recordingRow($0) }
+                    Button {
+                        model.resendSent()
+                    } label: {
+                        Label("Resend All", systemImage: "arrow.clockwise").frame(maxWidth: .infinity)
+                    }
+                    .tint(.blue)
+                    Button(role: .destructive) {
+                        model.clearSent()
+                    } label: {
+                        Label("Clear Sent", systemImage: "trash").frame(maxWidth: .infinity)
+                    }
+                } header: {
+                    Text("Sent")
+                }
+            }
+
             // Batch actions at the bottom of the list: send everything not yet sent, or wipe the
             // Watch's local recordings (with confirmation). Independent of Walking mode.
             if !model.recordings.recordings.isEmpty {
@@ -334,7 +355,9 @@ struct WatchRootView: View {
 
     private var others: [Recording] {
         model.recordings.recordings.filter {
-            !isFailedOrCancelled($0.id) && !model.walkingClipIDs.contains($0.id)
+            !isFailedOrCancelled($0.id)
+                && !model.walkingClipIDs.contains($0.id)
+                && model.sendOutcome[$0.id] != .sent
         }
     }
 

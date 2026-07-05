@@ -252,6 +252,31 @@ final class WatchModel: ObservableObject {
         statusMessage = nil
     }
 
+    /// Clips confirmed delivered to the paired device. Filed into their own "Sent" folder and kept
+    /// out of the "Send All" batch (`unsentRecordings` already excludes them).
+    var sentRecordings: [Recording] {
+        recordings.recordings.filter { sendOutcome[$0.id] == .sent }
+    }
+
+    /// Remove every confirmed-sent clip from the Watch (the "Clear Sent" action). They're already on
+    /// the paired device, so this just reclaims local space and clears their send state.
+    func clearSent() {
+        for recording in sentRecordings {
+            recordings.delete(recording)
+            sendOutcome[recording.id] = nil
+            sendProgress[recording.id] = nil
+        }
+        statusMessage = nil
+    }
+
+    /// Re-send every clip in the Sent folder (the "Resend All" action).
+    func resendSent() {
+        for recording in sentRecordings {
+            sendOutcome[recording.id] = nil
+            startSend(recording)
+        }
+    }
+
     /// Resend everything that previously failed or was cancelled (after, perhaps, switching targets).
     func resendFailed() {
         for recording in recordings.recordings
