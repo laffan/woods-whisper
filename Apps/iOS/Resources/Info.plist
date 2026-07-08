@@ -70,7 +70,9 @@
     </array>
 
     <!-- Receive audio shared from other apps (share sheet / "Open in…"). Imported clips are
-         treated like a normal recording and land in the Inbox. -->
+         treated like a normal recording and land in the Inbox. The second entry is Woods Whisper's
+         own document format (.wwdoc) — a full document bundled as one file (audio + edited
+         transcriptions) for sharing between devices. -->
     <key>CFBundleDocumentTypes</key>
     <array>
         <dict>
@@ -90,9 +92,45 @@
                 <string>public.aiff-audio</string>
             </array>
         </dict>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>Woods Whisper Document</string>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+            <key>LSHandlerRank</key>
+            <string>Owner</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>com.woodswhisper.document</string>
+            </array>
+        </dict>
     </array>
     <key>LSSupportsOpeningDocumentsInPlace</key>
     <true/>
+
+    <!-- Woods Whisper's own document type (.wwdoc): a single file holding a document's audio and
+         the current state of its edited transcriptions, for sharing between devices. -->
+    <key>UTExportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>com.woodswhisper.document</string>
+            <key>UTTypeDescription</key>
+            <string>Woods Whisper Document</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.data</string>
+                <string>public.content</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>wwdoc</string>
+                </array>
+            </dict>
+        </dict>
+    </array>
 
     <!-- Deep link used by the Lock Screen widget to start a recording -->
     <key>CFBundleURLTypes</key>

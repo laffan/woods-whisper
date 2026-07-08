@@ -42,6 +42,7 @@ struct DocumentDetailView: View {
     // Share
     @State private var shareItem: ShareItem?
     @State private var audioShareItem: AudioShareItem?
+    @State private var documentFileShare: DocumentFileShareItem?
 
     // Document rename (tap the title)
     @State private var showingRename = false
@@ -117,6 +118,9 @@ struct DocumentDetailView: View {
             ActivityView(activityItems: [item.text])
         }
         .sheet(item: $audioShareItem) { item in
+            ActivityView(activityItems: [item.url])
+        }
+        .sheet(item: $documentFileShare) { item in
             ActivityView(activityItems: [item.url])
         }
         .confirmationDialog("Move recording to…",
@@ -405,11 +409,30 @@ struct DocumentDetailView: View {
                 Button("Done") { withAnimation { editMode = .inactive } }
             }
         } else {
+            if let document {
+                ToolbarItem(placement: .primaryAction) {
+                    Menu {
+                        Button { shareDocumentFile(document) } label: {
+                            Label("Share as Woods Whisper File", systemImage: "arrow.up.doc")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                }
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button { recorderTask = .addToRecordings } label: {
                     Label("Add Recording", systemImage: "mic.badge.plus")
                 }
             }
+        }
+    }
+
+    /// Export the document (audio + edited transcriptions) as a single `.wwdoc` file and present the
+    /// share sheet so it can be sent to another device.
+    private func shareDocumentFile(_ document: Document) {
+        if let url = model.exportDocumentFile(document.id) {
+            documentFileShare = DocumentFileShareItem(url: url)
         }
     }
 
@@ -697,17 +720,43 @@ struct TextEditorSheet<Accessory: View>: View {
     @ViewBuilder var accessory: () -> Accessory
     @Environment(\.dismiss) private var dismiss
 
+    @State private var showingFindReplace = false
+    #if canImport(UIKit)
+    @StateObject private var find = FindReplaceController()
+    #endif
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
+                #if canImport(UIKit)
+                FindReplaceTextView(text: $text, controller: find)
+                    .padding(8)
+                if showingFindReplace {
+                    FindReplaceBar(controller: find, text: $text) {
+                        withAnimation { showingFindReplace = false }
+                    }
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+                #else
                 TextEditor(text: $text)
                     .padding()
+                #endif
                 accessory()
             }
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                #if canImport(UIKit)
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        withAnimation { showingFindReplace.toggle() }
+                    } label: {
+                        Image(systemName: showingFindReplace ? "magnifyingglass.circle.fill" : "magnifyingglass")
+                    }
+                    .accessibilityLabel("Find and Replace")
+                }
+                #endif
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") { onSave(); dismiss() }
                 }
@@ -852,6 +901,180 @@ struct CaretTrackingTextEditor: UIViewRepresentable {
 }
 #endif
 
+// MARK: - Find & Replace
+
+#if canImport(UIKit)
+/// Drives the find/replace bar. Holds the search/replace terms and a weak handle to the editor's
+/// `UITextView`, and runs the actual find/replace operations against it — selecting and scrolling to
+/// matches (so they highlight) and pushing edited text back through the `onChange` callback.
+@MainActor
+final class FindReplaceController: ObservableObject {
+    @Published var find = ""
+    @Published var replace = ""
+
+    weak var textView: UITextView?
+
+    private let options: NSString.CompareOptions = [.caseInsensitive]
+
+    /// Number of (case-insensitive) matches of `find` in `text`, for the "n" match counter.
+    func matchCount(in text: String) -> Int {
+        guard !find.isEmpty else { return 0 }
+        let ns = text as NSString
+        var count = 0
+        var searchStart = 0
+        while searchStart < ns.length {
+            let range = ns.range(of: find, options: options,
+                                 range: NSRange(location: searchStart, length: ns.length - searchStart))
+            if range.location == NSNotFound { break }
+            count += 1
+            searchStart = range.location + max(range.length, 1)
+        }
+        return count
+    }
+
+    /// Select the next match after the current selection, wrapping around to the top.
+    func findNext() {
+        guard let tv = textView, !find.isEmpty else { return }
+        let ns = tv.text as NSString
+        let from = min(tv.selectedRange.location + tv.selectedRange.length, ns.length)
+        var range = ns.range(of: find, options: options,
+                             range: NSRange(location: from, length: ns.length - from))
+        if range.location == NSNotFound {
+            range = ns.range(of: find, options: options, range: NSRange(location: 0, length: ns.length))
+        }
+        select(range, in: tv)
+    }
+
+    /// Select the previous match before the current selection, wrapping around to the bottom.
+    func findPrevious() {
+        guard let tv = textView, !find.isEmpty else { return }
+        let ns = tv.text as NSString
+        let end = max(tv.selectedRange.location, 0)
+        var range = ns.range(of: find, options: options.union(.backwards),
+                             range: NSRange(location: 0, length: end))
+        if range.location == NSNotFound {
+            range = ns.range(of: find, options: options.union(.backwards),
+                             range: NSRange(location: 0, length: ns.length))
+        }
+        select(range, in: tv)
+    }
+
+    /// Replace the current match (if the selection is one) and advance to the next; otherwise just
+    /// move to the next match.
+    func replaceCurrent(_ onChange: (String) -> Void) {
+        guard let tv = textView, !find.isEmpty else { return }
+        let ns = tv.text as NSString
+        let sel = tv.selectedRange
+        if sel.length > 0, ns.substring(with: sel).compare(find, options: options) == .orderedSame {
+            let updated = ns.replacingCharacters(in: sel, with: replace)
+            tv.text = updated
+            onChange(updated)
+            tv.selectedRange = NSRange(location: sel.location + (replace as NSString).length, length: 0)
+        }
+        findNext()
+    }
+
+    /// Replace every match of `find` with `replace`.
+    func replaceAll(_ onChange: (String) -> Void) {
+        guard let tv = textView, !find.isEmpty else { return }
+        let ns = tv.text as NSString
+        let updated = ns.replacingOccurrences(of: find, with: replace, options: options,
+                                              range: NSRange(location: 0, length: ns.length))
+        guard updated != tv.text else { return }
+        tv.text = updated
+        onChange(updated)
+        tv.selectedRange = NSRange(location: 0, length: 0)
+    }
+
+    private func select(_ range: NSRange, in tv: UITextView) {
+        guard range.location != NSNotFound else { return }
+        tv.becomeFirstResponder()
+        tv.selectedRange = range
+        tv.scrollRangeToVisible(range)
+    }
+}
+
+/// A `UITextView`-backed editor that hands the controller a reference to its text view so find/
+/// replace can select and scroll to matches (a plain SwiftUI `TextEditor` exposes neither).
+struct FindReplaceTextView: UIViewRepresentable {
+    @Binding var text: String
+    let controller: FindReplaceController
+
+    func makeUIView(context: Context) -> UITextView {
+        let view = UITextView()
+        view.delegate = context.coordinator
+        view.font = UIFont.preferredFont(forTextStyle: .body)
+        view.backgroundColor = .clear
+        view.textContainerInset = UIEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
+        view.text = text
+        controller.textView = view
+        return view
+    }
+
+    func updateUIView(_ uiView: UITextView, context: Context) {
+        if uiView.text != text { uiView.text = text }
+        controller.textView = uiView
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    final class Coordinator: NSObject, UITextViewDelegate {
+        let parent: FindReplaceTextView
+        init(_ parent: FindReplaceTextView) { self.parent = parent }
+        func textViewDidChange(_ textView: UITextView) { parent.text = textView.text }
+    }
+}
+
+/// The find/replace bar pinned below the editor: a Find row (with match count + prev/next) and a
+/// Replace row (with Replace / Replace All).
+private struct FindReplaceBar: View {
+    @ObservedObject var controller: FindReplaceController
+    @Binding var text: String
+    let onClose: () -> Void
+
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField("Find", text: $controller.find)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                if !controller.find.isEmpty {
+                    Text("\(controller.matchCount(in: text))")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                Button { controller.findPrevious() } label: { Image(systemName: "chevron.up") }
+                    .disabled(controller.find.isEmpty)
+                Button { controller.findNext() } label: { Image(systemName: "chevron.down") }
+                    .disabled(controller.find.isEmpty)
+                Button { onClose() } label: {
+                    Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                }
+                .accessibilityLabel("Close Find")
+            }
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.2.squarepath").foregroundStyle(.secondary)
+                TextField("Replace", text: $controller.replace)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                Button("Replace") { controller.replaceCurrent { text = $0 } }
+                    .disabled(controller.find.isEmpty)
+                Button("All") { controller.replaceAll { text = $0 } }
+                    .disabled(controller.find.isEmpty)
+            }
+        }
+        .textFieldStyle(.roundedBorder)
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .font(.callout)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.bar)
+    }
+}
+#endif
+
 // MARK: - Share
 
 /// Wraps a piece of text so it can drive a `.sheet(item:)` share presentation.
@@ -862,6 +1085,13 @@ struct ShareItem: Identifiable {
 
 /// Wraps an audio file URL so it can drive a `.sheet(item:)` share presentation (share the clip).
 struct AudioShareItem: Identifiable {
+    let id = UUID()
+    let url: URL
+}
+
+/// Wraps an exported `.wwdoc` file URL so it can drive a `.sheet(item:)` share presentation
+/// (share the whole document — audio + edited transcriptions — as one file).
+struct DocumentFileShareItem: Identifiable {
     let id = UUID()
     let url: URL
 }
@@ -1063,6 +1293,7 @@ struct RecordingSheet: View {
     @State private var startedURL: URL?
     @State private var didComplete = false
     @State private var errorMessage: String?
+    @State private var showingCancelConfirm = false
 
     /// Whether the live-transcription panel is shown for this recording: the setting is on and the
     /// speech model is loaded (nothing to transcribe against otherwise).
@@ -1084,7 +1315,7 @@ struct RecordingSheet: View {
                 LevelMeter(level: recorder.currentLevel)
 
                 HStack(spacing: 12) {
-                    Button { cancel() } label: {
+                    Button { showingCancelConfirm = true } label: {
                         Image(systemName: "xmark")
                             .font(.title2)
                             .frame(maxWidth: .infinity, minHeight: 50)
@@ -1094,13 +1325,13 @@ struct RecordingSheet: View {
                     .accessibilityLabel("Cancel")
 
                     Button { finish() } label: {
-                        Image(systemName: "stop.fill")
+                        Image(systemName: "square.and.arrow.down")
                             .font(.title2)
                             .frame(maxWidth: .infinity, minHeight: 50)
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(.red)
-                    .accessibilityLabel("Stop")
+                    .accessibilityLabel("Save")
 
                     Button {
                         if recorder.isPaused {
@@ -1127,6 +1358,11 @@ struct RecordingSheet: View {
         .interactiveDismissDisabled(true)
         .task { await begin() }
         .onDisappear { discardIfUnfinished() }
+        .confirmationDialog("Discard this recording?", isPresented: $showingCancelConfirm,
+                            titleVisibility: .visible) {
+            Button("Discard", role: .destructive) { cancel() }
+            Button("Keep Recording", role: .cancel) { }
+        }
         .alert("Couldn't record", isPresented: Binding(get: { errorMessage != nil },
                                                        set: { if !$0 { errorMessage = nil } })) {
             Button("OK", role: .cancel) { dismiss() }

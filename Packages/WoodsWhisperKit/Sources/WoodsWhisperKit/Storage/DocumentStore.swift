@@ -253,7 +253,11 @@ public final class DocumentStore: ObservableObject {
         guard sourceID != targetID,
               let srcIdx = index(of: sourceID),
               let dstIdx = index(of: targetID) else { return }
-        let moving = documents[srcIdx].recordings.filter { ids.contains($0.id) }
+        // Order the moved batch chronologically so a new document assembled from several selected
+        // clips reads oldest-first (matching the order they were recorded), not selection order.
+        let moving = documents[srcIdx].recordings
+            .filter { ids.contains($0.id) }
+            .sorted { $0.createdAt < $1.createdAt }
         guard !moving.isEmpty else { return }
         documents[srcIdx].recordings.removeAll { ids.contains($0.id) }
         documents[dstIdx].recordings.append(contentsOf: moving)
@@ -319,6 +323,70 @@ public final class DocumentStore: ObservableObject {
         guard let idx = index(of: documentID) else { return }
         documents[idx].paragraphs = paragraphs
         touch(idx)
+    }
+
+    // MARK: Sharing (Woods Whisper document files)
+
+    /// Pack a document — its edited body, its recordings' metadata/transcripts, and every recording's
+    /// audio — into a single `.wwdoc` file in a temporary directory, returning its URL for sharing.
+    public func exportArchive(for documentID: UUID) throws -> URL {
+        guard let doc = document(with: documentID) else { throw DocumentArchiveError.documentNotFound }
+
+        var audio: [String: Data] = [:]
+        for recording in doc.recordings {
+            if let data = try? Data(contentsOf: audioURL(for: recording)) {
+                audio[recording.audioFileName] = data
+            }
+        }
+        let archive = DocumentArchive(document: doc, audio: audio)
+        let payload = try archive.encoded()
+
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("WoodsWhisperExports", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let fileURL = dir.appendingPathComponent("\(safeFileName(for: doc.title)).\(DocumentArchive.fileExtension)")
+        try payload.write(to: fileURL, options: .atomic)
+        return fileURL
+    }
+
+    /// Unpack a `.wwdoc` file into a brand-new document. The imported copy is fully independent: it
+    /// gets a fresh document id and each recording's audio is rewritten to a fresh filename so it
+    /// never aliases (or gets deleted alongside) an existing document's audio — even on a round-trip
+    /// back to the device that exported it. Returns the newly inserted document.
+    @discardableResult
+    public func importArchive(from url: URL) throws -> Document {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+
+        let data = try Data(contentsOf: url)
+        let archive = try DocumentArchive.decode(from: data)
+
+        var importedRecordings: [Recording] = []
+        for var recording in archive.document.recordings {
+            let ext = (recording.audioFileName as NSString).pathExtension
+            let newFileName = "\(UUID().uuidString).\(ext.isEmpty ? "m4a" : ext)"
+            if let bytes = archive.audio[recording.audioFileName] {
+                try? bytes.write(to: audioDirURL.appendingPathComponent(newFileName), options: .atomic)
+            }
+            recording.audioFileName = newFileName
+            importedRecordings.append(recording)
+        }
+
+        let imported = Document(title: archive.document.title,
+                                paragraphs: archive.document.paragraphs,
+                                recordings: importedRecordings)
+        documents.insert(imported, at: 0)
+        persistDocuments()
+        return imported
+    }
+
+    /// Strip characters that are illegal (or awkward) in a file name so a document title can be used
+    /// as the exported file's name.
+    private func safeFileName(for title: String) -> String {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let base = trimmed.isEmpty ? "Document" : trimmed
+        let illegal = CharacterSet(charactersIn: "/\\:?%*|\"<>").union(.newlines)
+        return base.components(separatedBy: illegal).joined(separator: "-")
     }
 
     // MARK: Presets

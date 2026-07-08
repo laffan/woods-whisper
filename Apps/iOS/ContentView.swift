@@ -8,11 +8,11 @@ struct ContentView: View {
 
     var body: some View {
         TabView {
-            DocumentsView()
-                .tabItem { Label("Documents", systemImage: "doc.text") }
-
             InboxTab()
                 .tabItem { Label("Inbox", systemImage: "tray.and.arrow.down") }
+
+            DocumentsView()
+                .tabItem { Label("Documents", systemImage: "doc.text") }
 
             LogView()
                 .tabItem { Label("Log", systemImage: "terminal") }
@@ -48,8 +48,14 @@ struct ContentView: View {
             if url == woodsWhisperRecordURL {
                 launcher.request()
             } else if url.isFileURL {
-                // Audio shared into the app (share sheet / "Open in…") — import as a normal recording.
-                model.importSharedAudio(from: url)
+                if url.pathExtension.lowercased() == DocumentArchive.fileExtension {
+                    // A Woods Whisper document file (audio + transcriptions) shared from another
+                    // device — unpack it into a new document.
+                    model.importDocumentArchive(from: url)
+                } else {
+                    // Audio shared into the app (share sheet / "Open in…") — import as a normal recording.
+                    model.importSharedAudio(from: url)
+                }
             }
         }
     }

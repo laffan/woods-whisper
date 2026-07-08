@@ -372,6 +372,39 @@ final class AppModel: ObservableObject {
         autoTranscribe(recordingID: recording.id, inDocument: inbox.id)
     }
 
+    // MARK: Sharing (Woods Whisper document files)
+
+    /// Build a shareable `.wwdoc` file (audio + edited transcriptions) for a document, returning its
+    /// URL for a share sheet. Surfaces a user-facing error and returns nil on failure.
+    func exportDocumentFile(_ documentID: UUID) -> URL? {
+        do {
+            let url = try documents.exportArchive(for: documentID)
+            wwLog("Exported Woods Whisper document file “\(url.lastPathComponent)”", .transfer)
+            return url
+        } catch {
+            setupError = "Couldn't create the document file: \(error.localizedDescription)"
+            wwLog("Document export failed: \(error.localizedDescription)", .error)
+            return nil
+        }
+    }
+
+    /// Import a `.wwdoc` file shared from another device: unpack it into a new document and transcribe
+    /// any recording that arrived without a transcript (older archives, or clips never transcribed).
+    func importDocumentArchive(from url: URL) {
+        do {
+            let doc = try documents.importArchive(from: url)
+            wwLog(String(format: "Imported Woods Whisper document “%@” (%d recordings) from %@",
+                         doc.title, doc.recordings.count, url.lastPathComponent), .transfer)
+            for recording in doc.recordings
+            where recording.transcript?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true {
+                autoTranscribe(recordingID: recording.id, inDocument: doc.id)
+            }
+        } catch {
+            setupError = "Couldn't open the Woods Whisper file: \(error.localizedDescription)"
+            wwLog("Document import failed: \(error.localizedDescription)", .error)
+        }
+    }
+
     // MARK: Transcription
 
     /// Kick off transcription for a recording if the speech model is ready; otherwise leave it

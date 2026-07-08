@@ -10,6 +10,7 @@ struct WatchRootView: View {
     @AppStorage("walkingMode") private var walkingMode = false
     @ObservedObject private var launcher = RecordingLauncher.shared
     @State private var showingDeleteAll = false
+    @State private var showingCancelConfirm = false
 
     /// Horizontal paging within the Record tab: 0 = the recorder, 1 = the document-target picker
     /// (swipe left from the recorder to reach it).
@@ -85,7 +86,7 @@ struct WatchRootView: View {
                 // glyphs were getting clipped at the screen edge.
                 HStack(spacing: 6) {
                     Button {
-                        cancel()
+                        showingCancelConfirm = true
                     } label: {
                         Image(systemName: "xmark")
                             .frame(maxWidth: .infinity, minHeight: 38)
@@ -96,12 +97,12 @@ struct WatchRootView: View {
                     Button {
                         Task { await toggle() }
                     } label: {
-                        Image(systemName: "stop.fill")
+                        Image(systemName: "square.and.arrow.down")
                             .frame(maxWidth: .infinity, minHeight: 38)
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(.red)
-                    .accessibilityLabel("Stop")
+                    .accessibilityLabel("Save")
                     Button {
                         recorder.isPaused ? recorder.resume() : recorder.pause()
                     } label: {
@@ -114,10 +115,11 @@ struct WatchRootView: View {
                 }
             } else {
                 // Current record target — tap (or swipe left) to change where clips are filed.
+                // Shows the destination device first, then the folder: e.g. "iPhone - Inbox".
                 Button {
                     withAnimation { recordPage = 1 }
                 } label: {
-                    Label(model.targetName, systemImage: "tray.and.arrow.down")
+                    Label("\(targetDeviceName) - \(model.targetName)", systemImage: "tray.and.arrow.down")
                         .font(.caption2)
                         .lineLimit(1)
                 }
@@ -164,6 +166,22 @@ struct WatchRootView: View {
             }
         }
         .padding()
+        .confirmationDialog("Discard this recording?", isPresented: $showingCancelConfirm,
+                            titleVisibility: .visible) {
+            Button("Discard", role: .destructive) { cancel() }
+            Button("Keep Recording", role: .cancel) { }
+        }
+    }
+
+    /// The device recordings are sent to, shown first on the record screen's target label. Mirrors
+    /// `destinationLabel` but as a bare name suitable for the inline "Device - Folder" format.
+    private var targetDeviceName: String {
+        switch WatchSettings.shared.transport {
+        case .phoneSession:
+            return "iPhone"
+        case .localNetwork, .bluetooth:
+            return WatchSettings.shared.deviceLink?.displayName ?? "iPad"
+        }
     }
 
     /// Document-target picker (swipe left from the recorder): Inbox on top, then the documents synced

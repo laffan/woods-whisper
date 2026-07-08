@@ -18,6 +18,15 @@ final class AppSettings {
         static let downloadedModels = "downloadedModels"
         static let preferredMicUID = "preferredMicUID"
         static let showLiveTranscription = "showLiveTranscription"
+        static let allowRotation = "allowRotation"
+    }
+
+    /// Whether the interface may rotate to landscape. On (default) allows all orientations; off
+    /// locks the app to portrait. Read by `AppDelegate` to answer the system's supported-orientation
+    /// query, so a change takes effect as soon as the orientation is re-evaluated.
+    var allowRotation: Bool {
+        get { defaults.object(forKey: Key.allowRotation) as? Bool ?? true }
+        set { defaults.set(newValue, forKey: Key.allowRotation) }
     }
 
     /// Whether to show a live, continuously-updating transcript above the record toast while

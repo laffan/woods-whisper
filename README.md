@@ -55,7 +55,7 @@ the rest of the app depends on.
 ## Capturing and organizing
 
 - **Inbox is its own tab.** Watch clips and one-tap "New Recording" captures land in the **Inbox**,
-  now a top-level section alongside Documents rather than a row inside the documents list.
+  now the first top-level section (ahead of Documents) rather than a row inside the documents list.
 - **Record straight to a document from the Watch.** The iPhone syncs your document list to the Watch
   over WatchConnectivity; swipe left on the Watch's record screen to pick a target document (or the
   Inbox). The chosen target's name shows on the record screen, and clips captured there are filed into
@@ -65,6 +65,12 @@ the rest of the app depends on.
 - **Insert while editing.** The paragraph editor has an **Insert** button that records a clip,
   transcribes it, and splices the text in at the cursor — the clip is saved with the document's other
   recordings.
+- **Find & replace.** The whole-document editor has a find/replace bar at the bottom (the magnifying
+  glass in the editor's toolbar) — search, step through matches, and Replace / Replace All.
+- **Share a whole document as a file.** From a document's overflow menu, **Share as Woods Whisper
+  File** exports a single `.wwdoc` file bundling the audio *and* the current edited transcriptions.
+  Send it to another device (AirDrop, Files, Messages…) and open it there to rebuild the document —
+  no network round-trip. Woods Whisper registers `.wwdoc` so it can both create and receive them.
 - **Share audio in.** Send an audio file to Woods Whisper from the iOS share sheet / "Open in…"; it's
   imported into the Inbox and transcribed like any other recording.
 - **Number Paragraphs.** A built-in transform that numbers the paragraphs (applied locally, so it needs

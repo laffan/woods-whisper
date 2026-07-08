@@ -10,11 +10,13 @@ struct SettingsView: View {
     @State private var selectedMicUID: String? = AppSettings.shared.preferredMicUID
     @State private var showingAuthSheet = false
     @State private var showLiveTranscription = AppSettings.shared.showLiveTranscription
+    @State private var allowRotation = AppSettings.shared.allowRotation
 
     var body: some View {
         NavigationStack {
             Form {
                 microphoneSection
+                displaySection
                 speechModelSection
                 languageModelSection
                 presetsSection
@@ -45,6 +47,24 @@ struct SettingsView: View {
         } footer: {
             Text("Choose which microphone to record with — built-in, wired, or Bluetooth. "
                  + "“Automatic” lets the system pick (usually the most recently connected).")
+        }
+    }
+
+    // MARK: Display
+
+    private var displaySection: some View {
+        Section {
+            Toggle("Allow Rotation", isOn: $allowRotation)
+                .onChange(of: allowRotation) { _, on in
+                    AppSettings.shared.allowRotation = on
+                    #if canImport(UIKit)
+                    AppDelegate.applyOrientationLock()
+                    #endif
+                }
+        } header: {
+            Text("Display")
+        } footer: {
+            Text("When on, the screen rotates to landscape. Turn it off to lock the app to portrait.")
         }
     }
 
