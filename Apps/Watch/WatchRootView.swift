@@ -28,6 +28,10 @@ struct WatchRootView: View {
                 recordingsTab.tag(Tab.list)
             }
             .tabViewStyle(.verticalPage)
+            // Drive the shared nav-bar title from the current page. Setting it on the picker page
+            // itself bleeds across the horizontal paging TabView and overlaps the record screen, so
+            // the title is scoped here to only appear when the picker is actually showing.
+            .navigationTitle(tab == .record && recordPage == 1 ? "Target" : "")
         }
         // Launched by the "New Recording" Shortcut / Siri (App Intent): the intent sets
         // `launcher.pending`; jump to the record screen and start capturing.
@@ -220,7 +224,6 @@ struct WatchRootView: View {
                 .disabled(model.isRefreshingDocuments)
             }
         }
-        .navigationTitle("Target")
     }
 
     /// One selectable target row: shows a checkmark on the current selection.
