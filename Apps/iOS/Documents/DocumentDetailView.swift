@@ -1781,8 +1781,9 @@ private struct InboxRecordingRow: View {
 }
 
 /// Full-transcript reader/editor for a single Inbox recording, shown when a preview row is tapped.
-/// Offers Transform (rewrite the transcript in place with a preset) and Reset (re-transcribe the
-/// audio, restoring the original transcription).
+/// Offers Edit (the same full-screen text editor documents use), Transform (rewrite the transcript
+/// in place with a preset), and Reset (re-transcribe the audio, restoring the original
+/// transcription).
 private struct TranscriptDetailView: View {
     @ObservedObject var model: AppModel
     let recordingID: UUID
@@ -1791,6 +1792,8 @@ private struct TranscriptDetailView: View {
 
     @State private var working = false
     @State private var showingTransform = false
+    @State private var showingEditor = false
+    @State private var editorText = ""
 
     /// Looked up live so the view reflects transform/reset edits.
     private var recording: Recording? {
@@ -1812,6 +1815,11 @@ private struct TranscriptDetailView: View {
                 }
                 Divider()
                 HStack(spacing: 0) {
+                    actionButton("Edit", "pencil") {
+                        editorText = transcript
+                        showingEditor = true
+                    }
+                    .disabled(working)
                     actionButton("Transform", "wand.and.stars") { showingTransform = true }
                         .disabled(!model.modelReady || working || transcript.isEmpty)
                     actionButton("Reset", "arrow.uturn.backward") { reset() }
@@ -1833,7 +1841,19 @@ private struct TranscriptDetailView: View {
                     Button(preset.name) { transform(preset) }
                 }
             }
+            .sheet(isPresented: $showingEditor) {
+                TextEditorSheet(title: "Edit Transcript", text: $editorText) {
+                    saveEditedTranscript()
+                }
+            }
         }
+    }
+
+    /// Persist an edited transcript back onto the recording.
+    private func saveEditedTranscript() {
+        guard var recording else { return }
+        recording.transcript = editorText
+        model.documents.updateRecording(recording, inDocument: documentID)
     }
 
     private func actionButton(_ title: String, _ icon: String, action: @escaping () -> Void) -> some View {

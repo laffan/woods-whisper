@@ -126,22 +126,28 @@ struct WatchRootView: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
 
-                // Walking toggle (replaces the old "Tap to record" label): when on, clips queue
-                // locally and the record button turns green.
-                Toggle(isOn: $walkingMode) {
-                    Label("Walking", systemImage: "figure.walk")
+                // Walking toggle (icon-only) and the record button, side by side at equal size.
+                // When Walking is on, clips queue locally and the record button turns green.
+                HStack(spacing: 6) {
+                    Toggle(isOn: $walkingMode) {
+                        Image(systemName: "figure.walk")
+                            .font(.title3)
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .toggleStyle(.button)
+                    .tint(.green)
+                    .accessibilityLabel("Walking")
+                    Button {
+                        Task { await toggle() }
+                    } label: {
+                        Image(systemName: "record.circle")
+                            .font(.title3)
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(walkingMode ? Color.green : Color.accentColor)
+                    .accessibilityLabel("Record")
                 }
-                .toggleStyle(.button)
-                .tint(.green)
-                .controlSize(.small)
-                Button {
-                    Task { await toggle() }
-                } label: {
-                    Image(systemName: "record.circle")
-                        .font(.system(size: 56))
-                        .foregroundStyle(walkingMode ? Color.green : Color.accentColor)
-                }
-                .buttonStyle(.plain)
             }
             if !model.pendingSends.isEmpty {
                 VStack(spacing: 4) {
@@ -220,7 +226,6 @@ struct WatchRootView: View {
                 .disabled(model.isRefreshingDocuments)
             }
         }
-        .navigationTitle("Target")
     }
 
     /// One selectable target row: shows a checkmark on the current selection.
@@ -242,15 +247,15 @@ struct WatchRootView: View {
 
     private var recordingsTab: some View {
         List {
-            // Clips captured during a walk (Walking mode) that haven't been sent yet — flush them
-            // all with one tap once you're back in range.
+            // Clips captured during a walk (Walking mode) that haven't been sent yet — flush
+            // everything unsent with one tap once you're back in range.
             if !model.walkingRecordings.isEmpty {
                 Section {
                     ForEach(model.walkingRecordings) { recordingRow($0) }
                     Button {
-                        model.sendWalkingClips()
+                        model.sendAllUnsent()
                     } label: {
-                        Label("Send Walking Clips", systemImage: "figure.walk").frame(maxWidth: .infinity)
+                        Label("Send Unsent", systemImage: "paperplane.fill").frame(maxWidth: .infinity)
                     }
                     .tint(.green)
                 } header: {

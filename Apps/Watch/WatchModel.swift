@@ -22,7 +22,7 @@ final class WatchModel: ObservableObject {
     @Published var sendOutcome: [UUID: SendOutcome] = [:]
     /// Clips captured while Walking mode was on that haven't entered the send pipeline yet.
     /// Surfaced in a "Walking" section so they can be flushed after a walk. A clip leaves this set
-    /// the moment a send is started for it (manually or via "Send Walking Clips").
+    /// the moment a send is started for it (manually or via "Send Unsent").
     @Published var walkingClipIDs: Set<UUID> = []
 
     /// Documents synced from the iPhone, shown in the record-target picker (Inbox is offered on top
@@ -193,17 +193,12 @@ final class WatchModel: ObservableObject {
         recordings.recordings.filter { walkingClipIDs.contains($0.id) }
     }
 
-    /// Send every clip queued during Walking mode (the "Send Walking Clips" button).
-    func sendWalkingClips() {
-        for recording in walkingRecordings { startSend(recording) }
-    }
-
     /// Recordings that haven't been confirmed sent (queued in walking mode, or failed/cancelled).
     var unsentRecordings: [Recording] {
         recordings.recordings.filter { sendOutcome[$0.id] != .sent && !pendingSends.contains($0.id) }
     }
 
-    /// Send every recording not yet confirmed sent — the "send the batch" action for walking mode.
+    /// Send every recording not yet confirmed sent (the "Send Unsent" / "Send All" buttons).
     func sendAllUnsent() {
         for recording in unsentRecordings {
             sendOutcome[recording.id] = nil
