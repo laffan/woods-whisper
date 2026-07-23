@@ -9,6 +9,7 @@ struct WoodsWhisperWatchApp: App {
         WindowGroup {
             WatchRootView()
                 .environmentObject(model)
+                .tint(WWWatch.moss)
                 .task { WoodsWhisperWatchShortcuts.updateAppShortcutParameters() }
         }
     }

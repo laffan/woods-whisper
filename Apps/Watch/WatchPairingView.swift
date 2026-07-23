@@ -114,12 +114,12 @@ struct WatchPairingView: View {
             switch outcome {
             case .success(let name):
                 Image(systemName: "checkmark.circle.fill")
-                    .font(.largeTitle).foregroundStyle(.green)
+                    .font(.largeTitle).foregroundStyle(WWWatch.moss)
                 Text("Paired with \(name)").font(.caption).multilineTextAlignment(.center)
                 Button("Done") { dismiss() }
             case .failure(let message):
                 Image(systemName: "xmark.circle.fill")
-                    .font(.largeTitle).foregroundStyle(.red)
+                    .font(.largeTitle).foregroundStyle(WWWatch.ember)
                 Text(message).font(.caption2).multilineTextAlignment(.center)
                     .foregroundStyle(.secondary)
                 Button("Try Again") { self.outcome = nil }

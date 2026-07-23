@@ -15,10 +15,12 @@ struct LogView: View {
             ScrollViewReader { proxy in
                 List {
                     ForEach(log.entries) { entry in
-                        LogRow(entry: entry).id(entry.id)
+                        LogRow(entry: entry)
+                            .id(entry.id)
+                            .wwRow()
                     }
                 }
-                .listStyle(.plain)
+                .wwList()
                 .onChange(of: log.entries.count) { _, _ in
                     if let last = log.entries.last {
                         withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
@@ -27,7 +29,7 @@ struct LogView: View {
             }
             .overlay {
                 if log.entries.isEmpty {
-                    ContentUnavailableView("No activity yet", systemImage: "terminal")
+                    WWEmptyState(title: "No activity yet", systemImage: "terminal")
                 }
             }
             .navigationTitle("Log")
@@ -62,32 +64,37 @@ private struct LogRow: View {
     let entry: SessionLog.Entry
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 8) {
                 Text(entry.date, format: .dateTime.hour().minute().second())
                     .font(.caption2.monospaced())
-                    .foregroundStyle(.secondary)
-                Text(entry.category.rawValue)
-                    .font(.caption2.weight(.semibold))
-                    .padding(.horizontal, 5).padding(.vertical, 1)
-                    .background(color.opacity(0.2), in: Capsule())
-                    .foregroundStyle(color)
+                    .foregroundStyle(WW.inkTertiary)
+                HStack(spacing: 4) {
+                    Circle().fill(color).frame(width: 5, height: 5)
+                    Text(entry.category.rawValue)
+                        .font(.system(size: 10, weight: .semibold))
+                        .tracking(1.0)
+                        .textCase(.uppercase)
+                        .foregroundStyle(color)
+                }
             }
             Text(entry.message)
                 .font(.caption.monospaced())
+                .foregroundStyle(WW.ink)
                 .textSelection(.enabled)
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 3)
     }
 
+    /// Muted, theme-adjacent hues — enough to tell categories apart without shouting.
     private var color: Color {
         switch entry.category {
-        case .error: return .red
-        case .model: return .purple
-        case .transfer: return .blue
-        case .transcription: return .green
-        case .transform: return .orange
-        case .general: return .gray
+        case .error: return WW.ember
+        case .model: return WW.violet
+        case .transfer: return WW.slate
+        case .transcription: return WW.moss
+        case .transform: return WW.amber
+        case .general: return WW.inkTertiary
         }
     }
 }

@@ -21,6 +21,7 @@ struct PairingView: View {
             }
             networkSection
         }
+        .wwForm()
         .navigationTitle("Pair Watch")
         .onAppear { addresses = NetworkInterface.displayAddresses() }
         .onDisappear { model.cancelWatchPairing() }
@@ -36,25 +37,27 @@ struct PairingView: View {
                 Label("Start Pairing", systemImage: "antenna.radiowaves.left.and.right")
             }
         } header: {
-            Text("Pair a Watch")
+            WWSectionHeader("Pair a Watch")
         } footer: {
-            Text("Tap Start Pairing, then on the Watch open Woods Whisper → Settings → "
-                 + "“Pair with iPad” and enter the code shown here. Connects over WiFi if both "
-                 + "devices share a network, otherwise over Bluetooth — so it works off-grid with "
-                 + "no WiFi at all. Keep the two devices close while pairing.")
+            WWFooter("Tap Start Pairing, then on the Watch open Woods Whisper → Settings → "
+                     + "“Pair with iPad” and enter the code shown here. Connects over WiFi if both "
+                     + "devices share a network, otherwise over Bluetooth — so it works off-grid with "
+                     + "no WiFi at all. Keep the two devices close while pairing.")
         }
+        .listRowBackground(WW.surface)
     }
 
     // MARK: Active — code on screen
 
     private var activePairingSection: some View {
         Section {
-            VStack(spacing: 12) {
+            VStack(spacing: 14) {
                 Text("Enter this code on your Watch")
-                    .font(.subheadline).foregroundStyle(.secondary)
+                    .font(.subheadline).foregroundStyle(WW.inkSecondary)
                 Text(model.pairingCode ?? "")
-                    .font(.system(size: 56, weight: .bold, design: .rounded).monospacedDigit())
-                    .tracking(8)
+                    .font(.system(size: 54, weight: .medium, design: .rounded).monospacedDigit())
+                    .tracking(10)
+                    .foregroundStyle(WW.moss)
                     .textSelection(.enabled)
                 if let endsAt = model.pairingEndsAt, endsAt > Date() {
                     HStack(spacing: 4) {
@@ -62,11 +65,11 @@ struct PairingView: View {
                         Text("Expires in ")
                             + Text(timerInterval: Date()...endsAt, countsDown: true)
                     }
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.caption).foregroundStyle(WW.inkTertiary)
                 }
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 8)
+            .padding(.vertical, 10)
 
             Button(role: .cancel) {
                 model.cancelWatchPairing()
@@ -74,9 +77,10 @@ struct PairingView: View {
                 Label("Cancel", systemImage: "xmark.circle")
             }
         } footer: {
-            Text("On the Watch: Settings → “Pair with iPad” → type these 5 digits. "
-                 + "The Watch searches the network for this iPad automatically.")
+            WWFooter("On the Watch: Settings → “Pair with iPad” → type these 5 digits. "
+                     + "The Watch searches the network for this iPad automatically.")
         }
+        .listRowBackground(WW.surface)
     }
 
     // MARK: Success
@@ -86,7 +90,7 @@ struct PairingView: View {
             Label {
                 Text("Paired with \(watch)")
             } icon: {
-                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(WW.moss)
             }
             Button {
                 model.beginWatchPairing()
@@ -94,9 +98,10 @@ struct PairingView: View {
                 Label("Pair Another Watch", systemImage: "antenna.radiowaves.left.and.right")
             }
         } footer: {
-            Text("That Watch will now send recordings straight to this iPad whenever they're on "
-                 + "the same network.")
+            WWFooter("That Watch will now send recordings straight to this iPad whenever they're on "
+                     + "the same network.")
         }
+        .listRowBackground(WW.surface)
     }
 
     // MARK: Network details (advanced / troubleshooting)
@@ -109,10 +114,11 @@ struct PairingView: View {
                 LabeledContent("WiFi address", value: ip)
             }
         } header: {
-            Text("Network Details")
+            WWSectionHeader("Network Details")
         } footer: {
-            Text("For reference. You don't need to type any of this on the Watch — the code is "
-                 + "all that's required.")
+            WWFooter("For reference. You don't need to type any of this on the Watch — the code is "
+                     + "all that's required.")
         }
+        .listRowBackground(WW.surface)
     }
 }

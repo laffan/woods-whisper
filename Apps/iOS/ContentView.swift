@@ -96,6 +96,8 @@ struct InboxTab: View {
                     InboxView(documentID: inboxID)
                 } else {
                     ProgressView()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(WW.paper)
                 }
             }
         }
@@ -108,10 +110,14 @@ struct BusyBanner: View {
     var body: some View {
         HStack(spacing: 10) {
             ProgressView()
-            Text(message).font(.callout)
+                .tint(WW.moss)
+            Text(message)
+                .font(.callout)
+                .foregroundStyle(WW.ink)
         }
-        .padding(.horizontal, 16).padding(.vertical, 10)
-        .background(.ultraThinMaterial, in: Capsule())
-        .shadow(radius: 4)
+        .padding(.horizontal, 18).padding(.vertical, 10)
+        .background(WW.surface, in: Capsule())
+        .overlay(Capsule().stroke(WW.hairline, lineWidth: 1))
+        .shadow(color: .black.opacity(0.10), radius: 16, y: 4)
     }
 }

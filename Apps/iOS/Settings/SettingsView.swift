@@ -23,6 +23,7 @@ struct SettingsView: View {
                 connectivitySection
                 aboutSection
             }
+            .wwForm()
             .navigationTitle("Settings")
             .onAppear { micOptions = AudioRecorder.availableInputs() }
         }
@@ -43,11 +44,12 @@ struct SettingsView: View {
                 AudioRecorder.preferredInputUID = newValue
             }
         } header: {
-            Text("Microphone")
+            WWSectionHeader("Microphone")
         } footer: {
-            Text("Choose which microphone to record with — built-in, wired, or Bluetooth. "
-                 + "“Automatic” lets the system pick (usually the most recently connected).")
+            WWFooter("Choose which microphone to record with — built-in, wired, or Bluetooth. "
+                     + "“Automatic” lets the system pick (usually the most recently connected).")
         }
+        .listRowBackground(WW.surface)
     }
 
     // MARK: Display
@@ -62,10 +64,11 @@ struct SettingsView: View {
                     #endif
                 }
         } header: {
-            Text("Display")
+            WWSectionHeader("Display")
         } footer: {
-            Text("When on, the screen rotates to landscape. Turn it off to lock the app to portrait.")
+            WWFooter("When on, the screen rotates to landscape. Turn it off to lock the app to portrait.")
         }
+        .listRowBackground(WW.surface)
     }
 
     // MARK: Speech model
@@ -86,7 +89,7 @@ struct SettingsView: View {
                 }
             }
             Text(selectedSpeechModel.approxDownloadNote)
-                .font(.caption).foregroundStyle(.secondary)
+                .font(.caption).foregroundStyle(WW.inkSecondary)
 
             ModelSetupRow(title: "Speech weights", systemImage: "waveform",
                           ready: model.transcriptionReady, progress: model.speechProgress)
@@ -103,24 +106,25 @@ struct SettingsView: View {
                     AppSettings.shared.showLiveTranscription = on
                 }
         } header: {
-            Text("Speech Model")
+            WWSectionHeader("Speech Model")
         } footer: {
-            Text("Transcribes recordings to text on-device. Parakeet is the most accurate; the "
-                 + "smaller Whisper models are lighter, faster downloads. Download once while "
-                 + "online; works offline afterward. Switching model requires downloading it.\n\n"
-                 + "Live transcription shows a scrolling transcript above the record controls, "
-                 + "re-processing the whole clip-so-far about once a second so sentences and "
-                 + "punctuation settle as you speak. It runs a second on-device pass while "
-                 + "recording, so it uses more battery.")
+            WWFooter("Transcribes recordings to text on-device. Parakeet is the most accurate; the "
+                     + "smaller Whisper models are lighter, faster downloads. Download once while "
+                     + "online; works offline afterward. Switching model requires downloading it.\n\n"
+                     + "Live transcription shows a scrolling transcript above the record controls, "
+                     + "re-processing the whole clip-so-far about once a second so sentences and "
+                     + "punctuation settle as you speak. It runs a second on-device pass while "
+                     + "recording, so it uses more battery.")
         }
+        .listRowBackground(WW.surface)
     }
 
     // MARK: Language model
 
     private var languageModelSection: some View {
         Section {
-            // Split into on-device vs online sections; each row carries a status icon — green dot =
-            // downloaded on device, orange dot = not downloaded, WiFi = streams from the cloud.
+            // Split into on-device vs online sections; each row carries a status icon — moss dot =
+            // downloaded on device, ochre dot = not downloaded, WiFi = streams from the cloud.
             Picker("", selection: $selectedModel) {
                 Section("On-device") {
                     ForEach(LanguageModelChoice.allCases.filter { !$0.isOnline }) { m in
@@ -167,14 +171,15 @@ struct SettingsView: View {
                 }
             }
         } header: {
-            Text("Language Model")
+            WWSectionHeader("Language Model")
         } footer: {
-            Text("Rewrites transcripts. The on-device models (Qwen3, Llama 3.2, Gemma 3) download "
-                 + "once while online and then work offline; a downloaded model reloads "
-                 + "automatically when you pick it (tap Remove Download to free its space). The "
-                 + "online Claude models stream from Anthropic — pick one when you have a cell "
-                 + "signal and tap Authenticate to add your API key (no download).")
+            WWFooter("Rewrites transcripts. The on-device models (Qwen3, Llama 3.2, Gemma 3) download "
+                     + "once while online and then work offline; a downloaded model reloads "
+                     + "automatically when you pick it (tap Remove Download to free its space). The "
+                     + "online Claude models stream from Anthropic — pick one when you have a cell "
+                     + "signal and tap Authenticate to add your API key (no download).")
         }
+        .listRowBackground(WW.surface)
         .sheet(isPresented: $showingAuthSheet) {
             AnthropicAuthView(isAuthenticated: model.isAuthenticated) { key in
                 model.saveAnthropicAPIKey(key)
@@ -194,8 +199,8 @@ struct SettingsView: View {
         "\(started ? "Resume Download" : "Download") (\(size))"
     }
 
-    /// One row in the model picker: the model's name with a status icon — a green dot when its
-    /// weights are downloaded on device, an orange dot when not, or a WiFi glyph for online models.
+    /// One row in the model picker: the model's name with a status icon — a moss dot when its
+    /// weights are downloaded on device, an ochre dot when not, or a WiFi glyph for online models.
     private func modelPickerRow(_ m: LanguageModelChoice) -> some View {
         Label {
             Text(m.displayName)
@@ -207,7 +212,7 @@ struct SettingsView: View {
             } else {
                 Image(systemName: "circle.fill")
                     .font(.system(size: 10))
-                    .foregroundStyle(AppSettings.shared.isModelDownloaded(m.rawValue) ? .green : .orange)
+                    .foregroundStyle(AppSettings.shared.isModelDownloaded(m.rawValue) ? WW.moss : WW.amber)
             }
         }
     }
@@ -215,13 +220,16 @@ struct SettingsView: View {
     // MARK: Presets
 
     private var presetsSection: some View {
-        Section("Prompt Presets") {
+        Section {
             NavigationLink {
                 PresetListView()
             } label: {
                 Label("Manage Presets (\(model.documents.presets.count))", systemImage: "wand.and.stars")
             }
+        } header: {
+            WWSectionHeader("Prompt Presets")
         }
+        .listRowBackground(WW.surface)
     }
 
     // MARK: Connectivity
@@ -241,20 +249,24 @@ struct SettingsView: View {
                 }
             }
         } header: {
-            Text("Connectivity")
+            WWSectionHeader("Connectivity")
         } footer: {
-            Text("On iPad, enable this to let an iPhone-free Watch send recordings — over WiFi "
-                 + "when both share a network, or Bluetooth when off-grid with no WiFi. On iPhone, "
-                 + "the paired Watch connects automatically.")
+            WWFooter("On iPad, enable this to let an iPhone-free Watch send recordings — over WiFi "
+                     + "when both share a network, or Bluetooth when off-grid with no WiFi. On iPhone, "
+                     + "the paired Watch connects automatically.")
         }
+        .listRowBackground(WW.surface)
     }
 
     private var aboutSection: some View {
-        Section("About") {
+        Section {
             LabeledContent("Device name", value: AppSettings.shared.deviceDisplayName)
             Text("Woods Whisper — offline voice capture, transcription, and transformation.")
-                .font(.caption).foregroundStyle(.secondary)
+                .font(.caption).foregroundStyle(WW.inkSecondary)
+        } header: {
+            WWSectionHeader("About")
         }
+        .listRowBackground(WW.surface)
     }
 }
 
@@ -262,8 +274,8 @@ struct StatusDot: View {
     let ready: Bool
     var body: some View {
         HStack(spacing: 6) {
-            Circle().fill(ready ? .green : .orange).frame(width: 10, height: 10)
-            Text(ready ? "Ready" : "Not ready").font(.caption).foregroundStyle(.secondary)
+            Circle().fill(ready ? WW.moss : WW.amber).frame(width: 8, height: 8)
+            Text(ready ? "Ready" : "Not ready").font(.caption).foregroundStyle(WW.inkSecondary)
         }
     }
 }
@@ -287,12 +299,13 @@ struct AnthropicAuthView: View {
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
                 } header: {
-                    Text("Anthropic API Key")
+                    WWSectionHeader("Anthropic API Key")
                 } footer: {
-                    Text("Used to stream Claude Sonnet / Haiku for the online Language Model. Create "
-                         + "a key at console.anthropic.com → API Keys. It's stored in your device "
-                         + "Keychain and sent only to Anthropic.")
+                    WWFooter("Used to stream Claude Sonnet / Haiku for the online Language Model. Create "
+                             + "a key at console.anthropic.com → API Keys. It's stored in your device "
+                             + "Keychain and sent only to Anthropic.")
                 }
+                .listRowBackground(WW.surface)
 
                 if isAuthenticated {
                     Section {
@@ -300,11 +313,14 @@ struct AnthropicAuthView: View {
                             onSave("")
                             dismiss()
                         }
+                        .foregroundStyle(WW.ember)
                     } footer: {
-                        Text("A key is already saved. Enter a new one above to replace it, or remove it.")
+                        WWFooter("A key is already saved. Enter a new one above to replace it, or remove it.")
                     }
+                    .listRowBackground(WW.surface)
                 }
             }
+            .wwForm()
             .navigationTitle(isAuthenticated ? "Edit Authentication" : "Authenticate")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -339,17 +355,18 @@ struct ModelSetupRow: View {
                 if let progress {
                     Text("\(Int(progress.fractionCompleted * 100))%")
                         .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(WW.inkSecondary)
                 } else {
                     StatusDot(ready: ready)
                 }
             }
             if let progress {
                 ProgressView(value: progress.fractionCompleted)
+                    .tint(WW.moss)
                 if let summary = progress.byteSummary ?? progress.detail {
                     Text(summary)
                         .font(.caption2.monospacedDigit())
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(WW.inkSecondary)
                 }
             }
         }

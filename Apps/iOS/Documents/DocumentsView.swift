@@ -23,15 +23,19 @@ struct DocumentsView: View {
             List {
                 // Pinned documents are held at the top in their own section.
                 if !pinnedDocuments.isEmpty {
-                    Section("Pinned") {
+                    Section {
                         ForEach(pinnedDocuments) { documentRow($0) }
+                    } header: {
+                        WWSectionHeader("Pinned")
                     }
                 }
 
                 Section {
                     ForEach(unpinnedDocuments) { documentRow($0) }
                 } header: {
-                    if !pinnedDocuments.isEmpty && !unpinnedDocuments.isEmpty { Text("Documents") }
+                    if !pinnedDocuments.isEmpty && !unpinnedDocuments.isEmpty {
+                        WWSectionHeader("Documents")
+                    }
                 }
 
                 if !model.documents.trash.isEmpty {
@@ -41,11 +45,15 @@ struct DocumentsView: View {
                                 TrashRow(count: model.documents.trash.count)
                             } icon: {
                                 Image(systemName: "trash")
+                                    .font(.system(size: 15, weight: .light))
+                                    .foregroundStyle(WW.inkTertiary)
                             }
                         }
+                        .wwRow()
                     }
                 }
             }
+            .wwList()
             .navigationTitle("Documents")
             .navigationDestination(for: Route.self) { route in
                 switch route {
@@ -68,9 +76,9 @@ struct DocumentsView: View {
             }
             .overlay {
                 if userDocuments.isEmpty {
-                    ContentUnavailableView("No documents yet",
-                                           systemImage: "doc.text",
-                                           description: Text("Tap ✎ to start a document, or the mic to record straight to your Inbox. Watch recordings land in the Inbox tab."))
+                    WWEmptyState(title: "No documents yet",
+                                 systemImage: "doc.text",
+                                 message: "Tap ✎ to start a document, or the mic to record straight to your Inbox. Watch recordings land in the Inbox tab.")
                 }
             }
             .alert("Rename document", isPresented: Binding(get: { renameTarget != nil },
@@ -104,17 +112,20 @@ struct DocumentsView: View {
     @ViewBuilder
     private func documentRow(_ doc: Document) -> some View {
         NavigationLink(value: Route.document(doc.id)) { DocumentRow(document: doc) }
+            .wwRow()
+            .listRowInsets(EdgeInsets(top: 12, leading: 20, bottom: 12, trailing: 20))
             .swipeActions(edge: .trailing) {
                 Button("Delete", role: .destructive) { model.documents.moveToTrash(doc) }
-                Button("Rename") { startRename(doc) }.tint(.blue)
+                    .tint(WW.ember)
+                Button("Rename") { startRename(doc) }.tint(WW.slate)
                 Button(doc.isPinned ? "Unpin" : "Pin") {
                     model.documents.setPinned(!doc.isPinned, for: doc.id)
-                }.tint(.yellow)
+                }.tint(WW.amber)
             }
             .swipeActions(edge: .leading) {
-                Button("Copy") { copy(doc) }.tint(.gray)
-                Button("Share") { shareItem = ShareItem(text: doc.combinedText) }.tint(.indigo)
-                Button("Edit") { startEdit(doc) }.tint(.blue)
+                Button("Copy") { copy(doc) }.tint(WW.inkTertiary)
+                Button("Share") { shareItem = ShareItem(text: doc.combinedText) }.tint(WW.violet)
+                Button("Edit") { startEdit(doc) }.tint(WW.slate)
             }
     }
 
@@ -145,18 +156,20 @@ struct DocumentsView: View {
 private struct DocumentRow: View {
     let document: Document
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 6) {
                 if document.isPinned {
                     Image(systemName: "pin.fill")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 10))
+                        .foregroundStyle(WW.moss)
                 }
                 Text(document.title)
+                    .font(WW.serifTitle)
+                    .foregroundStyle(WW.ink)
             }
             Text(subtitle)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(WW.inkSecondary)
         }
     }
     private var subtitle: String {
@@ -171,11 +184,13 @@ private struct DocumentRow: View {
 private struct TrashRow: View {
     let count: Int
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 3) {
             Text("Trash")
+                .font(WW.serifTitle)
+                .foregroundStyle(WW.inkSecondary)
             Text("\(count) document\(count == 1 ? "" : "s")")
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(WW.inkTertiary)
         }
     }
 }

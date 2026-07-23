@@ -35,13 +35,13 @@ struct WatchRecordingDetailView: View {
             switch model.sendOutcome[recording.id] {
             case .sent:
                 Label("Sent", systemImage: "checkmark.circle.fill")
-                    .font(.caption).foregroundStyle(.green)
+                    .font(.caption).foregroundStyle(WWWatch.moss)
             case .failed:
                 Label("Send failed — tap Retry", systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption).foregroundStyle(.orange)
+                    .font(.caption).foregroundStyle(WWWatch.amber)
             case .cancelled:
                 Label("Send cancelled — tap Retry", systemImage: "xmark.circle.fill")
-                    .font(.caption).foregroundStyle(.orange)
+                    .font(.caption).foregroundStyle(WWWatch.amber)
             case nil:
                 EmptyView()
             }

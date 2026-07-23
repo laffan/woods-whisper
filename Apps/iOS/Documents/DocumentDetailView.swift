@@ -67,7 +67,9 @@ struct DocumentDetailView: View {
             if let document {
                 content(for: document)
             } else {
-                ContentUnavailableView("Document not found", systemImage: "doc")
+                WWEmptyState(title: "Document not found", systemImage: "doc")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(WW.paper)
             }
         }
         .navigationTitle("")
@@ -161,6 +163,7 @@ struct DocumentDetailView: View {
             documentActionsSection(for: document)
             recordingsSection(for: document)
         }
+        .wwList()
         .environment(\.editMode, $editMode)
         .overlay(alignment: .top) {
             if isTransformingDoc {
@@ -191,22 +194,26 @@ struct DocumentDetailView: View {
         Section {
             if document.paragraphs.isEmpty {
                 Text("No text yet. Tap “+” to record straight into the document, or “Re-transcribe” a recording below to add its text here.")
-                    .font(.callout).foregroundStyle(.secondary)
+                    .font(.callout).foregroundStyle(WW.inkSecondary)
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
                 InsertHereButton(isRecording: recorderTask == .insertBody(at: 0)) {
                     recorderTask = .insertBody(at: 0)
                 }
+                .listRowBackground(Color.clear)
                 .listRowSeparator(.hidden)
             } else {
                 if !editMode.isEditing {
                     InsertHereButton(isRecording: recorderTask == .insertBody(at: 0)) {
                         recorderTask = .insertBody(at: 0)
                     }
+                    .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
-                    .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
+                    .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 20))
                 }
                 ForEach(document.paragraphs) { para in
                     let position = (document.paragraphs.firstIndex(of: para) ?? 0) + 1
-                    VStack(alignment: .leading, spacing: 6) {
+                    VStack(alignment: .leading, spacing: 10) {
                         paragraphContent(para)
                         if !editMode.isEditing {
                             InsertHereButton(isRecording: recorderTask == .insertBody(at: position)) {
@@ -215,8 +222,9 @@ struct DocumentDetailView: View {
                         }
                     }
                     .contentShape(Rectangle())
+                    .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
-                    .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
+                    .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 20))
                     .onTapGesture(count: 2) {
                         guard !editMode.isEditing else { return }
                         startEditing(para)
@@ -229,14 +237,15 @@ struct DocumentDetailView: View {
                         Button("Delete", role: .destructive) {
                             model.documents.deleteParagraph(para.id, in: documentID)
                         }
-                        Button("Revise") { recorderTask = .revise(paragraphID: para.id) }.tint(.orange)
+                        .tint(WW.ember)
+                        Button("Revise") { recorderTask = .revise(paragraphID: para.id) }.tint(WW.amber)
                     }
                     // Swipe right → Transform / Edit
                     .swipeActions(edge: .leading, allowsFullSwipe: false) {
                         Button("Transform") {
                             withAnimation(.snappy(duration: 0.22)) { paragraphTransformTarget = para.id }
-                        }.tint(.purple)
-                        Button("Edit") { startEditing(para) }.tint(.blue)
+                        }.tint(WW.violet)
+                        Button("Edit") { startEditing(para) }.tint(WW.slate)
                     }
                 }
                 .onMove { offsets, destination in
@@ -246,6 +255,7 @@ struct DocumentDetailView: View {
                 // Breathing room below the document body.
                 Color.clear
                     .frame(height: 28)
+                    .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
                     .listRowInsets(EdgeInsets())
             }
@@ -255,9 +265,16 @@ struct DocumentDetailView: View {
     @ViewBuilder
     private func paragraphContent(_ para: Document.Paragraph) -> some View {
         if transformingParagraphID == para.id {
-            HStack(spacing: 8) { ProgressView(); Text("Transforming…").foregroundStyle(.secondary) }
+            HStack(spacing: 8) {
+                ProgressView()
+                Text("Transforming…").foregroundStyle(WW.inkSecondary)
+            }
         } else {
-            Text(para.text).frame(maxWidth: .infinity, alignment: .leading)
+            Text(para.text)
+                .font(WW.serifBody)
+                .lineSpacing(5)
+                .foregroundStyle(WW.ink)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -267,36 +284,43 @@ struct DocumentDetailView: View {
     private func documentActionsSection(for document: Document) -> some View {
         if document.hasBodyText {
             Section {
-                HStack(spacing: 0) {
-                    docActionButton("Copy", "doc.on.doc") { copyDocument(document) }
-                    docActionButton("Share", "square.and.arrow.up") {
-                        shareItem = ShareItem(text: document.combinedText)
+                VStack(spacing: 10) {
+                    WWHairline()
+                    HStack(spacing: 0) {
+                        docActionButton("Copy", "doc.on.doc") { copyDocument(document) }
+                        docActionButton("Share", "square.and.arrow.up") {
+                            shareItem = ShareItem(text: document.combinedText)
+                        }
+                        docActionButton("Edit", "pencil") {
+                            docEditorText = document.combinedText
+                            showingDocEditor = true
+                        }
+                        docActionButton("Transform", "wand.and.stars") {
+                            withAnimation(.snappy(duration: 0.22)) { showingDocTransform = true }
+                        }
+                        .disabled(!model.modelReady || isTransformingDoc)
                     }
-                    docActionButton("Edit", "pencil") {
-                        docEditorText = document.combinedText
-                        showingDocEditor = true
-                    }
-                    docActionButton("Transform", "wand.and.stars") {
-                        withAnimation(.snappy(duration: 0.22)) { showingDocTransform = true }
-                    }
-                    .disabled(!model.modelReady || isTransformingDoc)
+                    WWHairline()
                 }
                 .frame(maxWidth: .infinity)
-                .listRowInsets(EdgeInsets(top: 6, leading: 8, bottom: 6, trailing: 8))
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+                .listRowInsets(EdgeInsets(top: 6, leading: 20, bottom: 6, trailing: 20))
             }
         }
     }
 
     private func docActionButton(_ title: String, _ icon: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            VStack(spacing: 4) {
-                Image(systemName: icon).font(.title3)
-                Text(title).font(.caption)
+            VStack(spacing: 5) {
+                Image(systemName: icon).font(.system(size: 17, weight: .regular))
+                Text(title).font(.caption2)
             }
             .frame(maxWidth: .infinity)
+            .padding(.vertical, 4)
         }
         .buttonStyle(.plain)
-        .foregroundStyle(.tint)
+        .foregroundStyle(WW.moss)
     }
 
     // MARK: Recordings section
@@ -307,22 +331,26 @@ struct DocumentDetailView: View {
         let revisions = document.recordings.filter { $0.isRevision }
 
         if !originals.isEmpty {
-            Section("Recordings") {
+            Section {
                 ForEach(originals) { recordingRow($0) }
                 .onMove { offsets, destination in
                     model.documents.moveRecordings(in: documentID, isRevision: false,
                                                    from: offsets, to: destination)
                 }
+            } header: {
+                WWSectionHeader("Recordings")
             }
         }
 
         if !revisions.isEmpty {
-            Section("Revisions") {
+            Section {
                 ForEach(revisions) { recordingRow($0) }
                 .onMove { offsets, destination in
                     model.documents.moveRecordings(in: documentID, isRevision: true,
                                                    from: offsets, to: destination)
                 }
+            } header: {
+                WWSectionHeader("Revisions")
             }
         }
 
@@ -333,10 +361,13 @@ struct DocumentDetailView: View {
                         showingResetConfirm = true
                     } label: {
                         Label("Reset with Originals", systemImage: "arrow.uturn.backward")
+                            .foregroundStyle(WW.ember)
                             .frame(maxWidth: .infinity)
                     }
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
                 } footer: {
-                    Text("Replaces the document body with the recordings' original transcripts, discarding edits and transforms.")
+                    WWFooter("Replaces the document body with the recordings' original transcripts, discarding edits and transforms.")
                 }
             }
         }
@@ -352,26 +383,28 @@ struct DocumentDetailView: View {
             isPaused: playback.isPaused,
             onPlay: { playback.toggle(recording, url: model.documents.audioURL(for: recording)) }
         )
+        .wwRow()
         .onLongPressGesture { withAnimation { editMode = .active } }
         // Swipe left → Delete / Share the audio file
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             Button("Delete", role: .destructive) {
                 model.documents.deleteRecording(recording.id, fromDocument: documentID)
             }
+            .tint(WW.ember)
             Button("Share") {
                 audioShareItem = AudioShareItem(url: model.documents.audioURL(for: recording))
-            }.tint(.indigo)
+            }.tint(WW.violet)
         }
         // Swipe right → Transcribe (re-run STT) / Append its transcript to the body / Move
         .swipeActions(edge: .leading, allowsFullSwipe: false) {
             Button("Transcribe") {
                 Task { await model.transcribe(recordingID: recording.id, inDocument: documentID) }
-            }.tint(.blue)
+            }.tint(WW.slate)
             Button("Append") {
                 model.appendRecordingToBody(recordingID: recording.id, in: documentID)
-            }.tint(.green)
+            }.tint(WW.moss)
             if !otherDocuments.isEmpty {
-                Button("Move") { movingRecording = recording }.tint(.orange)
+                Button("Move") { movingRecording = recording }.tint(WW.amber)
             }
         }
     }
@@ -398,8 +431,8 @@ struct DocumentDetailView: View {
                 showingRename = true
             } label: {
                 Text(document?.title ?? "Document")
-                    .font(.headline)
-                    .foregroundStyle(.primary)
+                    .font(.system(size: 17, weight: .semibold, design: .serif))
+                    .foregroundStyle(WW.ink)
                     .lineLimit(1)
             }
         }
@@ -467,11 +500,11 @@ struct DocumentDetailView: View {
                                   dismiss: @escaping () -> Void,
                                   run: @escaping (PromptPreset) -> Void) -> some View {
         ZStack(alignment: .bottom) {
-            Color.black.opacity(0.2)
+            Color.black.opacity(0.25)
                 .ignoresSafeArea()
                 .onTapGesture { withAnimation(.snappy(duration: 0.22)) { dismiss() } }
             transformPane(editing: editing, dismiss: dismiss, run: run)
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .wwPane()
                 .padding(.horizontal, 12)
                 .padding(.bottom, 8)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -486,16 +519,17 @@ struct DocumentDetailView: View {
                                run: @escaping (PromptPreset) -> Void) -> some View {
         VStack(spacing: 0) {
             Text(transformHeader)
-                .font(.headline)
+                .font(.system(size: 16, weight: .semibold, design: .serif))
+                .foregroundStyle(WW.ink)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 16).padding(.top, 16).padding(.bottom, 12)
-            Divider()
+            WWHairline()
             ScrollView {
                 VStack(spacing: 0) {
                     ForEach(model.documents.presets) { preset in
                         transformRow(preset, editing: editing, run: run)
-                        Divider().padding(.leading, 16)
+                        WWHairline().padding(.leading, 16)
                     }
                     if editing {
                         Button {
@@ -503,6 +537,7 @@ struct DocumentDetailView: View {
                             creatingTransform = PromptPreset(name: "", template: PromptPreset.transcriptToken)
                         } label: {
                             Label("Add New Transform…", systemImage: "plus")
+                                .foregroundStyle(WW.moss)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.horizontal, 16).padding(.vertical, 12)
                         }
@@ -525,6 +560,7 @@ struct DocumentDetailView: View {
                     withAnimation(.snappy(duration: 0.22)) { run(preset) }
                 } label: {
                     Text(preset.name)
+                        .foregroundStyle(WW.ink)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 16).padding(.vertical, 12)
                         .contentShape(Rectangle())
@@ -539,8 +575,9 @@ struct DocumentDetailView: View {
                         }
                     } label: {
                         Image(systemName: "chevron.down")
+                            .font(.system(size: 13, weight: .medium))
                             .rotationEffect(.degrees(isExpanded ? 0 : -90))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(WW.inkTertiary)
                             .padding(.horizontal, 16).padding(.vertical, 12)
                             .contentShape(Rectangle())
                     }
@@ -552,7 +589,7 @@ struct DocumentDetailView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Text(preset.template)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(WW.inkSecondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     HStack(spacing: 16) {
                         Button {
@@ -690,21 +727,21 @@ private struct InsertHereButton: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 8) {
+            HStack(spacing: 10) {
                 rule
-                Image(systemName: isRecording ? "circle.fill" : "plus.circle.fill")
-                    .font(.system(size: 15))
-                    .foregroundStyle(isRecording ? Color.red : Color(.tertiaryLabel))
+                Image(systemName: isRecording ? "circle.fill" : "plus")
+                    .font(.system(size: 12, weight: .light))
+                    .foregroundStyle(isRecording ? WW.ember : WW.inkTertiary)
                 rule
             }
         }
         .buttonStyle(.plain)
         .disabled(isRecording)
-        .padding(.vertical, 2)
+        .padding(.vertical, 4)
     }
 
     private var rule: some View {
-        Rectangle().fill(.quaternary).frame(height: 1).frame(maxWidth: .infinity)
+        Rectangle().fill(WW.hairline).frame(height: 1).frame(maxWidth: .infinity)
     }
 }
 
@@ -743,6 +780,7 @@ struct TextEditorSheet<Accessory: View>: View {
                 #endif
                 accessory()
             }
+            .background(WW.paper)
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -817,7 +855,7 @@ struct ParagraphEditorSheet: View {
                 #else
                 TextEditor(text: $text).padding()
                 #endif
-                Divider()
+                WWHairline()
                 HStack(spacing: 0) {
                     editorAction("Revise", "mic.fill") { onRevise() }
                     editorAction("Insert", "text.insert") {
@@ -830,6 +868,7 @@ struct ParagraphEditorSheet: View {
                 .padding(.vertical, 8)
                 .padding(.horizontal, 8)
             }
+            .background(WW.paper)
             .navigationTitle("Edit Paragraph")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -843,14 +882,15 @@ struct ParagraphEditorSheet: View {
 
     private func editorAction(_ title: String, _ icon: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            VStack(spacing: 4) {
-                Image(systemName: icon).font(.title3)
-                Text(title).font(.caption)
+            VStack(spacing: 5) {
+                Image(systemName: icon).font(.system(size: 17, weight: .regular))
+                Text(title).font(.caption2)
             }
             .frame(maxWidth: .infinity)
+            .padding(.vertical, 4)
         }
         .buttonStyle(.plain)
-        .foregroundStyle(.tint)
+        .foregroundStyle(WW.moss)
     }
 }
 
@@ -1033,28 +1073,28 @@ private struct FindReplaceBar: View {
     let onClose: () -> Void
 
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 10) {
             HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                Image(systemName: "magnifyingglass").foregroundStyle(WW.inkTertiary)
                 TextField("Find", text: $controller.find)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                 if !controller.find.isEmpty {
                     Text("\(controller.matchCount(in: text))")
                         .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(WW.inkSecondary)
                 }
                 Button { controller.findPrevious() } label: { Image(systemName: "chevron.up") }
                     .disabled(controller.find.isEmpty)
                 Button { controller.findNext() } label: { Image(systemName: "chevron.down") }
                     .disabled(controller.find.isEmpty)
                 Button { onClose() } label: {
-                    Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                    Image(systemName: "xmark.circle.fill").foregroundStyle(WW.inkTertiary)
                 }
                 .accessibilityLabel("Close Find")
             }
             HStack(spacing: 8) {
-                Image(systemName: "arrow.2.squarepath").foregroundStyle(.secondary)
+                Image(systemName: "arrow.2.squarepath").foregroundStyle(WW.inkTertiary)
                 TextField("Replace", text: $controller.replace)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
@@ -1064,13 +1104,14 @@ private struct FindReplaceBar: View {
                     .disabled(controller.find.isEmpty)
             }
         }
-        .textFieldStyle(.roundedBorder)
-        .buttonStyle(.bordered)
+        .textFieldStyle(.plain)
+        .buttonStyle(.borderless)
         .controlSize(.small)
         .font(.callout)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(.bar)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(WW.surface)
+        .overlay(alignment: .top) { WWHairline() }
     }
 }
 #endif
@@ -1119,17 +1160,31 @@ private struct RecordingRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Button(action: onPlay) {
-                Image(systemName: (isActive && !isPaused) ? "pause.fill" : "play.fill")
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.tint)
+            PlayControl(isPlaying: isActive && !isPaused, action: onPlay)
 
             RecordingLabel(recording: recording)
 
             Spacer(minLength: 8)
         }
         .contentShape(Rectangle())
+    }
+}
+
+/// A small hairline-ringed circular play/pause control used by every recordings list.
+struct PlayControl: View {
+    let isPlaying: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(WW.moss)
+                .frame(width: 30, height: 30)
+                .overlay(Circle().stroke(WW.hairline, lineWidth: 1))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -1142,16 +1197,19 @@ private struct RecordingLabel: View {
     var body: some View {
         switch recording.status {
         case .done:
-            Text(text).lineLimit(lineLimit)
+            Text(text)
+                .font(.subheadline)
+                .foregroundStyle(WW.ink)
+                .lineLimit(lineLimit)
         case .transcribing:
             HStack(spacing: 6) {
                 ProgressView().controlSize(.mini)
-                Text("Transcribing…").foregroundStyle(.secondary).lineLimit(1)
+                Text("Transcribing…").font(.subheadline).foregroundStyle(WW.inkSecondary).lineLimit(1)
             }
         case .pending:
-            Text("Waiting to transcribe").foregroundStyle(.secondary).lineLimit(1)
+            Text("Waiting to transcribe").font(.subheadline).foregroundStyle(WW.inkSecondary).lineLimit(1)
         case .failed:
-            Text("Transcription failed").foregroundStyle(.orange).lineLimit(1)
+            Text("Transcription failed").font(.subheadline).foregroundStyle(WW.amber).lineLimit(1)
         }
     }
 
@@ -1309,28 +1367,23 @@ struct RecordingSheet: View {
                 }
 
                 Text(timeString(recorder.elapsed))
-                    .font(.title2.monospacedDigit())
-                    .foregroundStyle(recorder.isPaused ? .secondary : .primary)
+                    .font(.system(size: 36, weight: .light, design: .rounded).monospacedDigit())
+                    .foregroundStyle(recorder.isPaused ? WW.inkTertiary : WW.ink)
 
                 LevelMeter(level: recorder.currentLevel)
+                    .tint(WW.ember)
 
-                HStack(spacing: 12) {
+                HStack(spacing: 28) {
                     Button { showingCancelConfirm = true } label: {
                         Image(systemName: "xmark")
-                            .font(.title2)
-                            .frame(maxWidth: .infinity, minHeight: 50)
                     }
-                    .buttonStyle(.bordered)
-                    .tint(.gray)
+                    .buttonStyle(WWRoundIconButtonStyle(diameter: 52, glyphColor: WW.inkSecondary))
                     .accessibilityLabel("Cancel")
 
                     Button { finish() } label: {
                         Image(systemName: "square.and.arrow.down")
-                            .font(.title2)
-                            .frame(maxWidth: .infinity, minHeight: 50)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.red)
+                    .buttonStyle(WWRoundIconButtonStyle(diameter: 62, fill: WW.ember))
                     .accessibilityLabel("Save")
 
                     Button {
@@ -1341,10 +1394,8 @@ struct RecordingSheet: View {
                         }
                     } label: {
                         Image(systemName: recorder.isPaused ? "play.fill" : "pause.fill")
-                            .font(.title2)
-                            .frame(maxWidth: .infinity, minHeight: 50)
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(WWRoundIconButtonStyle(diameter: 52, glyphColor: WW.ink))
                     .disabled(!recorder.isRecording)
                     .accessibilityLabel(recorder.isPaused ? "Continue" : "Pause")
                 }
@@ -1354,7 +1405,8 @@ struct RecordingSheet: View {
             .padding(.bottom, 12)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: liveEnabled ? .top : .center)
         }
-        .presentationDetents([liveEnabled ? .large : .height(210)])
+        .presentationBackground(WW.surface)
+        .presentationDetents([liveEnabled ? .large : .height(230)])
         .interactiveDismissDisabled(true)
         .task { await begin() }
         .onDisappear { discardIfUnfinished() }
@@ -1373,18 +1425,25 @@ struct RecordingSheet: View {
     /// setting is on. Re-transcribed roughly once a second by `LiveTranscriber`. `boxHeight` sizes
     /// the scroll area (≈75% of the sheet).
     private func livePanel(boxHeight: CGFloat) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
-                Label("Live Transcription", systemImage: "waveform")
-                    .font(.caption).foregroundStyle(.secondary)
+                Image(systemName: "waveform")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(WW.inkSecondary)
+                Text("Live Transcription")
+                    .font(WW.sectionLabel)
+                    .tracking(1.4)
+                    .textCase(.uppercase)
+                    .foregroundStyle(WW.inkSecondary)
                 if live.isProcessing { ProgressView().controlSize(.mini) }
                 Spacer()
             }
             ScrollViewReader { proxy in
                 ScrollView {
                     Text(live.text.isEmpty ? "Listening…" : live.text)
-                        .font(.system(size: 19))
-                        .foregroundStyle(live.text.isEmpty ? .secondary : .primary)
+                        .font(.system(size: 19, design: .serif))
+                        .lineSpacing(5)
+                        .foregroundStyle(live.text.isEmpty ? WW.inkTertiary : WW.ink)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .id("liveTextEnd")
                 }
@@ -1394,8 +1453,10 @@ struct RecordingSheet: View {
             }
             .frame(height: boxHeight)
         }
-        .padding(10)
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+        .padding(12)
+        .background(WW.paper, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+            .stroke(WW.hairline, lineWidth: 1))
     }
 
     /// Discard the in-progress clip and close.
@@ -1494,17 +1555,21 @@ struct InboxView: View {
                     moveTargets: documentTargets,
                     onMove: { target in model.documents.moveRecording(recording.id, from: documentID, to: target.id) }
                 )
+                .wwRow()
+                .listRowInsets(EdgeInsets(top: 12, leading: 20, bottom: 12, trailing: 20))
                 .swipeActions(edge: .trailing) {
                     Button("Delete", role: .destructive) {
                         model.documents.deleteRecording(recording.id, fromDocument: documentID)
                     }
+                    .tint(WW.ember)
                 }
                 .swipeActions(edge: .leading) {
                     Button("Move") { withAnimation(.snappy(duration: 0.22)) { movingIDs = [recording.id] } }
-                        .tint(.blue)
+                        .tint(WW.slate)
                 }
             }
         }
+        .wwList()
         .navigationTitle(selectionMode ? "\(selected.count) selected" : DocumentStore.inboxTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -1535,13 +1600,15 @@ struct InboxView: View {
                 }
                 .frame(maxWidth: .infinity)
                 .padding()
-                .background(.bar)
+                .background(WW.surface)
+                .overlay(alignment: .top) { WWHairline() }
             }
         }
         .overlay {
             if recordings.isEmpty {
-                ContentUnavailableView("Inbox is empty", systemImage: "tray",
-                                       description: Text("Recordings from your Watch and the mic button land here."))
+                WWEmptyState(title: "Inbox is empty",
+                             systemImage: "tray",
+                             message: "Recordings from your Watch and the mic button land here.")
             }
         }
         .onAppear { playback.onError = { message in model.setupError = message } }
@@ -1578,11 +1645,11 @@ struct InboxView: View {
     @ViewBuilder
     private func moveOverlay(ids: Set<UUID>) -> some View {
         ZStack(alignment: .bottom) {
-            Color.black.opacity(0.2)
+            Color.black.opacity(0.25)
                 .ignoresSafeArea()
                 .onTapGesture { withAnimation(.snappy(duration: 0.22)) { movingIDs = nil } }
             movePane(ids: ids)
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .wwPane()
                 .padding(.horizontal, 12)
                 .padding(.bottom, 8)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -1595,11 +1662,12 @@ struct InboxView: View {
     private func movePane(ids: Set<UUID>) -> some View {
         VStack(spacing: 0) {
             Text("Move to Document")
-                .font(.headline)
+                .font(.system(size: 16, weight: .semibold, design: .serif))
+                .foregroundStyle(WW.ink)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 16).padding(.top, 16).padding(.bottom, 12)
-            Divider()
+            WWHairline()
             ScrollView {
                 VStack(spacing: 0) {
                     ForEach(documentTargets) { target in
@@ -1611,18 +1679,20 @@ struct InboxView: View {
                             }
                         } label: {
                             Text(target.title)
+                                .foregroundStyle(WW.ink)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.horizontal, 16).padding(.vertical, 12)
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
-                        Divider().padding(.leading, 16)
+                        WWHairline().padding(.leading, 16)
                     }
                     Button {
                         withAnimation(.snappy(duration: 0.22)) { movingIDs = nil }
                         startNewDocument(for: ids)
                     } label: {
                         Label("New Document", systemImage: "plus")
+                            .foregroundStyle(WW.moss)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal, 16).padding(.vertical, 12)
                     }
@@ -1694,12 +1764,13 @@ struct InboxView: View {
     private func batchButton(_ title: String, _ icon: String,
                              role: ButtonRole? = nil, action: @escaping () -> Void) -> some View {
         Button(role: role, action: action) {
-            VStack(spacing: 4) {
-                Image(systemName: icon).font(.title3)
-                Text(title).font(.caption)
+            VStack(spacing: 5) {
+                Image(systemName: icon).font(.system(size: 17, weight: .regular))
+                Text(title).font(.caption2)
             }
             .frame(maxWidth: .infinity)
         }
+        .tint(role == .destructive ? WW.ember : WW.moss)
         .disabled(selected.isEmpty)
     }
 
@@ -1741,13 +1812,10 @@ private struct InboxRecordingRow: View {
         HStack(alignment: .top, spacing: 12) {
             if selectionMode {
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(isSelected ? Color.accentColor : .secondary)
+                    .font(.system(size: 20, weight: .light))
+                    .foregroundStyle(isSelected ? WW.moss : WW.inkTertiary)
             } else {
-                Button(action: onPlay) {
-                    Image(systemName: (isActive && !isPaused) ? "pause.fill" : "play.fill")
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.tint)
+                PlayControl(isPlaying: isActive && !isPaused, action: onPlay)
             }
 
             // Up to an 8-line preview; tap to read the full transcript (or toggle when selecting).
@@ -1770,7 +1838,10 @@ private struct InboxRecordingRow: View {
                         }
                     }
                 } label: {
-                    Image(systemName: "ellipsis").foregroundStyle(.tint)
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(WW.inkTertiary)
+                        .padding(.vertical, 6)
                 }
             }
         }
@@ -1809,11 +1880,14 @@ private struct TranscriptDetailView: View {
             VStack(spacing: 0) {
                 ScrollView {
                     Text(transcript.isEmpty ? "(no speech detected)" : transcript)
+                        .font(WW.serifBody)
+                        .lineSpacing(5)
+                        .foregroundStyle(transcript.isEmpty ? WW.inkSecondary : WW.ink)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding()
+                        .padding(20)
                 }
-                Divider()
+                WWHairline()
                 HStack(spacing: 0) {
                     actionButton("Edit", "pencil") {
                         editorText = transcript
@@ -1827,6 +1901,7 @@ private struct TranscriptDetailView: View {
                 }
                 .padding(.vertical, 8).padding(.horizontal, 8)
             }
+            .background(WW.paper)
             .overlay(alignment: .top) {
                 if working { BusyBanner(message: "Working…").padding(.top, 8) }
             }
@@ -1858,14 +1933,15 @@ private struct TranscriptDetailView: View {
 
     private func actionButton(_ title: String, _ icon: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            VStack(spacing: 4) {
-                Image(systemName: icon).font(.title3)
-                Text(title).font(.caption)
+            VStack(spacing: 5) {
+                Image(systemName: icon).font(.system(size: 17, weight: .regular))
+                Text(title).font(.caption2)
             }
             .frame(maxWidth: .infinity)
+            .padding(.vertical, 4)
         }
         .buttonStyle(.plain)
-        .foregroundStyle(.tint)
+        .foregroundStyle(WW.moss)
     }
 
     private func transform(_ preset: PromptPreset) {

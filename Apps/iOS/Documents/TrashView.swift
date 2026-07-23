@@ -14,32 +14,38 @@ struct TrashView: View {
                     showingEmptyConfirmation = true
                 } label: {
                     Label("Empty Trash", systemImage: "trash.slash")
+                        .foregroundStyle(WW.ember)
                 }
+                .wwRow()
             }
 
             Section {
                 ForEach(trash) { doc in
                     TrashDocumentRow(document: doc)
+                        .wwRow()
+                        .listRowInsets(EdgeInsets(top: 12, leading: 20, bottom: 12, trailing: 20))
                         .swipeActions(edge: .trailing) {
                             Button("Delete", role: .destructive) {
                                 model.documents.permanentlyDelete(doc)
                             }
+                            .tint(WW.ember)
                         }
                         .swipeActions(edge: .leading) {
                             Button("Restore") {
                                 model.documents.restoreFromTrash(doc)
                             }
-                            .tint(.green)
+                            .tint(WW.moss)
                         }
                 }
             }
         }
+        .wwList()
         .navigationTitle("Trash")
         .overlay {
             if trash.isEmpty {
-                ContentUnavailableView("Trash is empty",
-                                       systemImage: "trash",
-                                       description: Text("Deleted documents will appear here."))
+                WWEmptyState(title: "Trash is empty",
+                             systemImage: "trash",
+                             message: "Deleted documents will appear here.")
             }
         }
         .confirmationDialog("Empty Trash?",
@@ -57,11 +63,13 @@ struct TrashView: View {
 private struct TrashDocumentRow: View {
     let document: Document
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 3) {
             Text(document.title)
+                .font(WW.serifTitle)
+                .foregroundStyle(WW.ink)
             Text(subtitle)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(WW.inkSecondary)
         }
     }
     private var subtitle: String {

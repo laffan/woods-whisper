@@ -78,9 +78,10 @@ struct WatchRootView: View {
         VStack(spacing: 10) {
             if recorder.isRecording {
                 Text(timeString(recorder.elapsed))
-                    .font(.title3.monospacedDigit())
+                    .font(.system(.title3, design: .rounded, weight: .light).monospacedDigit())
                     .foregroundStyle(recorder.isPaused ? .secondary : .primary)
                 LevelMeter(level: recorder.currentLevel)
+                    .tint(WWWatch.ember)
                 // Cancel / Stop / Pause as equal-width rectangular buttons that scale to fit the
                 // watch width (matches the iPhone recorder's Cancel / Stop / Pause row) — circular
                 // glyphs were getting clipped at the screen edge.
@@ -101,7 +102,7 @@ struct WatchRootView: View {
                             .frame(maxWidth: .infinity, minHeight: 38)
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(.red)
+                    .tint(WWWatch.ember)
                     .accessibilityLabel("Save")
                     Button {
                         recorder.isPaused ? recorder.resume() : recorder.pause()
@@ -110,7 +111,7 @@ struct WatchRootView: View {
                             .frame(maxWidth: .infinity, minHeight: 38)
                     }
                     .buttonStyle(.bordered)
-                    .tint(recorder.isPaused ? Color.accentColor : Color.secondary)
+                    .tint(recorder.isPaused ? WWWatch.moss : Color.secondary)
                     .accessibilityLabel(recorder.isPaused ? "Continue" : "Pause")
                 }
             } else {
@@ -135,7 +136,7 @@ struct WatchRootView: View {
                             .frame(maxWidth: .infinity, minHeight: 44)
                     }
                     .toggleStyle(.button)
-                    .tint(.green)
+                    .tint(WWWatch.moss)
                     .accessibilityLabel("Walking")
                     Button {
                         Task { await toggle() }
@@ -145,7 +146,7 @@ struct WatchRootView: View {
                             .frame(maxWidth: .infinity, minHeight: 44)
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(walkingMode ? Color.green : Color.accentColor)
+                    .tint(walkingMode ? WWWatch.moss : WWWatch.ember)
                     .accessibilityLabel("Record")
                 }
             }
@@ -200,7 +201,7 @@ struct WatchRootView: View {
                     targetRow(id: doc.id, title: doc.title, icon: "doc.text")
                 }
             } header: {
-                Text("Record to")
+                WatchSectionHeader("Record to")
             } footer: {
                 if model.documents.isEmpty {
                     Text("Documents from your iPhone appear here once it's paired and open.")
@@ -257,9 +258,9 @@ struct WatchRootView: View {
                     } label: {
                         Label("Send Unsent", systemImage: "paperplane.fill").frame(maxWidth: .infinity)
                     }
-                    .tint(.green)
+                    .tint(WWWatch.moss)
                 } header: {
-                    Text("Walking")
+                    WatchSectionHeader("Walking")
                 }
             }
 
@@ -273,9 +274,9 @@ struct WatchRootView: View {
                     } label: {
                         Label("Resend", systemImage: "arrow.clockwise").frame(maxWidth: .infinity)
                     }
-                    .tint(.blue)
+                    .tint(WWWatch.moss)
                 } header: {
-                    Text("Needs Resend")
+                    WatchSectionHeader("Needs Resend")
                 }
             }
 
@@ -293,14 +294,14 @@ struct WatchRootView: View {
                     } label: {
                         Label("Resend All", systemImage: "arrow.clockwise").frame(maxWidth: .infinity)
                     }
-                    .tint(.blue)
+                    .tint(WWWatch.moss)
                     Button(role: .destructive) {
                         model.clearSent()
                     } label: {
                         Label("Clear Sent", systemImage: "trash").frame(maxWidth: .infinity)
                     }
                 } header: {
-                    Text("Sent")
+                    WatchSectionHeader("Sent")
                 }
             }
 
@@ -313,7 +314,7 @@ struct WatchRootView: View {
                     } label: {
                         Label("Send All", systemImage: "paperplane.fill").frame(maxWidth: .infinity)
                     }
-                    .tint(.blue)
+                    .tint(WWWatch.moss)
                     .disabled(model.unsentRecordings.isEmpty)
 
                     Button(role: .destructive) {
@@ -359,12 +360,12 @@ struct WatchRootView: View {
                 Button { model.cancelSend(recording) } label: {
                     Label("Cancel", systemImage: "xmark")
                 }
-                .tint(.orange)
+                .tint(WWWatch.amber)
             } else {
                 Button { model.startSend(recording) } label: {
                     Label(isFailedOrCancelled(recording.id) ? "Retry" : "Send", systemImage: "paperplane")
                 }
-                .tint(.blue)
+                .tint(WWWatch.moss)
             }
         }
         .swipeActions {
@@ -400,11 +401,11 @@ struct WatchRootView: View {
         } else {
             switch model.sendOutcome[id] {
             case .sent:
-                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(WWWatch.moss)
             case .failed:
-                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(WWWatch.amber)
             case .cancelled:
-                Image(systemName: "xmark.circle.fill").foregroundStyle(.orange)
+                Image(systemName: "xmark.circle.fill").foregroundStyle(WWWatch.amber)
             case nil:
                 EmptyView()
             }

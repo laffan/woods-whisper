@@ -22,15 +22,17 @@ struct WatchSettingsView: View {
 
     var body: some View {
         List {
-            Section("Send recordings to") {
+            Section {
                 Picker("Destination", selection: sendToiPad) {
                     Text("iPhone").tag(false)
                     Text("iPad (direct)").tag(true)
                 }
+            } header: {
+                WatchSectionHeader("Send recordings to")
             }
 
             if let link = pairedLink {
-                Section("Paired iPad") {
+                Section {
                     Text(link.displayName).font(.headline)
                     Text(link.transport == .bluetooth ? "Connected over Bluetooth" : "Connected over WiFi")
                         .font(.caption2).foregroundStyle(.secondary)
@@ -39,6 +41,8 @@ struct WatchSettingsView: View {
                         pairedLink = nil
                         transport = .phoneSession
                     }
+                } header: {
+                    WatchSectionHeader("Paired iPad")
                 }
             }
 

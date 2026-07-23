@@ -12,10 +12,15 @@ struct WoodsWhisperApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     #endif
 
+    init() {
+        WW.configureAppearance()
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()
                 .environmentObject(model)
+                .tint(WW.moss)
                 .task {
                     WoodsWhisperShortcuts.updateAppShortcutParameters()
                     await model.loadDownloadedModelsAtStartup()
