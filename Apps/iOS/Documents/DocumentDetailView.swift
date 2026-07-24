@@ -271,7 +271,7 @@ struct DocumentDetailView: View {
             }
         } else {
             Text(para.text)
-                .font(WW.serifBody)
+                .font(WW.bodyText)
                 .lineSpacing(5)
                 .foregroundStyle(WW.ink)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -431,7 +431,7 @@ struct DocumentDetailView: View {
                 showingRename = true
             } label: {
                 Text(document?.title ?? "Document")
-                    .font(.system(size: 17, weight: .semibold, design: .serif))
+                    .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(WW.ink)
                     .lineLimit(1)
             }
@@ -519,7 +519,7 @@ struct DocumentDetailView: View {
                                run: @escaping (PromptPreset) -> Void) -> some View {
         VStack(spacing: 0) {
             Text(transformHeader)
-                .font(.system(size: 16, weight: .semibold, design: .serif))
+                .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(WW.ink)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1441,7 +1441,7 @@ struct RecordingSheet: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     Text(live.text.isEmpty ? "Listening…" : live.text)
-                        .font(.system(size: 19, design: .serif))
+                        .font(.system(size: 19))
                         .lineSpacing(5)
                         .foregroundStyle(live.text.isEmpty ? WW.inkTertiary : WW.ink)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1662,7 +1662,7 @@ struct InboxView: View {
     private func movePane(ids: Set<UUID>) -> some View {
         VStack(spacing: 0) {
             Text("Move to Document")
-                .font(.system(size: 16, weight: .semibold, design: .serif))
+                .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(WW.ink)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1880,7 +1880,7 @@ private struct TranscriptDetailView: View {
             VStack(spacing: 0) {
                 ScrollView {
                     Text(transcript.isEmpty ? "(no speech detected)" : transcript)
-                        .font(WW.serifBody)
+                        .font(WW.bodyText)
                         .lineSpacing(5)
                         .foregroundStyle(transcript.isEmpty ? WW.inkSecondary : WW.ink)
                         .textSelection(.enabled)

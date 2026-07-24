@@ -67,7 +67,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 //   • warm paper backgrounds (deep pine-black in dark mode) instead of system grouped gray,
 //   • a single moss-green accent in place of the default blue,
 //   • ember red reserved for recording and destructive moments,
-//   • serif titles and document text, small tracked-uppercase section labels,
+//   • clean sans-serif type throughout, small tracked-uppercase section labels,
 //   • flat lists with hairline separators, and floating panes with hairline strokes
 //     instead of system materials.
 //
@@ -127,11 +127,11 @@ enum WW {
 
     // MARK: Type
 
-    /// Serif body for document text — the editorial voice of the app.
-    static let serifBody = Font.system(size: 17, design: .serif)
+    /// Body font for document text.
+    static let bodyText = Font.system(size: 17)
 
-    /// Serif row titles (document names and the like).
-    static let serifTitle = Font.system(size: 17, weight: .semibold, design: .serif)
+    /// Row titles (document names and the like).
+    static let rowTitle = Font.system(size: 17, weight: .semibold)
 
     /// Small tracked-uppercase label font (pairs with `.tracking(1.4)` and `.textCase(.uppercase)`).
     static let sectionLabel = Font.system(size: 11, weight: .semibold)
@@ -139,7 +139,7 @@ enum WW {
     // MARK: Global chrome
 
     /// One-shot UIKit appearance pass: flatten the navigation and tab bars onto the paper
-    /// background — no blur, no shadow — with serif titles and moss/ink item colors.
+    /// background — no blur, no shadow — with ink titles and moss/muted item colors.
     static func configureAppearance() {
         #if canImport(UIKit)
         let paperUI = UIColor { $0.userInterfaceStyle == .dark
@@ -162,9 +162,9 @@ enum WW {
         nav.configureWithOpaqueBackground()
         nav.backgroundColor = paperUI
         nav.shadowColor = .clear
-        nav.titleTextAttributes = [.font: serifUIFont(size: 17, weight: .semibold),
+        nav.titleTextAttributes = [.font: UIFont.systemFont(ofSize: 17, weight: .semibold),
                                    .foregroundColor: inkUI]
-        nav.largeTitleTextAttributes = [.font: serifUIFont(size: 32, weight: .semibold),
+        nav.largeTitleTextAttributes = [.font: UIFont.systemFont(ofSize: 32, weight: .bold),
                                         .foregroundColor: inkUI]
         UINavigationBar.appearance().standardAppearance = nav
         UINavigationBar.appearance().compactAppearance = nav
@@ -187,14 +187,6 @@ enum WW {
         #endif
     }
 
-    #if canImport(UIKit)
-    /// A serif (New York) system font, falling back to the default design when unavailable.
-    static func serifUIFont(size: CGFloat, weight: UIFont.Weight) -> UIFont {
-        let base = UIFont.systemFont(ofSize: size, weight: weight)
-        guard let descriptor = base.fontDescriptor.withDesign(.serif) else { return base }
-        return UIFont(descriptor: descriptor, size: size)
-    }
-    #endif
 }
 
 // MARK: - List styling
@@ -257,7 +249,7 @@ struct WWFooter: View {
 
 // MARK: - Empty state
 
-/// A minimal empty state: a thin-stroked circle around a light glyph, a serif title, and a
+/// A minimal empty state: a thin-stroked circle around a light glyph, a title, and a
 /// short secondary message. Replaces `ContentUnavailableView`.
 struct WWEmptyState: View {
     let title: String
@@ -272,7 +264,7 @@ struct WWEmptyState: View {
                 .frame(width: 64, height: 64)
                 .overlay(Circle().stroke(WW.hairline, lineWidth: 1))
             Text(title)
-                .font(.system(size: 19, weight: .medium, design: .serif))
+                .font(.system(size: 19, weight: .medium))
                 .foregroundStyle(WW.ink)
             if let message {
                 Text(message)

@@ -65,7 +65,7 @@ private struct TrashDocumentRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(document.title)
-                .font(WW.serifTitle)
+                .font(WW.rowTitle)
                 .foregroundStyle(WW.ink)
             Text(subtitle)
                 .font(.caption)

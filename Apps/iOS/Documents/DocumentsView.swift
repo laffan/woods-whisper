@@ -164,7 +164,7 @@ private struct DocumentRow: View {
                         .foregroundStyle(WW.moss)
                 }
                 Text(document.title)
-                    .font(WW.serifTitle)
+                    .font(WW.rowTitle)
                     .foregroundStyle(WW.ink)
             }
             Text(subtitle)
@@ -186,7 +186,7 @@ private struct TrashRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text("Trash")
-                .font(WW.serifTitle)
+                .font(WW.rowTitle)
                 .foregroundStyle(WW.inkSecondary)
             Text("\(count) document\(count == 1 ? "" : "s")")
                 .font(.caption)

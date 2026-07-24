@@ -15,7 +15,7 @@ struct PresetListView: View {
                     VStack(alignment: .leading, spacing: 3) {
                         HStack(spacing: 8) {
                             Text(preset.name)
-                                .font(WW.serifTitle)
+                                .font(WW.rowTitle)
                                 .foregroundStyle(WW.ink)
                             if preset.isBuiltIn {
                                 Text("Built-in")
