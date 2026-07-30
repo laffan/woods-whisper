@@ -1509,15 +1509,16 @@ struct RecordingSheet: View {
 // MARK: - Inbox
 
 /// The Inbox: a flat list of recordings (Watch clips and "New Recording" captures), not a
-/// document. Each recording can be played, copied, moved into a document, re-transcribed, or
-/// deleted. Lives here so the app target picks it up without an xcodegen regen.
+/// document. Newest capture first. Tapping a row opens its transcript editor; swipe left for
+/// Move / Delete, right for Copy / Transform. Lives here so the app target picks it up without an
+/// xcodegen regen.
 struct InboxView: View {
     @EnvironmentObject private var model: AppModel
     let documentID: UUID
 
     @StateObject private var playback = AudioPlaybackController()
     @State private var showingRecorder = false
-    @State private var detailRecording: Recording?
+    @State private var editingRecording: Recording?
 
     // Long-press-to-select (the Inbox's own batch mode).
     @State private var selectionMode = false
@@ -1526,12 +1527,20 @@ struct InboxView: View {
     // Move-to-document pane: the recordings being moved (one, from a swipe; or many, from batch).
     @State private var movingIDs: Set<UUID>?
 
+    // Swipe-right Transform: which recording is picking a preset, and which are mid-transform
+    // (their rows show a spinner in place of the transcript preview).
+    @State private var transformTargetID: UUID?
+    @State private var transformingIDs: Set<UUID> = []
+
     // New-document step: the recordings to drop into a fresh doc, plus its editable title.
     @State private var pendingNewDocIDs: Set<UUID>?
     @State private var newDocTitle = ""
 
     private var inbox: Document? { model.documents.document(with: documentID) }
-    private var recordings: [Recording] { inbox?.recordings ?? [] }
+    /// Newest first — the Inbox reads as a capture feed, so the clip you just made is at the top.
+    private var recordings: [Recording] {
+        (inbox?.recordings ?? []).sorted { $0.createdAt > $1.createdAt }
+    }
     private var documentTargets: [Document] {
         model.documents.documents.filter { $0.id != documentID && $0.title != DocumentStore.inboxTitle }
     }
@@ -1545,9 +1554,10 @@ struct InboxView: View {
                     isSelected: selected.contains(recording.id),
                     isActive: playback.playingID == recording.id,
                     isPaused: playback.isPaused,
+                    isTransforming: transformingIDs.contains(recording.id),
                     onPlay: { playback.toggle(recording, url: model.documents.audioURL(for: recording)) },
                     onTapLabel: {
-                        if selectionMode { toggle(recording.id) } else { detailRecording = recording }
+                        if selectionMode { toggle(recording.id) } else { editingRecording = recording }
                     },
                     onLongPress: { enterSelection(with: recording.id) },
                     onCopy: { copy(recording) },
@@ -1557,15 +1567,22 @@ struct InboxView: View {
                 )
                 .wwRow()
                 .listRowInsets(EdgeInsets(top: 12, leading: 20, bottom: 12, trailing: 20))
-                .swipeActions(edge: .trailing) {
+                // Swipe left → Move / Delete. No full swipe: both are consequential, and a stray
+                // flick shouldn't bin a capture.
+                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                     Button("Delete", role: .destructive) {
                         model.documents.deleteRecording(recording.id, fromDocument: documentID)
                     }
                     .tint(WW.ember)
-                }
-                .swipeActions(edge: .leading) {
                     Button("Move") { withAnimation(.snappy(duration: 0.22)) { movingIDs = [recording.id] } }
                         .tint(WW.slate)
+                }
+                // Swipe right → Copy / Transform.
+                .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                    Button("Copy") { copy(recording) }.tint(WW.inkTertiary)
+                    Button("Transform") { transformTargetID = recording.id }
+                        .tint(WW.violet)
+                        .disabled(!model.modelReady)
                 }
             }
         }
@@ -1619,12 +1636,24 @@ struct InboxView: View {
                 model.addDeviceRecording(audioURL: url, duration: duration, toDocument: documentID)
             }
         }
-        .sheet(item: $detailRecording) { recording in
-            TranscriptDetailView(model: model, recordingID: recording.id, documentID: documentID)
+        .sheet(item: $editingRecording) { recording in
+            InboxTranscriptEditor(model: model, recording: recording, documentID: documentID)
         }
         .overlay {
             if let ids = movingIDs {
                 moveOverlay(ids: ids)
+            }
+        }
+        // Swipe-right Transform: pick the preset, then rewrite the transcript in place. The target
+        // id is captured while the dialog is built, so the action doesn't race the dismissal.
+        .confirmationDialog("Transform — \(AppSettings.shared.model.shortName)",
+                            isPresented: Binding(get: { transformTargetID != nil },
+                                                 set: { if !$0 { transformTargetID = nil } }),
+                            titleVisibility: .visible) {
+            if let id = transformTargetID {
+                ForEach(model.documents.presets) { preset in
+                    Button(preset.name) { transform(preset, recordingID: id) }
+                }
             }
         }
         .alert("Rename document",
@@ -1636,9 +1665,18 @@ struct InboxView: View {
         }
     }
 
+    /// Run a preset against one recording's transcript, marking its row busy while it works.
+    private func transform(_ preset: PromptPreset, recordingID: UUID) {
+        transformingIDs.insert(recordingID)
+        Task {
+            await model.transformRecordingTranscript(preset, recordingID: recordingID, in: documentID)
+            transformingIDs.remove(recordingID)
+        }
+    }
+
     // MARK: Move-to-document pane
 
-    /// Floating pane (swipe a recording right → Move, or batch "Move"): the same design as the
+    /// Floating pane (swipe a recording left → Move, or batch "Move"): the same design as the
     /// document Transform pane — a dimmed scrim you tap to dismiss, with the pane anchored at the
     /// bottom. Lists the destination documents and, below them, a "New Document" button that opens
     /// the rename step and then moves the recording(s) into the fresh document.
@@ -1786,9 +1824,16 @@ struct InboxView: View {
         wwLog("Copied \(selected.count) recording transcript(s) to clipboard", .general)
     }
 
+    /// Copy one recording's transcript. An untranscribed clip is left alone rather than wiping
+    /// whatever is already on the clipboard.
     private func copy(_ recording: Recording) {
+        let text = recording.transcript?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !text.isEmpty else {
+            wwLog("Nothing to copy — “\(recording.name)” has no transcript yet", .general)
+            return
+        }
         #if canImport(UIKit)
-        UIPasteboard.general.string = recording.transcript
+        UIPasteboard.general.string = text
         #endif
         wwLog("Copied transcript of “\(recording.name)”", .general)
     }
@@ -1800,6 +1845,7 @@ private struct InboxRecordingRow: View {
     let isSelected: Bool
     let isActive: Bool
     let isPaused: Bool
+    let isTransforming: Bool
     let onPlay: () -> Void
     let onTapLabel: () -> Void
     let onLongPress: () -> Void
@@ -1818,11 +1864,24 @@ private struct InboxRecordingRow: View {
                 PlayControl(isPlaying: isActive && !isPaused, action: onPlay)
             }
 
-            // Up to an 8-line preview; tap to read the full transcript (or toggle when selecting).
-            RecordingLabel(recording: recording, lineLimit: 8)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-                .onTapGesture { onTapLabel() }
+            // Up to an 8-line preview over the capture date/time; tap to edit the transcript (or
+            // toggle the row when selecting).
+            VStack(alignment: .leading, spacing: 4) {
+                if isTransforming {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.mini)
+                        Text("Transforming…").font(.subheadline).foregroundStyle(WW.inkSecondary)
+                    }
+                } else {
+                    RecordingLabel(recording: recording, lineLimit: 8)
+                }
+                Text(recording.createdAt.formatted(date: .abbreviated, time: .shortened))
+                    .font(.caption2)
+                    .foregroundStyle(WW.inkTertiary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .onTapGesture { onTapLabel() }
 
             if !selectionMode {
                 Menu {
@@ -1851,83 +1910,70 @@ private struct InboxRecordingRow: View {
     }
 }
 
-/// Full-transcript reader/editor for a single Inbox recording, shown when a preview row is tapped.
-/// Offers Edit (the same full-screen text editor documents use), Transform (rewrite the transcript
-/// in place with a preset), and Reset (re-transcribe the audio, restoring the original
-/// transcription).
-private struct TranscriptDetailView: View {
-    @ObservedObject var model: AppModel
-    let recordingID: UUID
-    let documentID: UUID
-    @Environment(\.dismiss) private var dismiss
+/// The transcript editor for a single Inbox recording — what tapping a row opens. The text is
+/// editable straight away (the same full-screen editor, find/replace and all, that documents use)
+/// with Copy / Transform / Reset pinned below it.
+///
+/// Transform and Reset write through the store rather than the editor's buffer, so each one flushes
+/// the text as it stands, runs, then re-seeds the editor from the recording.
+private struct InboxTranscriptEditor: View {
+    @ObservedObject private var model: AppModel
+    private let recordingID: UUID
+    private let documentID: UUID
 
+    @State private var text: String
     @State private var working = false
     @State private var showingTransform = false
-    @State private var showingEditor = false
-    @State private var editorText = ""
 
-    /// Looked up live so the view reflects transform/reset edits.
+    init(model: AppModel, recording: Recording, documentID: UUID) {
+        _model = ObservedObject(wrappedValue: model)
+        self.recordingID = recording.id
+        self.documentID = documentID
+        _text = State(initialValue: recording.transcript?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "")
+    }
+
+    /// Looked up live so transform/reset results can be read back.
     private var recording: Recording? {
         model.documents.document(with: documentID)?.recordings.first { $0.id == recordingID }
     }
 
-    private var transcript: String {
-        recording?.transcript?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-    }
+    private var isEmpty: Bool { text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
     var body: some View {
-        NavigationStack {
+        TextEditorSheet(title: "Edit Transcript", text: $text, onSave: { persist() }) {
             VStack(spacing: 0) {
-                ScrollView {
-                    Text(transcript.isEmpty ? "(no speech detected)" : transcript)
-                        .font(WW.bodyText)
-                        .lineSpacing(5)
-                        .foregroundStyle(transcript.isEmpty ? WW.inkSecondary : WW.ink)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(20)
+                if working {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("Working…").font(.caption).foregroundStyle(WW.inkSecondary)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.bottom, 8)
                 }
                 WWHairline()
                 HStack(spacing: 0) {
-                    actionButton("Edit", "pencil") {
-                        editorText = transcript
-                        showingEditor = true
-                    }
-                    .disabled(working)
+                    actionButton("Copy", "doc.on.doc") { copy() }
+                        .disabled(working || isEmpty)
                     actionButton("Transform", "wand.and.stars") { showingTransform = true }
-                        .disabled(!model.modelReady || working || transcript.isEmpty)
+                        .disabled(!model.modelReady || working || isEmpty)
                     actionButton("Reset", "arrow.uturn.backward") { reset() }
                         .disabled(working)
                 }
                 .padding(.vertical, 8).padding(.horizontal, 8)
             }
-            .background(WW.paper)
-            .overlay(alignment: .top) {
-                if working { BusyBanner(message: "Working…").padding(.top, 8) }
-            }
-            .navigationTitle("Transcript")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
-            }
-            .confirmationDialog("Transform — \(AppSettings.shared.model.shortName)",
-                                isPresented: $showingTransform, titleVisibility: .visible) {
-                ForEach(model.documents.presets) { preset in
-                    Button(preset.name) { transform(preset) }
-                }
-            }
-            .sheet(isPresented: $showingEditor) {
-                TextEditorSheet(title: "Edit Transcript", text: $editorText) {
-                    saveEditedTranscript()
-                }
+        }
+        .confirmationDialog("Transform — \(AppSettings.shared.model.shortName)",
+                            isPresented: $showingTransform, titleVisibility: .visible) {
+            ForEach(model.documents.presets) { preset in
+                Button(preset.name) { transform(preset) }
             }
         }
     }
 
-    /// Persist an edited transcript back onto the recording.
-    private func saveEditedTranscript() {
+    /// Persist the editor's text back onto the recording.
+    private func persist() {
         guard var recording else { return }
-        recording.transcript = editorText
+        recording.transcript = text
         model.documents.updateRecording(recording, inDocument: documentID)
     }
 
@@ -1944,19 +1990,31 @@ private struct TranscriptDetailView: View {
         .foregroundStyle(WW.moss)
     }
 
+    private func copy() {
+        #if canImport(UIKit)
+        UIPasteboard.general.string = text
+        #endif
+        wwLog("Copied transcript of “\(recording?.name ?? "recording")”", .general)
+    }
+
+    /// Transform what's on screen: flush the edits first so the preset runs against them, not the
+    /// last-saved transcript.
     private func transform(_ preset: PromptPreset) {
+        persist()
         working = true
         Task {
             await model.transformRecordingTranscript(preset, recordingID: recordingID, in: documentID)
+            text = recording?.transcript ?? text
             working = false
         }
     }
 
-    /// Re-run speech-to-text on the audio to restore the original transcription.
+    /// Re-run speech-to-text on the audio to restore the original transcription, discarding edits.
     private func reset() {
         working = true
         Task {
             await model.transcribe(recordingID: recordingID, inDocument: documentID)
+            text = recording?.transcript ?? text
             working = false
         }
     }
