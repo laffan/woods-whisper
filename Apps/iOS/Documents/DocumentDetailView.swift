@@ -1516,7 +1516,6 @@ struct InboxView: View {
     @EnvironmentObject private var model: AppModel
     let documentID: UUID
 
-    @StateObject private var playback = AudioPlaybackController()
     @State private var showingRecorder = false
     @State private var editingRecording: Recording?
 
@@ -1552,10 +1551,7 @@ struct InboxView: View {
                     recording: recording,
                     selectionMode: selectionMode,
                     isSelected: selected.contains(recording.id),
-                    isActive: playback.playingID == recording.id,
-                    isPaused: playback.isPaused,
                     isTransforming: transformingIDs.contains(recording.id),
-                    onPlay: { playback.toggle(recording, url: model.documents.audioURL(for: recording)) },
                     onTapLabel: {
                         if selectionMode { toggle(recording.id) } else { editingRecording = recording }
                     },
@@ -1628,8 +1624,6 @@ struct InboxView: View {
                              message: "Recordings from your Watch and the mic button land here.")
             }
         }
-        .onAppear { playback.onError = { message in model.setupError = message } }
-        .onDisappear { playback.stop() }
         .sheet(isPresented: $showingRecorder) {
             RecordingSheet(title: "New Recording",
                            makeURL: { model.documents.newAudioURL().url }) { url, duration in
@@ -1780,7 +1774,6 @@ struct InboxView: View {
 
     private func enterSelection(with id: UUID) {
         guard !selectionMode else { return }
-        playback.stop()
         selectionMode = true
         selected = [id]
     }
@@ -1839,14 +1832,14 @@ struct InboxView: View {
     }
 }
 
+/// One Inbox row. No play control — the transcript is the point here, so it runs the full width of
+/// the row (the audio is still reachable from the editor's Share button). Only the selection
+/// checkmark takes space to its left, and only while selecting.
 private struct InboxRecordingRow: View {
     let recording: Recording
     let selectionMode: Bool
     let isSelected: Bool
-    let isActive: Bool
-    let isPaused: Bool
     let isTransforming: Bool
-    let onPlay: () -> Void
     let onTapLabel: () -> Void
     let onLongPress: () -> Void
     let onCopy: () -> Void
@@ -1860,8 +1853,6 @@ private struct InboxRecordingRow: View {
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 20, weight: .light))
                     .foregroundStyle(isSelected ? WW.moss : WW.inkTertiary)
-            } else {
-                PlayControl(isPlaying: isActive && !isPaused, action: onPlay)
             }
 
             // Up to an 8-line preview over the capture date/time; tap to edit the transcript (or
@@ -1910,9 +1901,18 @@ private struct InboxRecordingRow: View {
     }
 }
 
+/// Carries whatever the editor's Share button is handing to the system share sheet — the
+/// transcript's text or the recording's audio file — through one `.sheet(item:)`.
+private struct ShareTarget: Identifiable {
+    let id = UUID()
+    let items: [Any]
+}
+
 /// The transcript editor for a single Inbox recording — what tapping a row opens. The text is
 /// editable straight away (the same full-screen editor, find/replace and all, that documents use)
-/// with Copy / Transform / Reset pinned below it.
+/// with Copy / Share / Transform / Reset pinned below it. Share offers either the text or the
+/// audio clip, which is also the Inbox's only route to the recording itself now that the rows
+/// carry no play control.
 ///
 /// Transform and Reset write through the store rather than the editor's buffer, so each one flushes
 /// the text as it stands, runs, then re-seeds the editor from the recording.
@@ -1924,6 +1924,8 @@ private struct InboxTranscriptEditor: View {
     @State private var text: String
     @State private var working = false
     @State private var showingTransform = false
+    @State private var showingShareChoice = false
+    @State private var shareTarget: ShareTarget?
 
     init(model: AppModel, recording: Recording, documentID: UUID) {
         _model = ObservedObject(wrappedValue: model)
@@ -1954,6 +1956,8 @@ private struct InboxTranscriptEditor: View {
                 HStack(spacing: 0) {
                     actionButton("Copy", "doc.on.doc") { copy() }
                         .disabled(working || isEmpty)
+                    actionButton("Share", "square.and.arrow.up") { showingShareChoice = true }
+                        .disabled(working)
                     actionButton("Transform", "wand.and.stars") { showingTransform = true }
                         .disabled(!model.modelReady || working || isEmpty)
                     actionButton("Reset", "arrow.uturn.backward") { reset() }
@@ -1967,6 +1971,16 @@ private struct InboxTranscriptEditor: View {
             ForEach(model.documents.presets) { preset in
                 Button(preset.name) { transform(preset) }
             }
+        }
+        // Share the words or the audio. "Text" is offered only once there's something to send.
+        .confirmationDialog("Share", isPresented: $showingShareChoice, titleVisibility: .visible) {
+            if !isEmpty {
+                Button("Text") { shareTarget = ShareTarget(items: [text]) }
+            }
+            Button("Audio Recording") { shareAudio() }
+        }
+        .sheet(item: $shareTarget) { target in
+            ActivityView(activityItems: target.items)
         }
     }
 
@@ -1995,6 +2009,18 @@ private struct InboxTranscriptEditor: View {
         UIPasteboard.general.string = text
         #endif
         wwLog("Copied transcript of “\(recording?.name ?? "recording")”", .general)
+    }
+
+    /// Hand the clip's audio file to the share sheet, reporting the missing-file case rather than
+    /// opening a share sheet on a URL that points at nothing.
+    private func shareAudio() {
+        guard let recording else { return }
+        let url = model.documents.audioURL(for: recording)
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            model.setupError = "Couldn't share the audio: the recording file is missing."
+            return
+        }
+        shareTarget = ShareTarget(items: [url])
     }
 
     /// Transform what's on screen: flush the edits first so the preset runs against them, not the

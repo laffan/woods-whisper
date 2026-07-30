@@ -57,10 +57,11 @@ the rest of the app depends on.
 - **Inbox is its own tab.** Watch clips and one-tap "New Recording" captures land in the **Inbox**,
   now the first top-level section (ahead of Documents) rather than a row inside the documents list.
   It reads as a capture feed — **newest first**, each entry showing its transcript preview over the
-  capture date and time.
+  capture date and time. There's no play control on the rows; the text runs the full width.
 - **Inbox gestures.** **Tap** an entry to open its transcript editor straight away, with **Copy /
-  Transform / Reset** under the text. **Swipe left** for **Move** (into a document) and **Delete**;
-  **swipe right** for **Copy** and **Transform**. Long-press still enters batch selection.
+  Share / Transform / Reset** under the text — **Share** hands off either the text or the audio
+  clip. **Swipe left** for **Move** (into a document) and **Delete**; **swipe right** for **Copy**
+  and **Transform**. Long-press still enters batch selection.
 - **Record straight to a document from the Watch.** The iPhone syncs your document list to the Watch
   over WatchConnectivity; swipe left on the Watch's record screen to pick a target document (or the
   Inbox). The chosen target's name shows on the record screen, and clips captured there are filed into
