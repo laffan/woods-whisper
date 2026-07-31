@@ -372,6 +372,19 @@ final class AppModel: ObservableObject {
         autoTranscribe(recordingID: recording.id, inDocument: inbox.id)
     }
 
+    // MARK: Local backup folder
+
+    /// Adopt the folder the user picked in Settings as the Markdown backup destination and write
+    /// the current state into it straight away.
+    func chooseBackupFolder(_ url: URL) {
+        do {
+            try documents.setBackupFolder(url)
+        } catch {
+            setupError = "Couldn't use that folder for backup: \(error.localizedDescription)"
+            wwLog("Backup folder selection failed: \(error.localizedDescription)", .error)
+        }
+    }
+
     // MARK: Sharing (Woods Whisper document files)
 
     /// Build a shareable `.wwdoc` file (audio + edited transcriptions) for a document, returning its

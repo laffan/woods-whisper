@@ -23,6 +23,9 @@ struct WoodsWhisperApp: App {
                 .tint(WW.moss)
                 .task {
                     WoodsWhisperShortcuts.updateAppShortcutParameters()
+                    // Catch the backup folder up on anything that changed while it was unreachable
+                    // (or before it was chosen). No-op when local backup is off.
+                    model.documents.backUpNow()
                     await model.loadDownloadedModelsAtStartup()
                     // Seed the Watch's record-target picker once the session has had time to activate.
                     model.syncDocumentsToWatch()

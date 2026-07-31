@@ -8,6 +8,10 @@ public final class DocumentStore: ObservableObject {
     @Published public private(set) var trash: [Document] = []
     @Published public private(set) var presets: [PromptPreset] = []
 
+    /// Mirrors the documents' text into a folder the user picks in Settings. Off (and inert) until
+    /// a folder is chosen; every save below schedules a sync through it.
+    public let backup = LocalBackupStore()
+
     private let baseURL: URL
     private let audioDirURL: URL
     private let documentsURL: URL
@@ -381,12 +385,29 @@ public final class DocumentStore: ObservableObject {
     }
 
     /// Strip characters that are illegal (or awkward) in a file name so a document title can be used
-    /// as the exported file's name.
+    /// as the exported file's name. (Shared with the Markdown backup mirror, which names its files
+    /// the same way.)
     private func safeFileName(for title: String) -> String {
-        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        let base = trimmed.isEmpty ? "Document" : trimmed
-        let illegal = CharacterSet(charactersIn: "/\\:?%*|\"<>").union(.newlines)
-        return base.components(separatedBy: illegal).joined(separator: "-")
+        MarkdownBackup.safeFileName(title, fallback: "Document")
+    }
+
+    // MARK: Local backup
+
+    /// Adopt the folder the user picked in Settings and immediately populate it.
+    public func setBackupFolder(_ url: URL) throws {
+        try backup.setFolder(url)
+        backUpNow()
+    }
+
+    /// Stop backing up. Files already written stay where they are.
+    public func clearBackupFolder() {
+        backup.clearFolder()
+    }
+
+    /// Write the Markdown mirror now, skipping the change-coalescing delay. Used when the folder is
+    /// first chosen, at launch, and by Settings' "Back Up Now". A no-op when backup is off.
+    public func backUpNow() {
+        backup.syncNow(documents: documents, inboxTitle: Self.inboxTitle)
     }
 
     // MARK: Presets
@@ -468,9 +489,13 @@ public final class DocumentStore: ObservableObject {
         }
     }
 
+    /// The single choke point every document mutation runs through — and so the one place the
+    /// Markdown backup needs to hook into for "save a fresh copy on every creation or edit".
     private func persistDocuments() {
-        guard let data = try? JSONEncoder.iso.encode(documents) else { return }
-        try? data.write(to: documentsURL, options: .atomic)
+        if let data = try? JSONEncoder.iso.encode(documents) {
+            try? data.write(to: documentsURL, options: .atomic)
+        }
+        backup.scheduleSync(documents: documents, inboxTitle: Self.inboxTitle)
     }
 
     private func persistTrash() {

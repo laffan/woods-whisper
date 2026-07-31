@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 import WoodsWhisperKit
 
 struct SettingsView: View {
@@ -11,6 +12,7 @@ struct SettingsView: View {
     @State private var showingAuthSheet = false
     @State private var showLiveTranscription = AppSettings.shared.showLiveTranscription
     @State private var allowRotation = AppSettings.shared.allowRotation
+    @State private var showingFolderPicker = false
 
     var body: some View {
         NavigationStack {
@@ -20,12 +22,19 @@ struct SettingsView: View {
                 speechModelSection
                 languageModelSection
                 presetsSection
+                backupSection
                 connectivitySection
                 aboutSection
             }
             .wwForm()
             .navigationTitle("Settings")
             .onAppear { micOptions = AudioRecorder.availableInputs() }
+            .fileImporter(isPresented: $showingFolderPicker, allowedContentTypes: [.folder]) { result in
+                switch result {
+                case .success(let url):  model.chooseBackupFolder(url)
+                case .failure(let error): model.setupError = error.localizedDescription
+                }
+            }
         }
     }
 
@@ -232,6 +241,15 @@ struct SettingsView: View {
         .listRowBackground(WW.surface)
     }
 
+    // MARK: Local backup
+
+    private var backupSection: some View {
+        BackupFolderSection(backup: model.documents.backup,
+                            onChoose: { showingFolderPicker = true },
+                            onBackUpNow: { model.documents.backUpNow() },
+                            onTurnOff: { model.documents.clearBackupFolder() })
+    }
+
     // MARK: Connectivity
 
     private var connectivitySection: some View {
@@ -265,6 +283,51 @@ struct SettingsView: View {
                 .font(.caption).foregroundStyle(WW.inkSecondary)
         } header: {
             WWSectionHeader("About")
+        }
+        .listRowBackground(WW.surface)
+    }
+}
+
+/// The Local Backup settings section. Split out (rather than written inline like the other
+/// sections) so it can observe the `LocalBackupStore` directly and refresh as syncs land.
+struct BackupFolderSection: View {
+    @ObservedObject var backup: LocalBackupStore
+    let onChoose: () -> Void
+    let onBackUpNow: () -> Void
+    let onTurnOff: () -> Void
+
+    var body: some View {
+        Section {
+            if let folder = backup.folderName {
+                LabeledContent("Folder") {
+                    Text("\(folder)/\(LocalBackupStore.rootFolderName)")
+                        .foregroundStyle(WW.inkSecondary)
+                }
+                LabeledContent("Last saved") {
+                    Text(backup.lastBackupAt.map { $0.formatted(date: .abbreviated, time: .shortened) }
+                         ?? "Not yet")
+                        .foregroundStyle(WW.inkSecondary)
+                }
+                Button("Back Up Now", action: onBackUpNow)
+                Button("Change Folder…", action: onChoose)
+                Button("Turn Off Backup", role: .destructive, action: onTurnOff)
+                    .foregroundStyle(WW.ember)
+            } else {
+                Button("Choose Backup Folder…", action: onChoose)
+            }
+            if let error = backup.lastError {
+                Text(error).font(.caption).foregroundStyle(WW.ember)
+            }
+        } header: {
+            WWSectionHeader("Local Backup")
+        } footer: {
+            WWFooter("Keeps a plain-text copy of your writing in a folder you choose — on this "
+                     + "device or in Files/iCloud Drive. Woods Whisper creates a "
+                     + "“\(LocalBackupStore.rootFolderName)” folder there with "
+                     + "“\(MarkdownBackup.inboxFolderName)” (one Markdown file per Inbox recording, "
+                     + "named by when it was captured) and “\(MarkdownBackup.documentsFolderName)” "
+                     + "(one file per document, named by its title). Every edit saves a fresh copy, "
+                     + "overwriting the previous one. Audio isn't backed up.")
         }
         .listRowBackground(WW.surface)
     }

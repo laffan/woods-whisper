@@ -61,6 +61,14 @@ Pairing is a 5-digit code — no IP to type, no QR (a Watch can't scan one anywa
 > The first time, the Watch asks for **Local Network** and/or **Bluetooth** permission — allow
 > them, or it can't see the iPad. Bluetooth transfers are slower than WiFi but need no network.
 
+## 6. Local backup folder (optional)
+
+**Settings → Local Backup → Choose Backup Folder…** and pick any folder the Files app can reach
+(On My iPhone/iPad, iCloud Drive, an external drive). Woods Whisper creates a `WoodsWhisper` folder
+there with `Inbox/` and `Documents/`, and writes a Markdown copy of your text on every edit — the
+newest version overwriting the previous one. Audio isn't backed up. **Back Up Now** forces a write;
+**Turn Off Backup** stops it and leaves the existing files alone.
+
 ## Troubleshooting
 
 - **"Model isn't ready"** — re-tap the model's **Download** button in Settings while online.
@@ -70,6 +78,9 @@ Pairing is a 5-digit code — no IP to type, no QR (a Watch can't scan one anywa
 - **API mismatch when building** — the FluidAudio / WhisperKit / MLX SDKs changed; adjust the
   lines marked `(1)/(2)/(3)` in `ParakeetTranscriptionService.swift`,
   `WhisperTranscriptionService.swift`, or `GemmaTransformService.swift`.
+- **Backup folder "couldn't be opened"** — the folder moved, was deleted, or lives on a drive/
+  cloud location that isn't currently available. Re-pick it in **Settings → Local Backup**; the
+  files already written are untouched.
 - **Watch can't reach iPad** — confirm the iPad app is foregrounded with *Receive directly from
   Watch* enabled, the devices are close (for Bluetooth), and the Watch was granted Local Network
   and Bluetooth permission. If pairing times out, tap **Pair Watch** again for a fresh code.

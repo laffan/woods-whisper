@@ -75,3 +75,20 @@ rather than appending a new block.
 Deliberately dependency-free: JSON index files + audio payloads in Application Support
 (`RecordingStore`, `DocumentStore`). Easy to reason about and identical across platforms. Swap
 for SwiftData later if desired — only the two stores would change.
+
+**Local backup mirror (optional).** When the user picks a folder in Settings, `LocalBackupStore`
+keeps a plain-Markdown copy of the *text* there — a `WoodsWhisper` folder containing `Inbox/`
+(one file per Inbox recording, named by capture timestamp) and `Documents/` (one file per
+document, named by its title). Two pieces:
+
+- `MarkdownBackup` — pure: documents in, `[relative path: file contents]` out. All the naming and
+  formatting rules (and their tests) live here, no disk access.
+- `LocalBackupStore` — the stateful half: holds the chosen folder as a security-scoped bookmark
+  (the folder is outside the sandbox), coalesces change notifications, and does the file work off
+  the main actor.
+
+`DocumentStore.persistDocuments()` is the single choke point every mutation already runs through,
+so it's the only hook needed: each save schedules a sync. Only files whose contents changed are
+rewritten, and a manifest of what the previous sync wrote is kept so a renamed or deleted document
+can be pruned without ever touching a file the app didn't write. The newest version overwrites the
+previous one — no history, and no audio.

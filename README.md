@@ -75,6 +75,28 @@ the rest of the app depends on.
   imported into the Inbox and transcribed like any other recording.
 - **Number Paragraphs.** A built-in transform that numbers the paragraphs (applied locally, so it needs
   no language model).
+- **Local backup folder.** Pick a folder in **Settings → Local Backup** and Woods Whisper keeps a
+  plain-Markdown copy of everything you write there — see below.
+
+## Local backup folder
+
+Choose a folder in **Settings → Local Backup** (anywhere the Files app can reach: On My iPhone/iPad,
+iCloud Drive, an external drive) and Woods Whisper creates a **`WoodsWhisper`** folder inside it:
+
+```
+<your folder>/WoodsWhisper/
+├── Inbox/
+│   ├── 2026-07-31 09-14-02.md      # one file per Inbox recording, named by capture time
+│   └── 2026-07-31 14-30-05.md
+└── Documents/
+    ├── Field Notes.md              # one file per document, named by its title
+    └── Trip Log.md
+```
+
+Every creation and edit saves a fresh copy of the current state — the newest version **overwrites**
+the previous one (no history is kept, for now). Writes are coalesced while you type and only files
+whose text actually changed are rewritten. **Text only:** audio stays in the app, so the folder is
+readable in any Markdown editor. Turning backup off leaves the files where they are.
 
 ## Building
 

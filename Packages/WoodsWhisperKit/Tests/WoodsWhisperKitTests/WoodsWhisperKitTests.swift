@@ -98,6 +98,98 @@ final class WoodsWhisperKitTests: XCTestCase {
         XCTAssertEqual(LanguageModelChoice.gemma3_4B.shortName, "Gemma 3 4B")
     }
 
+    // MARK: Markdown backup mirror
+
+    /// The Inbox container's title, as a plain constant so these tests don't have to hop to the
+    /// main actor for `DocumentStore.inboxTitle` (pinned to it by `testInboxTitleIsInbox`).
+    private let inboxTitle = "Inbox"
+
+    /// A fixed local date, so the timestamp-derived file names are predictable wherever the tests run
+    /// (both the calendar and the naming formatter use the current time zone).
+    private func date(_ year: Int, _ month: Int, _ day: Int,
+                      _ hour: Int, _ minute: Int, _ second: Int) -> Date {
+        var components = DateComponents()
+        (components.year, components.month, components.day) = (year, month, day)
+        (components.hour, components.minute, components.second) = (hour, minute, second)
+        return Calendar.current.date(from: components)!
+    }
+
+    @MainActor
+    func testInboxTitleIsInbox() {
+        XCTAssertEqual(DocumentStore.inboxTitle, inboxTitle)
+    }
+
+    func testBackupPlanSplitsInboxRecordingsFromDocuments() {
+        let clip = Recording(createdAt: date(2026, 7, 31, 14, 30, 5), duration: 7,
+                             audioFileName: "a.m4a", origin: .watch, transcript: "Elk by the creek.")
+        let inbox = Document(title: inboxTitle, recordings: [clip])
+        let notes = Document(title: "Field Notes",
+                             paragraphs: [.init(text: "First."), .init(text: "Second.")])
+
+        let plan = MarkdownBackup.plan(for: [inbox, notes], inboxTitle: inboxTitle)
+
+        XCTAssertEqual(Set(plan.keys), ["Inbox/2026-07-31 14-30-05.md", "Documents/Field Notes.md"])
+    }
+
+    func testDocumentMarkdownIsTitleThenParagraphs() {
+        let doc = Document(title: "Field Notes",
+                           paragraphs: [.init(text: "First."), .init(text: "Second.")])
+        XCTAssertEqual(MarkdownBackup.markdown(for: doc), "# Field Notes\n\nFirst.\n\nSecond.\n")
+    }
+
+    func testEmptyDocumentMarkdownIsJustTheTitle() {
+        XCTAssertEqual(MarkdownBackup.markdown(for: Document(title: "Empty")), "# Empty\n")
+    }
+
+    func testRecordingMarkdownCarriesProvenanceAndTranscript() {
+        let clip = Recording(createdAt: date(2026, 7, 31, 14, 30, 5), duration: 7,
+                             audioFileName: "a.m4a", origin: .watch, transcript: "Elk by the creek.")
+        let markdown = MarkdownBackup.markdown(for: clip)
+        XCTAssertTrue(markdown.hasPrefix("# "))                       // capture time as the heading
+        XCTAssertTrue(markdown.contains("2026"))
+        XCTAssertTrue(markdown.contains("*Apple Watch · 0:07*"))
+        XCTAssertTrue(markdown.hasSuffix("Elk by the creek.\n"))
+    }
+
+    func testUntranscribedRecordingStillGetsAFile() {
+        let clip = Recording(createdAt: date(2026, 7, 31, 9, 0, 0), duration: 3,
+                             audioFileName: "a.m4a", origin: .phone)
+        let inbox = Document(title: inboxTitle, recordings: [clip])
+        let plan = MarkdownBackup.plan(for: [inbox], inboxTitle: inboxTitle)
+        XCTAssertEqual(Array(plan.keys), ["Inbox/2026-07-31 09-00-00.md"])
+        XCTAssertTrue(plan.values.first?.contains("*iPhone · 0:03*") ?? false)
+    }
+
+    func testCollidingNamesBothGetAnIdSuffix() {
+        // Two documents with the same title: neither may keep the bare name, or the file a given
+        // document maps to would depend on the order the list happens to be in.
+        let a = Document(title: "Notes")
+        let b = Document(title: "Notes")
+        let plan = MarkdownBackup.plan(for: [a, b], inboxTitle: inboxTitle)
+        XCTAssertEqual(plan.count, 2)
+        XCTAssertFalse(plan.keys.contains("Documents/Notes.md"))
+        XCTAssertTrue(plan.keys.contains("Documents/Notes-\(a.id.uuidString.prefix(8)).md"))
+        XCTAssertTrue(plan.keys.contains("Documents/Notes-\(b.id.uuidString.prefix(8)).md"))
+    }
+
+    func testTwoClipsInTheSameSecondGetDistinctFiles() {
+        let when = date(2026, 7, 31, 14, 30, 5)
+        let inbox = Document(title: inboxTitle, recordings: [
+            Recording(createdAt: when, audioFileName: "a.m4a", origin: .watch),
+            Recording(createdAt: when, audioFileName: "b.m4a", origin: .watch)
+        ])
+        let plan = MarkdownBackup.plan(for: [inbox], inboxTitle: inboxTitle)
+        XCTAssertEqual(plan.count, 2)
+    }
+
+    func testSafeFileNameStripsPathCharactersAndFallsBack() {
+        XCTAssertEqual(MarkdownBackup.safeFileName("Trip: 7/12", fallback: "Document"), "Trip- 7-12")
+        XCTAssertEqual(MarkdownBackup.safeFileName("  ", fallback: "Document"), "Document")
+        XCTAssertEqual(MarkdownBackup.safeFileName("..", fallback: "Document"), "Document")
+        XCTAssertEqual(MarkdownBackup.safeFileName(String(repeating: "a", count: 400),
+                                                   fallback: "Document").count, 120)
+    }
+
     // MARK: Pairing / subnet math
 
     func testIPv4RoundTrips() {
