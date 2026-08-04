@@ -13,6 +13,8 @@ struct SettingsView: View {
     @State private var showLiveTranscription = AppSettings.shared.showLiveTranscription
     @State private var allowRotation = AppSettings.shared.allowRotation
     @State private var showingFolderPicker = false
+    @State private var deviceName = AppSettings.shared.deviceDisplayName
+    @FocusState private var deviceNameFocused: Bool
 
     var body: some View {
         NavigationStack {
@@ -278,13 +280,39 @@ struct SettingsView: View {
 
     private var aboutSection: some View {
         Section {
-            LabeledContent("Device name", value: AppSettings.shared.deviceDisplayName)
+            LabeledContent("Device name") {
+                TextField("Device name", text: $deviceName)
+                    .multilineTextAlignment(.trailing)
+                    .autocorrectionDisabled()
+                    .submitLabel(.done)
+                    .focused($deviceNameFocused)
+                    .onSubmit { commitDeviceName() }
+                    .onChange(of: deviceNameFocused) { _, focused in
+                        if !focused { commitDeviceName() }
+                    }
+            }
             Text("Woods Whisper — offline voice capture, transcription, and transformation.")
                 .font(.caption).foregroundStyle(WW.inkSecondary)
         } header: {
             WWSectionHeader("About")
+        } footer: {
+            WWFooter("The name this device advertises over WiFi and Bluetooth, and what your Watch "
+                     + "shows once it's paired with it. It starts as the device's own name — clear "
+                     + "the field to go back to that. A Watch that's already paired keeps the old "
+                     + "name until you pair it again.")
         }
         .listRowBackground(WW.surface)
+    }
+
+    /// Save the edited device name and re-advertise under it. An empty field clears the override, so
+    /// the field is re-seeded afterwards from whatever the name resolved to — the trimmed text, or
+    /// the device's own name again.
+    private func commitDeviceName() {
+        let previous = AppSettings.shared.deviceDisplayName
+        AppSettings.shared.deviceDisplayName = deviceName
+        deviceName = AppSettings.shared.deviceDisplayName
+        guard deviceName != previous else { return }
+        model.deviceNameDidChange()
     }
 }
 

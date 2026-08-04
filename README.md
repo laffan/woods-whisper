@@ -50,6 +50,11 @@ the rest of the app depends on.
      the iPad, `CBCentralManager` on the Watch) when there's no WiFi at all**, so it works
      off-grid even with a WiFi-only iPad. See `docs/CONNECTIVITY.md`.
 
+   The iPhone/iPad advertises itself — and shows up on the Watch — under the name in
+   **Settings → About → Device name**. It starts as the device's own name (clear the field to go
+   back to it) and you can type anything you like; an already-paired Watch keeps the old name until
+   you pair it again.
+
    The standard **Watch → iPhone** path uses WatchConnectivity and needs no configuration.
 
 ## Capturing and organizing

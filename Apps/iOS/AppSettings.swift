@@ -78,9 +78,44 @@ final class AppSettings {
         return secret
     }
 
+    /// The name this device goes by on the Watch: the Bonjour service name over WiFi, the local name
+    /// the Bluetooth server advertises, and what the Watch shows once paired. Editable in
+    /// **Settings → About**; it starts as the device's own name (see `systemDeviceName`), and setting
+    /// it to an empty name clears the override and goes back to that.
     var deviceDisplayName: String {
-        get { defaults.string(forKey: Key.deviceDisplayName) ?? "Woods Whisper" }
-        set { defaults.set(newValue, forKey: Key.deviceDisplayName) }
+        get {
+            let stored = defaults.string(forKey: Key.deviceDisplayName)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return stored.isEmpty ? systemDeviceName : stored
+        }
+        set {
+            let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty {
+                defaults.removeObject(forKey: Key.deviceDisplayName)
+            } else {
+                defaults.set(trimmed, forKey: Key.deviceDisplayName)
+            }
+        }
+    }
+
+    /// The device's own name as the system reports it — the default `deviceDisplayName` until the
+    /// user types their own.
+    ///
+    /// It's handed in by `AppModel` at launch rather than read here: `UIDevice` is main-actor bound
+    /// and this type is plain Foundation, reachable from anywhere. Note that iOS only gives an app
+    /// the name the user typed in iOS Settings if it holds Apple's user-assigned-device-name
+    /// entitlement; without one, this is the model name ("iPhone", "iPad") — still a truer default
+    /// than the app's own name, which is the last-resort fallback.
+    var systemDeviceName: String { Self.systemName ?? "Woods Whisper" }
+
+    private static var systemName: String?
+
+    /// Record the device's own name, as reported by the system. Ignores an empty name so the
+    /// fallback stands.
+    func recordSystemDeviceName(_ name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        Self.systemName = trimmed
     }
 
     var didCompleteSetup: Bool {

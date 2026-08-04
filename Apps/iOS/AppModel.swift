@@ -3,6 +3,9 @@ import SwiftUI
 import Combine
 import AVFoundation
 import WoodsWhisperKit
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// Top-level coordinator for the iOS/iPadOS app. Owns the document store and on-device
 /// services, wires up the inbound receivers (WatchConnectivity from the paired Watch, and the
@@ -53,6 +56,13 @@ final class AppModel: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
 
     init() {
+        // Hand the device's own name to AppSettings before anything reads `deviceDisplayName` —
+        // it's the default the Watch sees until the user types their own in Settings, and UIKit
+        // can only be read from here (the main actor), not from AppSettings itself.
+        #if canImport(UIKit)
+        AppSettings.shared.recordSystemDeviceName(UIDevice.current.name)
+        #endif
+
         // DocumentStore is a separate ObservableObject; forward its changes so views observing
         // AppModel re-render on async updates (e.g. a recording arriving from the Watch).
         documents.objectWillChange
@@ -140,6 +150,23 @@ final class AppModel: ObservableObject {
         bluetoothServer?.stop()
         bluetoothServer = nil
         wwLog("Receive servers stopped", .transfer)
+    }
+
+    /// Re-advertise under a device name just changed in Settings. Both receivers take the name when
+    /// they're built — the WiFi server's Bonjour service name, the Bluetooth server's advertised
+    /// local name — so a rename only reaches the Watch once they're rebuilt. The old listener gives
+    /// its port up asynchronously, so the new one comes up a beat later rather than racing the
+    /// teardown for the same port. A no-op when nothing is running.
+    func deviceNameDidChange() {
+        guard localServer != nil || bluetoothServer != nil else { return }
+        stopLocalServer()
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            guard let self, self.localServer == nil,
+                  AppSettings.shared.localServerEnabled else { return }
+            self.startLocalServer()
+            wwLog("Now advertising to the Watch as “\(AppSettings.shared.deviceDisplayName)”", .transfer)
+        }
     }
 
     // MARK: Watch pairing
