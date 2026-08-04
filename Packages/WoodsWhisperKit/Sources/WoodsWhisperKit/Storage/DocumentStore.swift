@@ -253,6 +253,31 @@ public final class DocumentStore: ObservableObject {
         touch(docIdx)
     }
 
+    /// Pin or unpin several documents at once (the Documents list's batch Pin). Like the
+    /// single-document `setPinned`, this deliberately does not bump `updatedAt` — the pin is
+    /// metadata, not an edit — and it persists once for the whole batch.
+    public func setPinned(_ pinned: Bool, for ids: Set<UUID>) {
+        var changed = false
+        for idx in documents.indices where ids.contains(documents[idx].id) {
+            guard documents[idx].isPinned != pinned else { continue }
+            documents[idx].isPinned = pinned
+            changed = true
+        }
+        guard changed else { return }
+        persistDocuments()
+    }
+
+    /// Move several documents to the trash at once (the Documents list's batch Delete), keeping
+    /// their relative order at the top of the trash and persisting once.
+    public func moveToTrash(_ ids: Set<UUID>) {
+        let moving = documents.filter { ids.contains($0.id) }
+        guard !moving.isEmpty else { return }
+        documents.removeAll { ids.contains($0.id) }
+        trash.insert(contentsOf: moving, at: 0)
+        persistDocuments()
+        persistTrash()
+    }
+
     public func moveRecordings(_ ids: Set<UUID>, from sourceID: UUID, to targetID: UUID) {
         guard sourceID != targetID,
               let srcIdx = index(of: sourceID),

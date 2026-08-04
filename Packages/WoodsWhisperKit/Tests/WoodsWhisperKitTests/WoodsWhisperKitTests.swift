@@ -141,6 +141,29 @@ final class WoodsWhisperKitTests: XCTestCase {
         XCTAssertEqual(MarkdownBackup.markdown(for: Document(title: "Empty")), "# Empty\n")
     }
 
+    func testCombinedDocumentsAreBlankLineSeparated() {
+        let notes = Document(title: "Field Notes", paragraphs: [.init(text: "First.")])
+        let trip = Document(title: "Trip Log", paragraphs: [.init(text: "Second.")])
+        XCTAssertEqual(MarkdownBackup.combined([notes, trip]),
+                       "# Field Notes\n\nFirst.\n\n# Trip Log\n\nSecond.\n")
+    }
+
+    func testCombiningOneDocumentMatchesItsOwnMarkdown() {
+        let doc = Document(title: "Field Notes", paragraphs: [.init(text: "First.")])
+        XCTAssertEqual(MarkdownBackup.combined([doc]), MarkdownBackup.markdown(for: doc))
+    }
+
+    func testCombinedKeepsTheHeadingOfAnEmptyDocument() {
+        let empty = Document(title: "Empty")
+        let notes = Document(title: "Field Notes", paragraphs: [.init(text: "First.")])
+        XCTAssertEqual(MarkdownBackup.combined([empty, notes]),
+                       "# Empty\n\n# Field Notes\n\nFirst.\n")
+    }
+
+    func testCombiningNothingIsEmpty() {
+        XCTAssertEqual(MarkdownBackup.combined([]), "")
+    }
+
     func testRecordingMarkdownCarriesProvenanceAndTranscript() {
         let clip = Recording(createdAt: date(2026, 7, 31, 14, 30, 5), duration: 7,
                              audioFileName: "a.m4a", origin: .watch, transcript: "Elk by the creek.")

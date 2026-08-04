@@ -13,13 +13,28 @@ struct DocumentsView: View {
     @State private var editingDoc: Document?
     @State private var editingText = ""
 
+    /// Rows push their document by value rather than wrapping it in a `NavigationLink`, so a row can
+    /// carry both a tap (open / toggle) and a long press (enter selection) without the two competing.
+    @State private var path: [Route] = []
+
+    // Long-press-to-select, mirroring the Inbox's batch mode: Copy / Pin / Share / Delete applied to
+    // several documents at once.
+    @State private var selectionMode = false
+    @State private var selected: Set<UUID> = []
+
     private var allDocuments: [Document] { model.documents.documents }
     private var userDocuments: [Document] { allDocuments.filter { $0.title != DocumentStore.inboxTitle } }
     private var pinnedDocuments: [Document] { userDocuments.filter { $0.isPinned } }
     private var unpinnedDocuments: [Document] { userDocuments.filter { !$0.isPinned } }
 
+    /// The selected documents in the order the list shows them (pinned first), so combined text
+    /// reads the same way the screen does.
+    private var selectedDocuments: [Document] {
+        (pinnedDocuments + unpinnedDocuments).filter { selected.contains($0.id) }
+    }
+
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             List {
                 // Pinned documents are held at the top in their own section.
                 if !pinnedDocuments.isEmpty {
@@ -38,7 +53,8 @@ struct DocumentsView: View {
                     }
                 }
 
-                if !model.documents.trash.isEmpty {
+                // Trash isn't part of the selectable set, so it steps out of the way while selecting.
+                if !model.documents.trash.isEmpty && !selectionMode {
                     Section {
                         NavigationLink(value: Route.trash) {
                             Label {
@@ -54,7 +70,7 @@ struct DocumentsView: View {
                 }
             }
             .wwList()
-            .navigationTitle("Documents")
+            .navigationTitle(selectionMode ? "\(selected.count) selected" : "Documents")
             .navigationDestination(for: Route.self) { route in
                 switch route {
                 case .document(let id): DocumentDetailView(documentID: id)
@@ -62,16 +78,43 @@ struct DocumentsView: View {
                 }
             }
             .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        let doc = model.documents.createDocument()
-                        startRename(doc)
-                    } label: { Image(systemName: "square.and.pencil") }
-                    .accessibilityLabel("New Document")
+                if selectionMode {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Done") { exitSelection() }
+                    }
+                    ToolbarItem(placement: .primaryAction) {
+                        Button(selected.count == userDocuments.count ? "Deselect All" : "Select All") {
+                            selectAll()
+                        }
+                    }
+                } else {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button {
+                            let doc = model.documents.createDocument()
+                            startRename(doc)
+                        } label: { Image(systemName: "square.and.pencil") }
+                        .accessibilityLabel("New Document")
+                    }
+                    ToolbarItem(placement: .primaryAction) {
+                        Button { showingRecorder = true } label: { Image(systemName: "mic.badge.plus") }
+                            .accessibilityLabel("New Recording")
+                    }
                 }
-                ToolbarItem(placement: .primaryAction) {
-                    Button { showingRecorder = true } label: { Image(systemName: "mic.badge.plus") }
-                        .accessibilityLabel("New Recording")
+            }
+            // Batch actions. Copy and Share combine the selected documents into one Markdown file;
+            // Pin flips the whole selection (to Unpin once they're all pinned); Delete bins them.
+            .safeAreaInset(edge: .bottom) {
+                if selectionMode {
+                    WWBatchBar {
+                        WWBatchButton("Delete", "trash", role: .destructive) { deleteSelected() }
+                        WWBatchButton("Copy", "doc.on.doc") { copySelected() }
+                        WWBatchButton(allSelectedArePinned ? "Unpin" : "Pin",
+                                      allSelectedArePinned ? "pin.slash" : "pin") { pinSelected() }
+                        WWBatchButton("Share", "square.and.arrow.up") {
+                            shareItem = ShareItem(text: MarkdownBackup.combined(selectedDocuments))
+                        }
+                    }
+                    .disabled(selected.isEmpty)
                 }
             }
             .overlay {
@@ -109,12 +152,39 @@ struct DocumentsView: View {
     }
 
     /// One document row with its swipe actions, shared by the Pinned and Documents sections.
+    ///
+    /// Tap opens the document — or toggles it while selecting — and a long press anywhere on the row
+    /// enters selection mode. The two gestures sit on nested views (tap inside, long press outside)
+    /// the way the Inbox rows do, so neither swallows the other. Swipe actions stand down while
+    /// selecting: they act on one document, which reads as a mistake mid-selection.
     @ViewBuilder
     private func documentRow(_ doc: Document) -> some View {
-        NavigationLink(value: Route.document(doc.id)) { DocumentRow(document: doc) }
-            .wwRow()
-            .listRowInsets(EdgeInsets(top: 12, leading: 20, bottom: 12, trailing: 20))
-            .swipeActions(edge: .trailing) {
+        HStack(spacing: 12) {
+            if selectionMode {
+                Image(systemName: selected.contains(doc.id) ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 20, weight: .light))
+                    .foregroundStyle(selected.contains(doc.id) ? WW.moss : WW.inkTertiary)
+            }
+            DocumentRow(document: doc)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if !selectionMode {
+                // Stands in for the disclosure indicator a NavigationLink would have drawn.
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(WW.inkTertiary)
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if selectionMode { toggle(doc.id) } else { path.append(.document(doc.id)) }
+        }
+        .padding(.vertical, 2)
+        .contentShape(Rectangle())
+        .onLongPressGesture { enterSelection(with: doc.id) }
+        .wwRow()
+        .listRowInsets(EdgeInsets(top: 12, leading: 20, bottom: 12, trailing: 20))
+        .swipeActions(edge: .trailing) {
+            if !selectionMode {
                 Button("Delete", role: .destructive) { model.documents.moveToTrash(doc) }
                     .tint(WW.ember)
                 Button("Rename") { startRename(doc) }.tint(WW.slate)
@@ -122,11 +192,68 @@ struct DocumentsView: View {
                     model.documents.setPinned(!doc.isPinned, for: doc.id)
                 }.tint(WW.amber)
             }
-            .swipeActions(edge: .leading) {
+        }
+        .swipeActions(edge: .leading) {
+            if !selectionMode {
                 Button("Copy") { copy(doc) }.tint(WW.inkTertiary)
                 Button("Share") { shareItem = ShareItem(text: doc.combinedText) }.tint(WW.violet)
                 Button("Edit") { startEdit(doc) }.tint(WW.slate)
             }
+        }
+    }
+
+    // MARK: Selection mode
+
+    private func enterSelection(with id: UUID) {
+        guard !selectionMode else { return }
+        withAnimation(.snappy(duration: 0.22)) {
+            selectionMode = true
+            selected = [id]
+        }
+    }
+
+    private func exitSelection() {
+        withAnimation(.snappy(duration: 0.22)) {
+            selectionMode = false
+            selected = []
+        }
+    }
+
+    private func toggle(_ id: UUID) {
+        if selected.contains(id) { selected.remove(id) } else { selected.insert(id) }
+    }
+
+    private func selectAll() {
+        let all = Set(userDocuments.map(\.id))
+        selected = (selected == all) ? [] : all
+    }
+
+    /// True when every selected document is already pinned — the batch button then reads "Unpin"
+    /// and clears them instead, the way the single-document swipe action flips.
+    private var allSelectedArePinned: Bool {
+        !selectedDocuments.isEmpty && selectedDocuments.allSatisfy(\.isPinned)
+    }
+
+    private func pinSelected() {
+        model.documents.setPinned(!allSelectedArePinned, for: selected)
+        exitSelection()
+    }
+
+    private func deleteSelected() {
+        let count = selected.count
+        model.documents.moveToTrash(selected)
+        wwLog("Moved \(count) document\(count == 1 ? "" : "s") to the trash", .general)
+        exitSelection()
+    }
+
+    /// Copy the selection as one Markdown file — each document's title as a heading over its body,
+    /// blank-line separated, the same rendering the backup folder writes.
+    private func copySelected() {
+        let count = selected.count
+        #if canImport(UIKit)
+        UIPasteboard.general.string = MarkdownBackup.combined(selectedDocuments)
+        #endif
+        wwLog("Copied \(count) document\(count == 1 ? "" : "s") to clipboard", .general)
     }
 
     private func startRename(_ document: Document) {

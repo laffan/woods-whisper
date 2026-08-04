@@ -44,6 +44,14 @@ public enum MarkdownBackup {
         return out
     }
 
+    /// Several documents as one Markdown file: each rendered exactly as it is in the backup folder,
+    /// separated by a blank line, so the titles are what marks where one document ends and the next
+    /// begins. Backs the Documents list's batch Copy and Share, which hand over one combined file
+    /// rather than several separate ones.
+    public static func combined(_ documents: [Document]) -> String {
+        documents.map { markdown(for: $0) }.joined(separator: "\n")
+    }
+
     /// An Inbox recording as Markdown: capture time as an H1, a short provenance line, then the
     /// transcript (absent until the recording has been transcribed).
     public static func markdown(for recording: Recording) -> String {

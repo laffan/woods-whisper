@@ -1600,21 +1600,18 @@ struct InboxView: View {
         }
         .safeAreaInset(edge: .bottom) {
             if selectionMode {
-                HStack(spacing: 16) {
-                    batchButton("Delete", "trash", role: .destructive) {
+                WWBatchBar {
+                    WWBatchButton("Delete", "trash", role: .destructive) {
                         model.documents.deleteRecordings(selected, fromDocument: documentID)
                         exitSelection()
                     }
-                    batchButton("Copy", "doc.on.doc") { copySelected() }
-                    batchButton("New", "doc.badge.plus") { startNewDocument(for: selected) }
-                    batchButton("Move", "folder") {
+                    WWBatchButton("Copy", "doc.on.doc") { copySelected() }
+                    WWBatchButton("New", "doc.badge.plus") { startNewDocument(for: selected) }
+                    WWBatchButton("Move", "folder") {
                         withAnimation(.snappy(duration: 0.22)) { movingIDs = selected }
                     }
                 }
-                .frame(maxWidth: .infinity)
-                .padding()
-                .background(WW.surface)
-                .overlay(alignment: .top) { WWHairline() }
+                .disabled(selected.isEmpty)
             }
         }
         .overlay {
@@ -1790,19 +1787,6 @@ struct InboxView: View {
     private func selectAll() {
         let all = Set(recordings.map(\.id))
         selected = (selected == all) ? [] : all
-    }
-
-    private func batchButton(_ title: String, _ icon: String,
-                             role: ButtonRole? = nil, action: @escaping () -> Void) -> some View {
-        Button(role: role, action: action) {
-            VStack(spacing: 5) {
-                Image(systemName: icon).font(.system(size: 17, weight: .regular))
-                Text(title).font(.caption2)
-            }
-            .frame(maxWidth: .infinity)
-        }
-        .tint(role == .destructive ? WW.ember : WW.moss)
-        .disabled(selected.isEmpty)
     }
 
     private func copySelected() {

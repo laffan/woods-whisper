@@ -82,7 +82,9 @@ keeps a plain-Markdown copy of the *text* there — a `WoodsWhisper` folder cont
 document, named by its title). Two pieces:
 
 - `MarkdownBackup` — pure: documents in, `[relative path: file contents]` out. All the naming and
-  formatting rules (and their tests) live here, no disk access.
+  formatting rules (and their tests) live here, no disk access. Its per-document rendering is also
+  what the Documents list's batch Copy/Share hand over (`MarkdownBackup.combined`), so a bundle of
+  documents reads the same wherever it lands.
 - `LocalBackupStore` — the stateful half: holds the chosen folder as a security-scoped bookmark
   (the folder is outside the sandbox), coalesces change notifications, and does the file work off
   the main actor.

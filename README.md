@@ -68,6 +68,11 @@ the rest of the app depends on.
   that document on the iPhone/iPad instead of the Inbox. (Targets sync over the paired-iPhone path; the
   direct-to-iPad transports still file into the Inbox.)
 - **Pin documents.** Swipe a document and tap **Pin** to hold it at the top of the list.
+- **Bulk actions on documents.** **Long-press** a document to enter selection mode, then tap the
+  others you want (or **Select All**). The bar along the bottom applies **Delete**, **Copy**,
+  **Pin** — **Unpin** once everything selected is pinned — and **Share** to the whole selection.
+  Copy and Share hand over a single Markdown file with each document under its own heading, the
+  same way the backup folder writes them. **Done** leaves selection mode.
 - **Insert while editing.** The paragraph editor has an **Insert** button that records a clip,
   transcribes it, and splices the text in at the cursor — the clip is saved with the document's other
   recordings.

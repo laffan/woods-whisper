@@ -307,6 +307,53 @@ struct WWHairline: View {
     }
 }
 
+// MARK: - Batch action bar (selection mode)
+
+/// The bar of actions pinned below a list while it's in long-press selection mode — used by both
+/// the Inbox (recordings) and Documents. Sits on a surface strip with a hairline above it; apply
+/// `.disabled(...)` to the bar to grey out every action at once when nothing is selected.
+struct WWBatchBar<Content: View>: View {
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        HStack(spacing: 16) {
+            content
+        }
+        .frame(maxWidth: .infinity)
+        .padding()
+        .background(WW.surface)
+        .overlay(alignment: .top) { WWHairline() }
+    }
+}
+
+/// One action inside a `WWBatchBar`: a glyph over a caption, tinted moss (or ember when
+/// destructive), sharing the bar's width evenly with its siblings.
+struct WWBatchButton: View {
+    let title: String
+    let systemImage: String
+    let role: ButtonRole?
+    let action: () -> Void
+
+    init(_ title: String, _ systemImage: String, role: ButtonRole? = nil,
+         action: @escaping () -> Void) {
+        self.title = title
+        self.systemImage = systemImage
+        self.role = role
+        self.action = action
+    }
+
+    var body: some View {
+        Button(role: role, action: action) {
+            VStack(spacing: 5) {
+                Image(systemName: systemImage).font(.system(size: 17, weight: .regular))
+                Text(title).font(.caption2)
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .tint(role == .destructive ? WW.ember : WW.moss)
+    }
+}
+
 // MARK: - Round icon button (recorder controls)
 
 /// Circular recorder control. `fill` draws a solid ember/moss disc with paper glyph;
