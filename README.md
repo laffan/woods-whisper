@@ -22,7 +22,10 @@ woods-whisper/
 ├── Packages/WoodsWhisperKit/        # Shared Swift package (models, audio, storage,
 │   └── Sources/WoodsWhisperKit/     #   transcription, transform, connectivity)
 ├── Apps/iOS/                        # iOS / iPadOS app (Recordings, Documents, Settings)
+├── Apps/iOSWidgets/                 # iOS widget extension (Recent Documents widget,
+│                                    #   New Recording Lock Screen widget + Control)
 ├── Apps/Watch/                      # watchOS app (record button + recordings list)
+├── Apps/WatchComplication/          # watch-face "New Recording" complication
 └── docs/                            # ARCHITECTURE.md, SETUP.md, CONNECTIVITY.md
 ```
 
@@ -93,6 +96,10 @@ the rest of the app depends on.
   no language model).
 - **Local backup folder.** Pick a folder in **Settings → Local Backup** and Woods Whisper keeps a
   plain-Markdown copy of everything you write there — see below.
+- **Recent Documents widget.** A Home Screen widget (small / medium / large) lists your most
+  recently updated documents, pinned ones first — the same order as the Documents list. Tap a row
+  to jump straight into that document (the small size opens the Documents tab). It updates whenever
+  a document changes and, like everything else, works fully offline.
 
 ## Local backup folder
 
@@ -140,11 +147,17 @@ hardware; the Simulator can't use the ANE).
 > embedded in the watch app, so it builds with the default scheme (give it a signing team alongside the
 > other targets).
 >
-> **iOS Lock Screen widget / Control (optional).** A separate WidgetKit extension for an iOS Lock
-> Screen widget + iOS 18 Control (`Apps/iOSWidgets`) is in the repo but **not built by default** —
-> provisioning its extra app-extension App ID is painful on a free Apple ID. To enable it, re-add a
-> `WoodsWhisperWidgets` `app-extension` target to `project.yml` (see this file's git history), embed it
-> in the iOS app, and give it a signing team.
+> **iOS widgets (built in).** A WidgetKit extension (`Apps/iOSWidgets`, target
+> `WoodsWhisperWidgets`) ships the **Recent Documents** Home Screen widget plus the **New
+> Recording** Lock Screen widget and iOS 18 Control. It's embedded in the iOS app, so it builds
+> with the default scheme — give it a signing team alongside the other targets. The app and the
+> extension share the App Group `group.com.woodswhisper.app` (declared in `project.yml`; xcodegen
+> writes the entitlements files): the app mirrors a small snapshot of the most recent documents
+> into it, which is all the widget reads — document text and audio never leave the app's own
+> container. On a free Apple ID the extra app-extension App ID and App Group can be painful to
+> provision; if that blocks you, delete the `WoodsWhisperWidgets` target and the two `entitlements`
+> blocks from `project.yml` and everything else still builds ("New Recording" stays available via
+> App Intents, which need no extra target).
 
 > ⚠️ **The Swift package versions for FluidAudio, WhisperKit, and MLX move quickly.** Three
 > files — `ParakeetTranscriptionService.swift`, `WhisperTranscriptionService.swift`, and

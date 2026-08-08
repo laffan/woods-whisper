@@ -6,6 +6,8 @@ import UIKit
 
 struct DocumentsView: View {
     @EnvironmentObject private var model: AppModel
+    /// "Open this document" requests arriving from outside the app (the Recent Documents widget).
+    @ObservedObject private var opener = DocumentLauncher.shared
     @State private var renameTarget: Document?
     @State private var renameText = ""
     @State private var showingRecorder = false
@@ -148,7 +150,23 @@ struct DocumentsView: View {
                     model.documents.setParagraphs(Document.paragraphs(from: editingText), in: doc.id)
                 }
             }
+            // Widget deep link: both hooks are needed — onChange for requests while this tab is
+            // visible, onAppear for one that switched tabs before this view existed (the pending
+            // id waits in the launcher until then).
+            .onChange(of: opener.pendingDocumentID) { openPendingDocument() }
+            .onAppear { openPendingDocument() }
         }
+    }
+
+    /// Push the document a widget tap asked for, replacing whatever was on the stack. Skips ids
+    /// that no longer exist (deleted or trashed since the widget snapshot was taken) — the list
+    /// itself is the sensible landing spot then.
+    private func openPendingDocument() {
+        guard let id = opener.pendingDocumentID else { return }
+        opener.pendingDocumentID = nil
+        guard model.documents.document(with: id) != nil else { return }
+        if selectionMode { exitSelection() }
+        path = [.document(id)]
     }
 
     /// One document row with its swipe actions, shared by the Pinned and Documents sections.

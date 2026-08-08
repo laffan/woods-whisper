@@ -59,6 +59,7 @@ struct RecordControl: ControlWidget {
 @main
 struct WoodsWhisperWidgets: WidgetBundle {
     var body: some Widget {
+        RecentDocumentsWidget()
         RecordLockScreenWidget()
         if #available(iOS 18.0, *) {
             RecordControl()

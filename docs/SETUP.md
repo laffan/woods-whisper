@@ -10,8 +10,10 @@ xcodegen generate
 open WoodsWhisper.xcodeproj
 ```
 
-Set your **signing team** on both the `WoodsWhisper` and `WoodsWhisperWatch` targets
-(Signing & Capabilities).
+Set your **signing team** on the `WoodsWhisper`, `WoodsWhisperWatch`,
+`WoodsWhisperWatchComplication`, and `WoodsWhisperWidgets` targets (Signing & Capabilities).
+The app and widget targets declare the App Group `group.com.woodswhisper.app` (backing the
+Recent Documents widget) — Xcode registers it automatically once a team is set.
 
 ## 2. Run on real hardware
 

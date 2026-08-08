@@ -213,6 +213,68 @@ final class WoodsWhisperKitTests: XCTestCase {
                                                    fallback: "Document").count, 120)
     }
 
+    // MARK: Widget snapshot / deep links
+
+    func testWidgetSnapshotExcludesInboxAndOrdersPinnedFirstThenRecent() {
+        let older = Document(title: "Older", updatedAt: date(2026, 7, 1, 9, 0, 0))
+        let newer = Document(title: "Newer", updatedAt: date(2026, 7, 30, 9, 0, 0))
+        let pinned = Document(title: "Pinned", updatedAt: date(2026, 6, 1, 9, 0, 0), isPinned: true)
+        let inbox = Document(title: inboxTitle, updatedAt: date(2026, 7, 31, 9, 0, 0))
+
+        let rows = WidgetSnapshotStore.snapshot(of: [older, inbox, newer, pinned],
+                                                inboxTitle: inboxTitle)
+
+        XCTAssertEqual(rows.map(\.title), ["Pinned", "Newer", "Older"])
+        XCTAssertEqual(rows.map(\.id), [pinned.id, newer.id, older.id])
+    }
+
+    func testWidgetSnapshotIsCapped() {
+        let docs = (0..<20).map { Document(title: "Doc \($0)") }
+        let rows = WidgetSnapshotStore.snapshot(of: docs, inboxTitle: inboxTitle)
+        XCTAssertEqual(rows.count, WidgetSnapshotStore.maxDocuments)
+    }
+
+    func testWidgetPreviewIsFirstNonEmptyParagraphCollapsedToOneLine() {
+        let doc = Document(title: "Notes", paragraphs: [
+            .init(text: "   "),
+            .init(text: "Elk by the creek.\nTwo of them."),
+            .init(text: "Second paragraph.")
+        ])
+        XCTAssertEqual(WidgetSnapshotStore.preview(of: doc), "Elk by the creek. Two of them.")
+        XCTAssertEqual(WidgetSnapshotStore.preview(of: Document(title: "Empty")), "")
+    }
+
+    func testWidgetPreviewIsLengthCapped() {
+        let doc = Document(title: "Long",
+                           paragraphs: [.init(text: String(repeating: "a", count: 500))])
+        XCTAssertEqual(WidgetSnapshotStore.preview(of: doc).count, 160)
+    }
+
+    func testWidgetSnapshotRoundTripsThroughTheSharedEncoder() throws {
+        // A whole-second date: the shared ISO-8601 coding drops fractional seconds, so a
+        // Date()-fresh document wouldn't compare equal after the round trip.
+        let doc = Document(title: "Field Notes",
+                           updatedAt: date(2026, 7, 31, 9, 0, 0),
+                           paragraphs: [.init(text: "Hi.")],
+                           isPinned: true)
+        let rows = WidgetSnapshotStore.snapshot(of: [doc], inboxTitle: inboxTitle)
+        let decoded = try JSONDecoder.iso.decode([WidgetDocument].self,
+                                                 from: JSONEncoder.iso.encode(rows))
+        XCTAssertEqual(decoded, rows)
+    }
+
+    func testDocumentDeepLinkRoundTrips() {
+        let id = UUID()
+        XCTAssertEqual(woodsWhisperDocumentID(from: woodsWhisperDocumentURL(id: id)), id)
+    }
+
+    func testDocumentDeepLinkRejectsOtherURLs() {
+        XCTAssertNil(woodsWhisperDocumentID(from: woodsWhisperRecordURL))
+        XCTAssertNil(woodsWhisperDocumentID(from: woodsWhisperDocumentsURL))
+        XCTAssertNil(woodsWhisperDocumentID(from: URL(string: "woodswhisper://document/not-a-uuid")!))
+        XCTAssertNil(woodsWhisperDocumentID(from: URL(string: "https://document/\(UUID().uuidString)")!))
+    }
+
     // MARK: Pairing / subnet math
 
     func testIPv4RoundTrips() {

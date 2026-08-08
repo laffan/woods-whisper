@@ -66,6 +66,14 @@ targets:
       - package: SwiftHuggingFace
         product: HuggingFace
       - target: WoodsWhisperWatch        # embed the watch app
+      - target: WoodsWhisperWidgets      # embed the widget extension (Recent Documents et al.)
+    # The app and the widget extension share an App Group: the app mirrors a small JSON snapshot
+    # of the most recent documents into it (WidgetSnapshotStore) for the widget to read.
+    entitlements:
+      path: Apps/iOS/WoodsWhisper.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.woodswhisper.app
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.woodswhisper.app
@@ -105,11 +113,29 @@ targets:
         INFOPLIST_FILE: Apps/WatchComplication/Info.plist
         WATCHOS_DEPLOYMENT_TARGET: "10.0"
 
-# The iOS Lock Screen widget + Control (Apps/iOSWidgets) lives in the repo but is NOT built by
-# default — on a free Apple ID the extra app-extension App ID is painful to provision. To enable it,
-# re-add a WoodsWhisperWidgets app-extension target (see git history of this file) and give it a
-# signing team. The "New Recording" action is still available without it via App Intents (Siri /
-# Shortcuts / Action Button / a Lock Screen Shortcut), which need no separate target.
+  # iOS widget extension: the "Recent Documents" Home Screen widget, plus the "New Recording"
+  # Lock Screen widget and iOS 18 Control. Embedded in the iOS app; give it a signing team like
+  # the other targets. On a free Apple ID the extra app-extension App ID (and the App Group) can
+  # be painful to provision — if that blocks you, remove this target and the two `entitlements`
+  # blocks and the app still builds; only the widgets are lost. ("New Recording" stays available
+  # via App Intents — Siri / Shortcuts / Action Button — which need no separate target.)
+  WoodsWhisperWidgets:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: Apps/iOSWidgets
+    dependencies:
+      - package: WoodsWhisperKit
+    entitlements:
+      path: Apps/iOSWidgets/WoodsWhisperWidgets.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.woodswhisper.app
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.woodswhisper.app.widgets
+        INFOPLIST_FILE: Apps/iOSWidgets/Info.plist
+        SKIP_INSTALL: YES
 
 schemes:
   WoodsWhisper:

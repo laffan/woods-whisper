@@ -512,15 +512,20 @@ public final class DocumentStore: ObservableObject {
             persistPresets()
             defaults.set(Self.presetsSeedVersion, forKey: presetsSeedVersionKey)
         }
+        // Seed the widget's snapshot at launch too, so it has data on installs/updates that
+        // predate the widget (persistDocuments only runs on the next actual edit).
+        WidgetSnapshotStore.update(documents: documents, inboxTitle: Self.inboxTitle)
     }
 
     /// The single choke point every document mutation runs through — and so the one place the
-    /// Markdown backup needs to hook into for "save a fresh copy on every creation or edit".
+    /// Markdown backup and the widget snapshot need to hook into for "refresh on every creation
+    /// or edit".
     private func persistDocuments() {
         if let data = try? JSONEncoder.iso.encode(documents) {
             try? data.write(to: documentsURL, options: .atomic)
         }
         backup.scheduleSync(documents: documents, inboxTitle: Self.inboxTitle)
+        WidgetSnapshotStore.update(documents: documents, inboxTitle: Self.inboxTitle)
     }
 
     private func persistTrash() {

@@ -94,3 +94,12 @@ so it's the only hook needed: each save schedules a sync. Only files whose conte
 rewritten, and a manifest of what the previous sync wrote is kept so a renamed or deleted document
 can be pruned without ever touching a file the app didn't write. The newest version overwrites the
 previous one — no history, and no audio.
+
+**Widget snapshot.** The iOS "Recent Documents" Home Screen widget (`Apps/iOSWidgets`) runs in its
+own process and can't read Application Support, so `WidgetSnapshotStore` mirrors a small JSON list
+of the top documents — id, title, `updatedAt`, pinned flag, one-line preview — into the shared App
+Group container (`group.com.woodswhisper.app`) and asks WidgetKit to reload the timeline. It hooks
+the same `persistDocuments()` choke point (plus one seed write at load), skips the write when the
+visible rows haven't changed, and degrades to a no-op if the App Group isn't provisioned. Tapping
+a widget row deep-links back via `woodswhisper://document/<uuid>`, which `DocumentLauncher` routes
+to the Documents tab.

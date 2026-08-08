@@ -6,19 +6,27 @@ struct ContentView: View {
     @EnvironmentObject private var model: AppModel
     @ObservedObject private var launcher = RecordingLauncher.shared
 
+    /// Tab selection, so the widget's deep links can land on the Documents tab.
+    enum Tab: Hashable { case inbox, documents, log, settings }
+    @State private var selectedTab: Tab = .inbox
+
     var body: some View {
-        TabView {
+        TabView(selection: $selectedTab) {
             InboxTab()
                 .tabItem { Label("Inbox", systemImage: "tray.and.arrow.down") }
+                .tag(Tab.inbox)
 
             DocumentsView()
                 .tabItem { Label("Documents", systemImage: "doc.text") }
+                .tag(Tab.documents)
 
             LogView()
                 .tabItem { Label("Log", systemImage: "terminal") }
+                .tag(Tab.log)
 
             SettingsView()
                 .tabItem { Label("Settings", systemImage: "gear") }
+                .tag(Tab.settings)
         }
         .overlay(alignment: .bottom) {
             if let message = model.busyMessage {
@@ -47,6 +55,14 @@ struct ContentView: View {
         .onOpenURL { url in
             if url == woodsWhisperRecordURL {
                 launcher.request()
+            } else if url == woodsWhisperDocumentsURL {
+                // The Recent Documents widget's small family (and its background) opens the list.
+                selectedTab = .documents
+            } else if let documentID = woodsWhisperDocumentID(from: url) {
+                // A tapped widget row opens its document; DocumentsView picks the id up and
+                // pushes it (or quietly stays on the list if the document is gone).
+                selectedTab = .documents
+                DocumentLauncher.shared.open(documentID)
             } else if url.isFileURL {
                 if url.pathExtension.lowercased() == DocumentArchive.fileExtension {
                     // A Woods Whisper document file (audio + transcriptions) shared from another
