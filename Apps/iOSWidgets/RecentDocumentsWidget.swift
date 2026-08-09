@@ -58,6 +58,8 @@ private enum WWPalette {
                                            dark: UIColor(red: 0.592, green: 0.580, blue: 0.541, alpha: 1))
     static let inkTertiary = dynamicColor(light: UIColor(red: 0.659, green: 0.643, blue: 0.600, alpha: 1),
                                           dark: UIColor(red: 0.416, green: 0.408, blue: 0.376, alpha: 1))
+    static let hairline = dynamicColor(light: UIColor(red: 0.890, green: 0.878, blue: 0.839, alpha: 1),
+                                       dark: UIColor(red: 0.169, green: 0.180, blue: 0.157, alpha: 1))
     static let moss = dynamicColor(light: UIColor(red: 0.247, green: 0.361, blue: 0.267, alpha: 1),
                                    dark: UIColor(red: 0.576, green: 0.675, blue: 0.549, alpha: 1))
 
@@ -138,8 +140,9 @@ struct RecentDocumentsView: View {
             .contentShape(Rectangle())
     }
 
-    /// The reserved slot at the top: starts a recording, the same action as the Lock Screen
-    /// widget and the Control. Paper-on-moss inverts correctly in both light and dark mode.
+    /// The reserved slot at the top: starts a recording, the same action as the Lock Screen widget
+    /// and the Control. A hairline-stroked capsule with a moss glyph, matching the app's own
+    /// unfilled recorder control (`WWRoundIconButtonStyle`) rather than shouting over the list.
     private var recordButton: some View {
         tapTarget(url: woodsWhisperRecordURL, intent: StartRecordingIntent()) {
             HStack(spacing: 5) {
@@ -150,9 +153,9 @@ struct RecentDocumentsView: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
             }
-            .foregroundStyle(WWPalette.paper)
+            .foregroundStyle(WWPalette.moss)
             .frame(maxWidth: .infinity, minHeight: buttonHeight)
-            .background(WWPalette.moss, in: Capsule())
+            .overlay(Capsule().stroke(WWPalette.hairline, lineWidth: 1))
             .contentShape(Capsule())
         }
     }
