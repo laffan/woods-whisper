@@ -72,12 +72,13 @@ struct RecentDocumentsView: View {
     let entry: RecentDocumentsEntry
     @Environment(\.widgetFamily) private var family
 
-    /// Minimum row height. Apple's 44pt target doesn't fit in the shorter families once the
-    /// New Recording button has its space, so they get as much as the widget can spare; the large
-    /// family goes the full 44.
-    private var rowHeight: CGFloat { family == .systemLarge ? 44 : 36 }
-    private var buttonHeight: CGFloat { family == .systemSmall ? 28 : 32 }
-    private let spacing: CGFloat = 4
+    /// Minimum row height. The large family can afford Apple's 44pt target; small and medium are
+    /// only ~126pt tall inside their margins, so their rows are sized to fit three below the
+    /// button — still comfortably more than the 16pt line of text they hold, and tight enough that
+    /// the titles read as a list rather than as three widely-spaced lines.
+    private var rowHeight: CGFloat { family == .systemLarge ? 44 : 28 }
+    private var buttonHeight: CGFloat { family == .systemLarge ? 32 : 26 }
+    private let spacing: CGFloat = 2
 
     var body: some View {
         VStack(alignment: .leading, spacing: spacing) {
@@ -104,9 +105,12 @@ struct RecentDocumentsView: View {
         }
     }
 
-    /// The rows that fit in `height`: n rows occupy `n * rowHeight + (n - 1) * spacing`.
+    /// The rows that fit in `height`: n rows occupy `n * rowHeight + (n - 1) * spacing`. The half
+    /// point of tolerance keeps a row that lands a rounding hair over the edge — the shorter
+    /// phones sit almost exactly on the boundary at three rows, and half a point of overhang is
+    /// invisible where losing the whole row is not.
     private func documents(fitting height: CGFloat) -> [WidgetDocument] {
-        let count = Int((height + spacing) / (rowHeight + spacing))
+        let count = Int((height + spacing + 0.5) / (rowHeight + spacing))
         return Array(entry.documents.prefix(max(1, count)))
     }
 
@@ -129,7 +133,7 @@ struct RecentDocumentsView: View {
     /// content shape covering the whole band so taps land anywhere on it, not just on the text.
     private func row(_ document: WidgetDocument) -> some View {
         DocumentRow(document: document, family: family)
-            .padding(.vertical, 4)
+            .padding(.vertical, family == .systemLarge ? 4 : 2)
             .frame(maxWidth: .infinity, minHeight: rowHeight, alignment: .leading)
             .contentShape(Rectangle())
     }
