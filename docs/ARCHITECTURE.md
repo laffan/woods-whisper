@@ -100,6 +100,11 @@ own process and can't read Application Support, so `WidgetSnapshotStore` mirrors
 of the top documents — id, title, `updatedAt`, pinned flag, one-line preview — into the shared App
 Group container (`group.com.woodswhisper.app`) and asks WidgetKit to reload the timeline. It hooks
 the same `persistDocuments()` choke point (plus one seed write at load), skips the write when the
-visible rows haven't changed, and degrades to a no-op if the App Group isn't provisioned. Tapping
-a widget row deep-links back via `woodswhisper://document/<uuid>`, which `DocumentLauncher` routes
-to the Documents tab.
+visible rows haven't changed, and degrades to a no-op if the App Group isn't provisioned.
+
+Tapping a row opens that document by two routes that meet at `DocumentLauncher`: the medium and
+large families link out to `woodswhisper://document/<uuid>`, while `systemSmall` — which WidgetKit
+gives a single tap target, ignoring per-row `Link`s — uses an `OpenDocumentIntent` whose
+`openAppWhenRun` performs it in the app's own process. `ContentView` watches the launcher (rather
+than `onOpenURL` alone) so both routes switch to the Documents tab, and `DocumentsView` consumes
+the id and pushes the document.

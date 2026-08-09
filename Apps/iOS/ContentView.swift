@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 import AppIntents
 import WoodsWhisperKit
 
@@ -56,12 +57,11 @@ struct ContentView: View {
             if url == woodsWhisperRecordURL {
                 launcher.request()
             } else if url == woodsWhisperDocumentsURL {
-                // The Recent Documents widget's small family (and its background) opens the list.
+                // Widget background / empty space: just show the list.
                 selectedTab = .documents
             } else if let documentID = woodsWhisperDocumentID(from: url) {
-                // A tapped widget row opens its document; DocumentsView picks the id up and
-                // pushes it (or quietly stays on the list if the document is gone).
-                selectedTab = .documents
+                // A tapped widget row (medium/large, which link by URL). The tab switch rides on
+                // the launcher below, shared with the small family's App Intent route.
                 DocumentLauncher.shared.open(documentID)
             } else if url.isFileURL {
                 if url.pathExtension.lowercased() == DocumentArchive.fileExtension {
@@ -73,6 +73,18 @@ struct ContentView: View {
                     model.importSharedAudio(from: url)
                 }
             }
+        }
+        // Every "open this document" request — the widget's URL links and its App Intent alike —
+        // arrives as a launcher value, so the tab switch lives here rather than in `onOpenURL`.
+        // `onReceive` (not `onChange`) because DocumentsView clears the value as it consumes it:
+        // this delivers the published id itself, so the switch can't lose a race to that reset.
+        .onReceive(DocumentLauncher.shared.$pendingDocumentID) { pending in
+            if pending != nil { selectedTab = .documents }
+        }
+        // Cold launch: the App Intent can set the launcher before this view subscribes above (the
+        // publisher doesn't replay), so catch an id that's already waiting.
+        .onAppear {
+            if DocumentLauncher.shared.pendingDocumentID != nil { selectedTab = .documents }
         }
     }
 }

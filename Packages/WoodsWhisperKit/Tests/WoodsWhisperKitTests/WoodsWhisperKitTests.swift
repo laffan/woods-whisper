@@ -268,6 +268,18 @@ final class WoodsWhisperKitTests: XCTestCase {
         XCTAssertEqual(woodsWhisperDocumentID(from: woodsWhisperDocumentURL(id: id)), id)
     }
 
+    // The small widget family's tap route (the other families link by URL, covered above).
+    #if os(iOS)
+    @available(iOS 17.0, *)
+    @MainActor
+    func testOpenDocumentIntentHandsTheDocumentIDToTheLauncher() async throws {
+        let id = UUID()
+        _ = try await OpenDocumentIntent(documentID: id).perform()
+        XCTAssertEqual(DocumentLauncher.shared.pendingDocumentID, id)
+        DocumentLauncher.shared.pendingDocumentID = nil
+    }
+    #endif
+
     func testDocumentDeepLinkRejectsOtherURLs() {
         XCTAssertNil(woodsWhisperDocumentID(from: woodsWhisperRecordURL))
         XCTAssertNil(woodsWhisperDocumentID(from: woodsWhisperDocumentsURL))

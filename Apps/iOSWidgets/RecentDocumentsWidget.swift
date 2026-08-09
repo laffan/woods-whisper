@@ -1,6 +1,7 @@
 import WidgetKit
 import SwiftUI
 import UIKit
+import AppIntents
 import WoodsWhisperKit
 
 // MARK: - Timeline
@@ -71,12 +72,20 @@ struct RecentDocumentsView: View {
     let entry: RecentDocumentsEntry
     @Environment(\.widgetFamily) private var family
 
-    /// How many rows fit each family (below the header).
+    /// How many rows fit each family below the header, now that every row is a comfortable tap
+    /// target rather than a bare line of text. The large family trades two of its old seven rows
+    /// for the extra height.
     private var rowLimit: Int {
         switch family {
-        case .systemLarge: return 7
+        case .systemLarge: return 5
         default:           return 3
         }
+    }
+
+    /// Minimum row height. Apple's 44pt target doesn't fit three rows in the shorter families, so
+    /// they get as much as the widget can spare; the large family goes the full 44.
+    private var rowHeight: CGFloat {
+        family == .systemLarge ? 44 : 36
     }
 
     private var rows: [WidgetDocument] { Array(entry.documents.prefix(rowLimit)) }
@@ -85,21 +94,36 @@ struct RecentDocumentsView: View {
         if entry.documents.isEmpty {
             emptyState
         } else {
-            VStack(alignment: .leading, spacing: family == .systemSmall ? 6 : 8) {
+            VStack(alignment: .leading, spacing: 2) {
                 header
+                    .padding(.bottom, 2)
                 ForEach(rows) { document in
                     if family == .systemSmall {
-                        // systemSmall is a single tap target; the whole widget opens Documents.
-                        DocumentRow(document: document, family: family)
+                        // WidgetKit ignores per-row `Link`s in systemSmall (one tap target for the
+                        // whole widget), so small rows open their document through an App Intent
+                        // instead. Both routes land in `DocumentLauncher`.
+                        Button(intent: OpenDocumentIntent(documentID: document.id)) {
+                            row(document)
+                        }
+                        .buttonStyle(.plain)
                     } else {
                         Link(destination: woodsWhisperDocumentURL(id: document.id)) {
-                            DocumentRow(document: document, family: family)
+                            row(document)
                         }
                     }
                 }
                 Spacer(minLength: 0)
             }
         }
+    }
+
+    /// One row sized as a tap target: the full width and at least `rowHeight` tall, with the
+    /// content shape covering the whole band so taps land anywhere on it, not just on the text.
+    private func row(_ document: WidgetDocument) -> some View {
+        DocumentRow(document: document, family: family)
+            .padding(.vertical, 4)
+            .frame(maxWidth: .infinity, minHeight: rowHeight, alignment: .leading)
+            .contentShape(Rectangle())
     }
 
     private var header: some View {
@@ -160,7 +184,6 @@ private struct DocumentRow: View {
                     .lineLimit(1)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
