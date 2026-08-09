@@ -96,10 +96,11 @@ the rest of the app depends on.
   no language model).
 - **Local backup folder.** Pick a folder in **Settings → Local Backup** and Woods Whisper keeps a
   plain-Markdown copy of everything you write there — see below.
-- **Recent Documents widget.** A Home Screen widget (small / medium / large) lists your most
-  recently updated documents, pinned ones first — the same order as the Documents list. **Tap any
-  row to open that document straight away**, in every size. It updates whenever a document changes
-  and, like everything else, works fully offline.
+- **Recent Documents widget.** A Home Screen widget (small / medium / large) with a **New
+  Recording** button across the top and, below it, your most recently updated documents — pinned
+  first, the same order as the Documents list. **Tap any row to open that document straight away**,
+  in every size. How many rows fit is measured against the widget's actual height, so a bigger
+  phone shows more. It updates whenever a document changes and works fully offline.
 
 ## Local backup folder
 

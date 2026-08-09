@@ -37,8 +37,9 @@ public enum WidgetSnapshotStore {
     /// WidgetKit kind of the Recent Documents widget — the one timeline the app reloads.
     public static let recentDocumentsKind = "com.woodswhisper.app.widget.recentdocuments"
 
-    /// The widget's largest family shows 5 rows; the spares avoid a rewrite when a top doc is deleted.
-    public static let maxDocuments = 8
+    /// Enough rows for the tallest large widget (an iPad's fits ~7 below the New Recording button),
+    /// with a spare or two so deleting a top document doesn't leave the widget a row short.
+    public static let maxDocuments = 10
 
     private static var fileURL: URL? {
         FileManager.default

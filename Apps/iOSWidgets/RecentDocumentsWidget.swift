@@ -72,48 +72,56 @@ struct RecentDocumentsView: View {
     let entry: RecentDocumentsEntry
     @Environment(\.widgetFamily) private var family
 
-    /// How many rows fit each family below the header, now that every row is a comfortable tap
-    /// target rather than a bare line of text. The large family trades two of its old seven rows
-    /// for the extra height.
-    private var rowLimit: Int {
-        switch family {
-        case .systemLarge: return 5
-        default:           return 3
+    /// Minimum row height. Apple's 44pt target doesn't fit in the shorter families once the
+    /// New Recording button has its space, so they get as much as the widget can spare; the large
+    /// family goes the full 44.
+    private var rowHeight: CGFloat { family == .systemLarge ? 44 : 36 }
+    private var buttonHeight: CGFloat { family == .systemSmall ? 28 : 32 }
+    private let spacing: CGFloat = 4
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: spacing) {
+            recordButton
+            if entry.documents.isEmpty {
+                emptyState
+            } else {
+                // How many rows fit is measured rather than hardcoded per family: the widget's
+                // height varies by device (a large widget on an SE is ~70pt shorter than on a Pro
+                // Max), and the button now takes a fixed slice off the top. The reader wraps only
+                // the list, so its height is already what's left below the button.
+                GeometryReader { proxy in
+                    VStack(alignment: .leading, spacing: spacing) {
+                        ForEach(documents(fitting: proxy.size.height)) { document in
+                            tapTarget(url: woodsWhisperDocumentURL(id: document.id),
+                                      intent: OpenDocumentIntent(documentID: document.id)) {
+                                row(document)
+                            }
+                        }
+                        Spacer(minLength: 0)
+                    }
+                }
+            }
         }
     }
 
-    /// Minimum row height. Apple's 44pt target doesn't fit three rows in the shorter families, so
-    /// they get as much as the widget can spare; the large family goes the full 44.
-    private var rowHeight: CGFloat {
-        family == .systemLarge ? 44 : 36
+    /// The rows that fit in `height`: n rows occupy `n * rowHeight + (n - 1) * spacing`.
+    private func documents(fitting height: CGFloat) -> [WidgetDocument] {
+        let count = Int((height + spacing) / (rowHeight + spacing))
+        return Array(entry.documents.prefix(max(1, count)))
     }
 
-    private var rows: [WidgetDocument] { Array(entry.documents.prefix(rowLimit)) }
-
-    var body: some View {
-        if entry.documents.isEmpty {
-            emptyState
+    /// Wraps `content` in whichever tap route the family supports: medium and large link out by
+    /// URL, while systemSmall — which WidgetKit gives a single tap target, ignoring per-element
+    /// `Link`s — runs an App Intent instead. Both routes do the same thing once in the app.
+    @ViewBuilder
+    private func tapTarget<Intent: AppIntent, Content: View>(
+        url: URL, intent: Intent, @ViewBuilder content: () -> Content
+    ) -> some View {
+        if family == .systemSmall {
+            Button(intent: intent) { content() }
+                .buttonStyle(.plain)
         } else {
-            VStack(alignment: .leading, spacing: 2) {
-                header
-                    .padding(.bottom, 2)
-                ForEach(rows) { document in
-                    if family == .systemSmall {
-                        // WidgetKit ignores per-row `Link`s in systemSmall (one tap target for the
-                        // whole widget), so small rows open their document through an App Intent
-                        // instead. Both routes land in `DocumentLauncher`.
-                        Button(intent: OpenDocumentIntent(documentID: document.id)) {
-                            row(document)
-                        }
-                        .buttonStyle(.plain)
-                    } else {
-                        Link(destination: woodsWhisperDocumentURL(id: document.id)) {
-                            row(document)
-                        }
-                    }
-                }
-                Spacer(minLength: 0)
-            }
+            Link(destination: url) { content() }
         }
     }
 
@@ -126,12 +134,23 @@ struct RecentDocumentsView: View {
             .contentShape(Rectangle())
     }
 
-    private var header: some View {
-        Text("Documents")
-            .font(.system(size: 10, weight: .semibold))
-            .tracking(1.4)
-            .textCase(.uppercase)
-            .foregroundStyle(WWPalette.inkSecondary)
+    /// The reserved slot at the top: starts a recording, the same action as the Lock Screen
+    /// widget and the Control. Paper-on-moss inverts correctly in both light and dark mode.
+    private var recordButton: some View {
+        tapTarget(url: woodsWhisperRecordURL, intent: StartRecordingIntent()) {
+            HStack(spacing: 5) {
+                Image(systemName: "mic.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                Text("New Recording")
+                    .font(.system(size: 12, weight: .semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+            .foregroundStyle(WWPalette.paper)
+            .frame(maxWidth: .infinity, minHeight: buttonHeight)
+            .background(WWPalette.moss, in: Capsule())
+            .contentShape(Capsule())
+        }
     }
 
     private var emptyState: some View {
@@ -143,7 +162,8 @@ struct RecentDocumentsView: View {
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(WWPalette.ink)
             if family != .systemSmall {
-                Text("Capture a recording to get started.")
+                // The button above is already the call to action, so this just says what lands here.
+                Text("Documents you write will show up here.")
                     .font(.system(size: 11))
                     .foregroundStyle(WWPalette.inkSecondary)
             }

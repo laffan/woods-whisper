@@ -102,9 +102,15 @@ Group container (`group.com.woodswhisper.app`) and asks WidgetKit to reload the 
 the same `persistDocuments()` choke point (plus one seed write at load), skips the write when the
 visible rows haven't changed, and degrades to a no-op if the App Group isn't provisioned.
 
-Tapping a row opens that document by two routes that meet at `DocumentLauncher`: the medium and
-large families link out to `woodswhisper://document/<uuid>`, while `systemSmall` — which WidgetKit
-gives a single tap target, ignoring per-row `Link`s — uses an `OpenDocumentIntent` whose
-`openAppWhenRun` performs it in the app's own process. `ContentView` watches the launcher (rather
-than `onOpenURL` alone) so both routes switch to the Documents tab, and `DocumentsView` consumes
-the id and pushes the document.
+The widget reserves its top slot for a **New Recording** button (`StartRecordingIntent` /
+`woodswhisper://record`, the same action as the Lock Screen widget and the Control) and fills the
+rest with document rows, as many as `GeometryReader` measures room for — widget heights vary by
+device, so the count isn't hardcoded per family.
+
+Tapping anything routes by two mechanisms, picked by family in `tapTarget`: the medium and large
+families link out by URL (`woodswhisper://document/<uuid>` for a row), while `systemSmall` — which
+WidgetKit gives a single `Link` target for the whole widget — runs an App Intent instead, the one
+way to give it several tap targets. A row's `OpenDocumentIntent` sets `openAppWhenRun`, so it
+performs in the app's own process and reaches `DocumentLauncher`. `ContentView` watches that
+launcher (rather than `onOpenURL` alone) so both routes switch to the Documents tab, and
+`DocumentsView` consumes the id and pushes the document.
