@@ -43,7 +43,12 @@ storage, and connectivity code without the model dependencies.
 ## Data model
 
 - **`Recording`** — metadata for one audio clip (audio bytes live on disk via `RecordingStore`).
-  Carries `origin` (watch/phone/pad). `Codable`, so it travels between devices as-is.
+  Carries `origin` (watch/phone/pad). `Codable`, so it travels between devices as-is. An Inbox entry
+  made by *importing text* is the same type with no audio behind it (`Recording.textEntry`, empty
+  `audioFileName`, already `.done`): `isTextOnly` is the single flag every audio-shaped path checks,
+  so one kind of row covers both and nothing downstream needs a second model. `DocumentStore` hands
+  such an entry an `audioURL` that deliberately can't exist, rather than one that resolves to the
+  audio *directory* — so `fileExists` answers "no", not "yes, it's a folder".
 - **`Document`** — a coherent body of ordered, editable **`Paragraph`**s, plus the source
   **`Recording`**s it was built from (kept in a separate "Recordings" section). iOS/iPadOS only.
   Re-transcribing a recording appends its transcript as a paragraph; transforming rewrites the
@@ -65,6 +70,13 @@ storage, and connectivity code without the model dependencies.
 (`SpeechTranscriptionCoordinator` routes to Parakeet — decoding to 16 kHz `[Float]` — or to
 WhisperKit by file path) → sets the recording's `transcript`. "Re-transcribe" then appends that
 text to the document body as a paragraph.
+
+**Import text (iOS):** `AppModel.importText` — from the clipboard or a picked `.txt`/`.md` — joins
+the same pipelines one step in, rather than getting a path of its own. Into a document it's split by
+`Document.paragraphs(from:)` and appended to the body, so it lands exactly where a transcript would;
+into the Inbox it becomes a `Recording.textEntry`, which is an ordinary Inbox row minus the audio.
+Everything downstream — editing, transform, move-to-document, "Reset with Originals", the Markdown
+backup — then works on it unchanged.
 
 **Transform (iOS):** `AppModel.transformDocument` (whole body) / `transformParagraph` (one
 paragraph) → `TextTransformService.transform` → the result **replaces** the paragraphs in place
@@ -106,6 +118,29 @@ The widget reserves its top slot for a **New Recording** button (`StartRecording
 `woodswhisper://record`, the same action as the Lock Screen widget and the Control) and fills the
 rest with document rows, as many as `GeometryReader` measures room for — widget heights vary by
 device, so the count isn't hardcoded per family.
+
+**Recording Live Activity.** While a recording runs, the app raises a Live Activity so the recorder
+is reachable from the Lock Screen and the Dynamic Island. Three pieces, in the shared kit so the app
+and the widget extension agree on all of it:
+
+- `RecordingActivityAttributes` — what's on screen. The elapsed counter is *not* pushed: the content
+  state carries a **virtual** `startedAt` ("now minus the time recorded so far", reset on each
+  continue) and the widget renders it with SwiftUI's self-ticking timer text. So the app only sends
+  an update when the state genuinely changes — pause, continue, stop — instead of once a second, and
+  the counter still skips paused stretches the way the in-app one does. The gain meter is left out
+  on purpose: at ten changes a second it's exactly what the system's update rate limit exists for.
+- `RecordingActivityController` — start / update / end, and the one place that knows a run killed
+  mid-recording can leave a stale activity behind (it clears any before adding one).
+- `RecordingRemote` + the four `LiveActivityIntent`s (pause / resume / save / discard) — the way a
+  press gets back to the recorder. `RecordingSheet` owns the `AudioRecorder`, so while it's
+  capturing it *registers a handler* with `RecordingRemote` and each intent calls straight through
+  to it. `LiveActivityIntent` is the flavour the system performs in the **app's own process**, and
+  the `audio` background mode keeps that process alive for the recording itself, so the press lands
+  on the live recorder rather than on a copy of its state. The handler is called directly rather
+  than published for a view to observe: this arrives while the app is backgrounded behind a locked
+  screen, which is no time to depend on SwiftUI getting around to a view update. The handler is
+  released on every exit path, so a press against an activity the system hasn't cleared yet does
+  nothing.
 
 Tapping anything routes by two mechanisms, picked by family in `tapTarget`: the medium and large
 families link out by URL (`woodswhisper://document/<uuid>` for a row), while `systemSmall` — which

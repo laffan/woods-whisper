@@ -35,8 +35,14 @@ public final class DocumentStore: ObservableObject {
 
     // MARK: Audio paths
 
+    /// The audio file backing `recording`. A text-only entry (imported text, no capture) has none:
+    /// the URL returned for one deliberately names a file that can't exist rather than resolving to
+    /// the audio *directory*, so a `fileExists` check answers "no" instead of "yes, it's a folder".
     public func audioURL(for recording: Recording) -> URL {
-        audioDirURL.appendingPathComponent(recording.audioFileName)
+        guard !recording.isTextOnly else {
+            return audioDirURL.appendingPathComponent("\(recording.id.uuidString).noaudio")
+        }
+        return audioDirURL.appendingPathComponent(recording.audioFileName)
     }
 
     /// A fresh URL to record into. Caller records audio here, then calls `addRecording`.
@@ -303,6 +309,14 @@ public final class DocumentStore: ObservableObject {
         touch(idx)
     }
 
+    /// Append several paragraphs to the bottom of the body in one go (a text import), persisting
+    /// once for the whole batch rather than once per paragraph.
+    public func appendParagraphs(_ paragraphs: [Document.Paragraph], to documentID: UUID) {
+        guard !paragraphs.isEmpty, let idx = index(of: documentID) else { return }
+        documents[idx].paragraphs.append(contentsOf: paragraphs)
+        touch(idx)
+    }
+
     /// Insert a paragraph at `position` in the body (used by the inter-paragraph "+" button).
     public func insertParagraph(_ text: String, at position: Int, in documentID: UUID) {
         guard let idx = index(of: documentID) else { return }
@@ -362,7 +376,7 @@ public final class DocumentStore: ObservableObject {
         guard let doc = document(with: documentID) else { throw DocumentArchiveError.documentNotFound }
 
         var audio: [String: Data] = [:]
-        for recording in doc.recordings {
+        for recording in doc.recordings where !recording.isTextOnly {
             if let data = try? Data(contentsOf: audioURL(for: recording)) {
                 audio[recording.audioFileName] = data
             }
@@ -392,6 +406,12 @@ public final class DocumentStore: ObservableObject {
 
         var importedRecordings: [Recording] = []
         for var recording in archive.document.recordings {
+            // A text-only entry has no file to rewrite — giving it a fresh audio name would turn it
+            // into an audio recording whose clip is permanently missing.
+            guard !recording.isTextOnly else {
+                importedRecordings.append(recording)
+                continue
+            }
             let ext = (recording.audioFileName as NSString).pathExtension
             let newFileName = "\(UUID().uuidString).\(ext.isEmpty ? "m4a" : ext)"
             if let bytes = archive.audio[recording.audioFileName] {
@@ -478,6 +498,7 @@ public final class DocumentStore: ObservableObject {
     }
 
     private func removeAudio(_ recording: Recording) {
+        guard !recording.isTextOnly else { return }   // nothing on disk behind an imported-text entry
         try? FileManager.default.removeItem(at: audioURL(for: recording))
     }
 

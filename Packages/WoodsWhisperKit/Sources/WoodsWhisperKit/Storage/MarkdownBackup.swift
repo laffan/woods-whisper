@@ -56,7 +56,7 @@ public enum MarkdownBackup {
     /// transcript (absent until the recording has been transcribed).
     public static func markdown(for recording: Recording) -> String {
         var out = "# \(headingDate(recording.createdAt))\n\n"
-        out += "*\(label(for: recording.origin)) · \(Recording.durationLabel(recording.duration))*\n"
+        out += "*\(provenance(for: recording))*\n"
         let transcript = recording.transcript?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !transcript.isEmpty { out += "\n\(transcript)\n" }
         return out
@@ -119,6 +119,15 @@ public enum MarkdownBackup {
         let formatter = DateFormatter()
         formatter.dateFormat = "MMM d, yyyy, h:mm a"
         return formatter.string(from: date)
+    }
+
+    /// The italic line under an Inbox entry's heading: which device recorded it and how long the
+    /// clip runs — or, for an entry that was imported as text, simply that. A device and a "0:00"
+    /// would be misleading there: nothing was captured.
+    private static func provenance(for recording: Recording) -> String {
+        recording.isTextOnly
+            ? "Imported text"
+            : "\(label(for: recording.origin)) · \(Recording.durationLabel(recording.duration))"
     }
 
     private static func label(for origin: Recording.Origin) -> String {

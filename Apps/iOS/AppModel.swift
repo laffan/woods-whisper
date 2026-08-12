@@ -399,6 +399,68 @@ final class AppModel: ObservableObject {
         autoTranscribe(recordingID: recording.id, inDocument: inbox.id)
     }
 
+    // MARK: Importing existing text
+
+    /// Import text into a document's body. It's split on blank lines and appended at the bottom, so
+    /// it arrives as ordinary paragraphs — each one editable, reorderable, and transformable like
+    /// anything that got there by being spoken.
+    @discardableResult
+    func importText(_ text: String, intoDocument documentID: UUID) -> Bool {
+        let paragraphs = Document.paragraphs(from: text)
+        guard !paragraphs.isEmpty else {
+            setupError = "There was no text to import."
+            return false
+        }
+        documents.appendParagraphs(paragraphs, to: documentID)
+        let title = documents.document(with: documentID)?.title ?? "document"
+        wwLog("Imported \(paragraphs.count) paragraph\(paragraphs.count == 1 ? "" : "s") into “\(title)”", .general)
+        return true
+    }
+
+    /// Import text into the Inbox as an entry of its own: a capture with no audio behind it, already
+    /// "transcribed", so it reads and behaves like every other Inbox row — editable, transformable,
+    /// and movable into a document.
+    @discardableResult
+    func importText(_ text: String, intoInbox documentID: UUID) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            setupError = "There was no text to import."
+            return false
+        }
+        documents.addRecording(Recording.textEntry(trimmed, origin: deviceOrigin()),
+                               toDocument: documentID)
+        wwLog("Imported \(trimmed.count) characters of text into the Inbox", .general)
+        return true
+    }
+
+    /// The clipboard's text, or nil (having said so) when there's nothing on it to import.
+    func clipboardText() -> String? {
+        #if canImport(UIKit)
+        let text = UIPasteboard.general.string?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !text.isEmpty else {
+            setupError = "There's no text on the clipboard to import."
+            return nil
+        }
+        return text
+        #else
+        return nil
+        #endif
+    }
+
+    /// Read a text file the user picked in the file importer, handling the security-scoped access
+    /// the picker hands back. UTF-8 first, then whatever encoding the file declares, so plain text
+    /// written by other tools still opens.
+    func importedText(from url: URL) -> String? {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        if let text = try? String(contentsOf: url, encoding: .utf8) { return text }
+        var encoding = String.Encoding.utf8
+        if let text = try? String(contentsOf: url, usedEncoding: &encoding) { return text }
+        setupError = "Couldn't read “\(url.lastPathComponent)” as text."
+        wwLog("Failed to read imported text file “\(url.lastPathComponent)”", .error)
+        return nil
+    }
+
     // MARK: Local backup folder
 
     /// Adopt the folder the user picked in Settings as the Markdown backup destination and write

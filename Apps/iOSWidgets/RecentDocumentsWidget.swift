@@ -48,8 +48,9 @@ struct RecentDocumentsProvider: TimelineProvider {
 // MARK: - Palette
 
 /// The app's "field notes" palette (see `WW` in the iOS app), restated here because the design
-/// system lives in the app target and widget extensions only link WoodsWhisperKit.
-private enum WWPalette {
+/// system lives in the app target and widget extensions only link WoodsWhisperKit. Shared with the
+/// recording Live Activity in `RecordWidgets.swift`.
+enum WWPalette {
     static let paper = dynamicColor(light: UIColor(red: 0.969, green: 0.961, blue: 0.941, alpha: 1),
                                     dark: UIColor(red: 0.086, green: 0.094, blue: 0.078, alpha: 1))
     static let ink = dynamicColor(light: UIColor(red: 0.129, green: 0.122, blue: 0.102, alpha: 1),
@@ -62,6 +63,9 @@ private enum WWPalette {
                                        dark: UIColor(red: 0.169, green: 0.180, blue: 0.157, alpha: 1))
     static let moss = dynamicColor(light: UIColor(red: 0.247, green: 0.361, blue: 0.267, alpha: 1),
                                    dark: UIColor(red: 0.576, green: 0.675, blue: 0.549, alpha: 1))
+    /// Recording / destructive, as in the app: a muted ember red.
+    static let ember = dynamicColor(light: UIColor(red: 0.737, green: 0.322, blue: 0.251, alpha: 1),
+                                    dark: UIColor(red: 0.851, green: 0.439, blue: 0.357, alpha: 1))
 
     private static func dynamicColor(light: UIColor, dark: UIColor) -> Color {
         Color(uiColor: UIColor { $0.userInterfaceStyle == .dark ? dark : light })

@@ -80,6 +80,9 @@ newest version overwriting the previous one. Audio isn't backed up. **Back Up No
 - **API mismatch when building** — the FluidAudio / WhisperKit / MLX SDKs changed; adjust the
   lines marked `(1)/(2)/(3)` in `ParakeetTranscriptionService.swift`,
   `WhisperTranscriptionService.swift`, or `GemmaTransformService.swift`.
+- **No recording controls on the Lock Screen** — the Live Activity that carries them is switched off
+  per-app in iOS **Settings → Woods Whisper → Live Activities**. Turn it back on; recording itself is
+  never gated on it, so nothing else changes either way.
 - **Backup folder "couldn't be opened"** — the folder moved, was deleted, or lives on a drive/
   cloud location that isn't currently available. Re-pick it in **Settings → Local Backup**; the
   files already written are untouched.

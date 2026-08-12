@@ -113,8 +113,10 @@ targets:
         INFOPLIST_FILE: Apps/WatchComplication/Info.plist
         WATCHOS_DEPLOYMENT_TARGET: "10.0"
 
-  # iOS widget extension: the "Recent Documents" Home Screen widget, plus the "New Recording"
-  # Lock Screen widget and iOS 18 Control. Embedded in the iOS app; give it a signing team like
+  # iOS widget extension: the "Recent Documents" Home Screen widget, the "New Recording" Lock
+  # Screen widget and iOS 18 Control, and the recording Live Activity — the Lock Screen / Dynamic
+  # Island recorder that's up while a recording runs (it needs NSSupportsLiveActivities in the
+  # app's Info.plist). Embedded in the iOS app; give it a signing team like
   # the other targets. On a free Apple ID the extra app-extension App ID (and the App Group) can
   # be painful to provision — if that blocks you, remove this target and the two `entitlements`
   # blocks and the app still builds; only the widgets are lost. ("New Recording" stays available

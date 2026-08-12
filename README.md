@@ -23,7 +23,8 @@ woods-whisper/
 │   └── Sources/WoodsWhisperKit/     #   transcription, transform, connectivity)
 ├── Apps/iOS/                        # iOS / iPadOS app (Recordings, Documents, Settings)
 ├── Apps/iOSWidgets/                 # iOS widget extension (Recent Documents widget,
-│                                    #   New Recording Lock Screen widget + Control)
+│                                    #   New Recording Lock Screen widget + Control,
+│                                    #   recording Lock Screen / Dynamic Island controls)
 ├── Apps/Watch/                      # watchOS app (record button + recordings list)
 ├── Apps/WatchComplication/          # watch-face "New Recording" complication
 └── docs/                            # ARCHITECTURE.md, SETUP.md, CONNECTIVITY.md
@@ -92,10 +93,25 @@ the rest of the app depends on.
   no network round-trip. Woods Whisper registers `.wwdoc` so it can both create and receive them.
 - **Share audio in.** Send an audio file to Woods Whisper from the iOS share sheet / "Open in…"; it's
   imported into the Inbox and transcribed like any other recording.
+- **Import text you already have.** Not everything starts as speech. The **⋯** menu — top right of a
+  document, and beside the mic in the Inbox — offers **Import from Clipboard** and **Import Text
+  File…** (`.txt`, `.md`). Into a **document**, the text is split on blank lines and appended to the
+  body as ordinary paragraphs, editable and transformable like any other. Into the **Inbox** it
+  becomes an entry of its own — no audio behind it, already "transcribed", so you can edit it,
+  transform it, or move it into a document exactly like a captured clip. (Entries that arrived as
+  text quietly drop the actions that need audio: no play control, no Retranscribe, no Reset.)
 - **Number Paragraphs.** A built-in transform that numbers the paragraphs (applied locally, so it needs
   no language model).
 - **Local backup folder.** Pick a folder in **Settings → Local Backup** and Woods Whisper keeps a
   plain-Markdown copy of everything you write there — see below.
+- **Recording controls on the Lock Screen.** Start a recording and it follows you out of the app: a
+  Live Activity appears on the Lock Screen (and in the Dynamic Island) for as long as capture runs,
+  carrying every control the in-app recorder has — **Pause / Continue**, **Save**, and **Discard** —
+  plus the elapsed counter, which ticks itself and skips the paused stretches the same way. So you
+  can start a clip, pocket the phone, and still run it to its end without unlocking. It goes away
+  the moment the recording does. (Discard there doesn't ask twice — a locked screen is nowhere to
+  put a confirmation — so it's the quietest of the three buttons. The live gain meter is the one
+  thing left in the app: it moves ten times a second, which the system rate-limits away.)
 - **Recent Documents widget.** A Home Screen widget (small / medium / large) with a **New
   Recording** button across the top and, below it, your most recently updated documents — pinned
   first, the same order as the Documents list. **Tap any row to open that document straight away**,
@@ -149,8 +165,10 @@ hardware; the Simulator can't use the ANE).
 > other targets).
 >
 > **iOS widgets (built in).** A WidgetKit extension (`Apps/iOSWidgets`, target
-> `WoodsWhisperWidgets`) ships the **Recent Documents** Home Screen widget plus the **New
-> Recording** Lock Screen widget and iOS 18 Control. It's embedded in the iOS app, so it builds
+> `WoodsWhisperWidgets`) ships the **Recent Documents** Home Screen widget, the **New Recording**
+> Lock Screen widget and iOS 18 Control, and the **recording Live Activity** — the Lock Screen /
+> Dynamic Island recorder described above (it needs `NSSupportsLiveActivities` in the app's
+> Info.plist, which is already there). It's embedded in the iOS app, so it builds
 > with the default scheme — give it a signing team alongside the other targets. The app and the
 > extension share the App Group `group.com.woodswhisper.app` (declared in `project.yml`; xcodegen
 > writes the entitlements files): the app mirrors a small snapshot of the most recent documents

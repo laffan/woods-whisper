@@ -112,6 +112,33 @@ public struct Recording: Identifiable, Codable, Hashable, Sendable {
         targetDocumentID = try c.decodeIfPresent(UUID.self, forKey: .targetDocumentID)
     }
 
+    /// True when there is no audio behind this entry — text imported (from the clipboard or a text
+    /// file) straight into the Inbox rather than captured. Everything audio-shaped — playback,
+    /// sharing the clip, re-transcribing — stands down for these.
+    public var isTextOnly: Bool { audioFileName.isEmpty }
+
+    /// An Inbox entry made of text alone: imported from the clipboard or a text file, with no audio
+    /// file behind it. Already `.done`, because there is nothing left to transcribe.
+    public static func textEntry(_ text: String,
+                                 createdAt: Date = Date(),
+                                 origin: Origin) -> Recording {
+        Recording(name: textEntryName(for: createdAt),
+                  createdAt: createdAt,
+                  duration: 0,
+                  audioFileName: "",
+                  origin: origin,
+                  transcript: text,
+                  status: .done)
+    }
+
+    /// A text-only entry's display name: the capture time alone. The second line of an audio
+    /// recording's name — its duration and file size — would only ever read "0:00" here.
+    public static func textEntryName(for date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d, yyyy, h:mm a"
+        return formatter.string(from: date)
+    }
+
     /// The default, two-line display name:
     ///
     ///     Jun 24, 2026, 3:45 PM

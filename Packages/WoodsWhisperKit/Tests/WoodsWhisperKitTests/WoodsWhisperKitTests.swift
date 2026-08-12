@@ -183,6 +183,26 @@ final class WoodsWhisperKitTests: XCTestCase {
         XCTAssertTrue(plan.values.first?.contains("*iPhone · 0:03*") ?? false)
     }
 
+    func testImportedTextEntryIsMarkedTextOnlyAndAlreadyDone() {
+        let entry = Recording.textEntry("Pasted from the trail guide.", origin: .phone)
+        XCTAssertTrue(entry.isTextOnly)
+        XCTAssertEqual(entry.status, .done)
+        XCTAssertEqual(entry.transcript, "Pasted from the trail guide.")
+        XCTAssertEqual(entry.duration, 0)
+        // A captured clip is never mistaken for one.
+        XCTAssertFalse(Recording(audioFileName: "a.m4a", origin: .phone).isTextOnly)
+    }
+
+    func testImportedTextEntryBacksUpAsImportedText() {
+        // A device name and a "0:00" would be a lie here: nothing was captured.
+        let entry = Recording.textEntry("Pasted.", createdAt: date(2026, 7, 31, 14, 30, 5),
+                                        origin: .phone)
+        let markdown = MarkdownBackup.markdown(for: entry)
+        XCTAssertTrue(markdown.contains("*Imported text*"))
+        XCTAssertFalse(markdown.contains("iPhone"))
+        XCTAssertTrue(markdown.hasSuffix("Pasted.\n"))
+    }
+
     func testCollidingNamesBothGetAnIdSuffix() {
         // Two documents with the same title: neither may keep the bare name, or the file a given
         // document maps to would depend on the order the list happens to be in.

@@ -1,5 +1,6 @@
 import SwiftUI
 import AVFoundation
+import UniformTypeIdentifiers
 import WoodsWhisperKit
 #if canImport(UIKit)
 import UIKit
@@ -56,6 +57,9 @@ struct DocumentDetailView: View {
 
     // Recording flows (insert / replace / re-record / add) routed through one sheet
     @State private var recorderTask: RecorderTask?
+
+    // "Import Text File…" from the overflow menu
+    @State private var showingTextImporter = false
 
     // Playback
     @StateObject private var playback = AudioPlaybackController()
@@ -125,6 +129,9 @@ struct DocumentDetailView: View {
         .sheet(item: $documentFileShare) { item in
             ActivityView(activityItems: [item.url])
         }
+        .fileImporter(isPresented: $showingTextImporter,
+                      allowedContentTypes: TextImportItems.contentTypes,
+                      onCompletion: importTextFile)
         .confirmationDialog("Move recording to…",
                             isPresented: Binding(get: { movingRecording != nil },
                                                  set: { if !$0 { movingRecording = nil } }),
@@ -385,21 +392,26 @@ struct DocumentDetailView: View {
         )
         .wwRow()
         .onLongPressGesture { withAnimation { editMode = .active } }
-        // Swipe left → Delete / Share the audio file
+        // Swipe left → Delete / Share the audio file. An entry that came in as text has no clip to
+        // share (or to re-run speech-to-text over, below).
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             Button("Delete", role: .destructive) {
                 model.documents.deleteRecording(recording.id, fromDocument: documentID)
             }
             .tint(WW.ember)
-            Button("Share") {
-                audioShareItem = AudioShareItem(url: model.documents.audioURL(for: recording))
-            }.tint(WW.violet)
+            if !recording.isTextOnly {
+                Button("Share") {
+                    audioShareItem = AudioShareItem(url: model.documents.audioURL(for: recording))
+                }.tint(WW.violet)
+            }
         }
         // Swipe right → Transcribe (re-run STT) / Append its transcript to the body / Move
         .swipeActions(edge: .leading, allowsFullSwipe: false) {
-            Button("Transcribe") {
-                Task { await model.transcribe(recordingID: recording.id, inDocument: documentID) }
-            }.tint(WW.slate)
+            if !recording.isTextOnly {
+                Button("Transcribe") {
+                    Task { await model.transcribe(recordingID: recording.id, inDocument: documentID) }
+                }.tint(WW.slate)
+            }
             Button("Append") {
                 model.appendRecordingToBody(recordingID: recording.id, in: documentID)
             }.tint(WW.moss)
@@ -445,6 +457,9 @@ struct DocumentDetailView: View {
             if let document {
                 ToolbarItem(placement: .primaryAction) {
                     Menu {
+                        TextImportItems(onClipboard: importFromClipboard,
+                                        onFile: { showingTextImporter = true })
+                        Divider()
                         Button { shareDocumentFile(document) } label: {
                             Label("Share as Woods Whisper File", systemImage: "arrow.up.doc")
                         }
@@ -466,6 +481,25 @@ struct DocumentDetailView: View {
     private func shareDocumentFile(_ document: Document) {
         if let url = model.exportDocumentFile(document.id) {
             documentFileShare = DocumentFileShareItem(url: url)
+        }
+    }
+
+    // MARK: Importing text
+
+    /// Append whatever is on the clipboard to the document body, split into paragraphs.
+    private func importFromClipboard() {
+        guard let text = model.clipboardText() else { return }
+        model.importText(text, intoDocument: documentID)
+    }
+
+    /// Append a picked text file's contents to the document body.
+    private func importTextFile(_ result: Result<URL, Error>) {
+        switch result {
+        case .success(let url):
+            guard let text = model.importedText(from: url) else { return }
+            model.importText(text, intoDocument: documentID)
+        case .failure(let error):
+            model.setupError = "Couldn't open that file: \(error.localizedDescription)"
         }
     }
 
@@ -713,6 +747,33 @@ struct DocumentDetailView: View {
             case .rerecord:        return "Re-record"
             case .insertAtCaret:   return "Insert Recording"
             }
+        }
+    }
+}
+
+// MARK: - Text import
+
+/// The two "bring in text you already have" items, shared by the document overflow menu and the
+/// Inbox's. Both offer the same pair — take the clipboard, or pick a text file — and differ only in
+/// where the text lands, which is the owning view's business.
+///
+/// Lives here (rather than a standalone file) so the app target picks it up without an xcodegen
+/// regen, alongside the Inbox and the recorder it's shared with.
+struct TextImportItems: View {
+    let onClipboard: () -> Void
+    let onFile: () -> Void
+
+    /// What the file importer will offer. `public.plain-text` covers `.txt` and `.md` (Markdown
+    /// conforms to it) while keeping out formats whose bytes aren't the text — an `.rtf` or a
+    /// `.docx` read as a string is markup, not writing.
+    static let contentTypes: [UTType] = [.plainText]
+
+    var body: some View {
+        Button(action: onClipboard) {
+            Label("Import from Clipboard", systemImage: "doc.on.clipboard")
+        }
+        Button(action: onFile) {
+            Label("Import Text File…", systemImage: "doc.text")
         }
     }
 }
@@ -1160,7 +1221,17 @@ private struct RecordingRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            PlayControl(isPlaying: isActive && !isPaused, action: onPlay)
+            // An entry imported as text (moved here from the Inbox) has no clip to play; a text
+            // glyph stands in its place so the row still lines up with its neighbours.
+            if recording.isTextOnly {
+                Image(systemName: "text.alignleft")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(WW.inkTertiary)
+                    .frame(width: 30, height: 30)
+                    .overlay(Circle().stroke(WW.hairline, lineWidth: 1))
+            } else {
+                PlayControl(isPlaying: isActive && !isPaused, action: onPlay)
+            }
 
             RecordingLabel(recording: recording)
 
@@ -1333,9 +1404,16 @@ extension AudioPlaybackController: AVAudioPlayerDelegate {
 // MARK: - Recording sheet
 
 /// A compact bottom "toast" recording surface: it starts recording the moment it appears, shows an
-/// elapsed-time counter and a live gain meter, and offers two equal-size controls — pause/continue
-/// and stop. Stop hands the finished clip back via `onComplete`; swiping it down discards the clip.
-/// Lives here (not a standalone file) so the app target picks it up without an xcodegen regen.
+/// elapsed-time counter and a live gain meter, and offers three equal-size controls — cancel, save,
+/// and pause/continue. Save hands the finished clip back via `onComplete`; swiping the sheet down
+/// discards the clip. Lives here (not a standalone file) so the app target picks it up without an
+/// xcodegen regen.
+///
+/// The same three controls are mirrored onto the Lock Screen and the Dynamic Island for as long as
+/// the recording runs: this sheet raises a Live Activity when capture starts, keeps its paused state
+/// current, and takes it down when the recording ends. While it's up, this sheet holds the
+/// `RecordingRemote` controls, so a press over there runs against this very recorder — there's one
+/// recording either way, not a copy of one.
 struct RecordingSheet: View {
     let title: String
     /// Supplies a fresh URL to record into (e.g. `store.newAudioURL().url`).
@@ -1386,13 +1464,7 @@ struct RecordingSheet: View {
                     .buttonStyle(WWRoundIconButtonStyle(diameter: 62, fill: WW.ember))
                     .accessibilityLabel("Save")
 
-                    Button {
-                        if recorder.isPaused {
-                            recorder.resume(); live.setPaused(false)
-                        } else {
-                            recorder.pause(); live.setPaused(true)
-                        }
-                    } label: {
+                    Button { setPaused(!recorder.isPaused) } label: {
                         Image(systemName: recorder.isPaused ? "play.fill" : "pause.fill")
                     }
                     .buttonStyle(WWRoundIconButtonStyle(diameter: 52, glyphColor: WW.ink))
@@ -1477,6 +1549,10 @@ struct RecordingSheet: View {
         do {
             try recorder.start(to: url)
             startedURL = url
+            // Mirror the recorder onto the Lock Screen / Dynamic Island for as long as it runs, and
+            // take the controls over there, so a press lands on this recording.
+            RecordingActivityController.shared.start(taskName: title)
+            RecordingRemote.shared.takeControl(handle)
             // Live transcription runs a second, in-memory capture alongside the recorder.
             if liveEnabled { live.start(using: model.transcription) }
         } catch {
@@ -1486,18 +1562,55 @@ struct RecordingSheet: View {
 
     private func finish() {
         live.stop()
+        endLockScreenPresence()
         guard let result = recorder.stop() else { dismiss(); return }
         didComplete = true
         onComplete(result.url, result.duration)
         dismiss()
     }
 
-    /// Swiped away without stopping: drop the in-progress clip.
+    /// Swiped away without stopping: drop the in-progress clip. Also the last stop on every other
+    /// exit (`finish` dismisses into it), so it's where the Lock Screen presence is guaranteed to
+    /// come down — taking it down twice is a no-op.
     private func discardIfUnfinished() {
         live.stop()
+        endLockScreenPresence()
         guard !didComplete else { return }
         _ = recorder.stop()
         if let url = startedURL { try? FileManager.default.removeItem(at: url) }
+    }
+
+    /// Take the Live Activity down and hand back the remote controls, so a press on an activity the
+    /// system hasn't cleared yet can't reach a recorder that's already finished.
+    private func endLockScreenPresence() {
+        RecordingActivityController.shared.end()
+        RecordingRemote.shared.releaseControl()
+    }
+
+    /// Pause or continue, from either the on-screen button or the Lock Screen, keeping the live
+    /// transcriber and the Live Activity in step with the recorder.
+    private func setPaused(_ paused: Bool) {
+        guard recorder.isRecording, recorder.isPaused != paused else { return }
+        if paused { recorder.pause() } else { recorder.resume() }
+        live.setPaused(paused)
+        RecordingActivityController.shared.update(isPaused: recorder.isPaused,
+                                                  elapsed: recorder.elapsed)
+    }
+
+    /// Act on a control pressed on the Lock Screen or in the Dynamic Island. Registered with
+    /// `RecordingRemote` while this recording runs, so the press is handled against the recorder
+    /// that's actually capturing rather than a copy of its state.
+    ///
+    /// The same actions the sheet itself offers, with one difference: Discard skips the
+    /// confirmation dialog, because a locked screen is nowhere to put one. Its button over there is
+    /// the quietest of the three for that reason.
+    private func handle(_ action: RecordingRemote.Action) {
+        switch action {
+        case .pause:   setPaused(true)
+        case .resume:  setPaused(false)
+        case .save:    finish()
+        case .discard: cancel()
+        }
     }
 
     private func timeString(_ t: TimeInterval) -> String {
@@ -1518,6 +1631,9 @@ struct InboxView: View {
 
     @State private var showingRecorder = false
     @State private var editingRecording: Recording?
+
+    // "Import Text File…" from the toolbar menu beside the mic
+    @State private var showingTextImporter = false
 
     // Long-press-to-select (the Inbox's own batch mode).
     @State private var selectionMode = false
@@ -1592,12 +1708,26 @@ struct InboxView: View {
                     Button(selected.count == recordings.count ? "Deselect All" : "Select All") { selectAll() }
                 }
             } else {
+                // The same import menu the documents carry, sitting beside the mic: the Inbox takes
+                // text you already have as readily as it takes something you said.
+                ToolbarItem(placement: .primaryAction) {
+                    Menu {
+                        TextImportItems(onClipboard: importFromClipboard,
+                                        onFile: { showingTextImporter = true })
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                    .accessibilityLabel("Import Text")
+                }
                 ToolbarItem(placement: .primaryAction) {
                     Button { showingRecorder = true } label: { Image(systemName: "mic.badge.plus") }
                         .accessibilityLabel("New Recording")
                 }
             }
         }
+        .fileImporter(isPresented: $showingTextImporter,
+                      allowedContentTypes: TextImportItems.contentTypes,
+                      onCompletion: importTextFile)
         .safeAreaInset(edge: .bottom) {
             if selectionMode {
                 WWBatchBar {
@@ -1618,7 +1748,7 @@ struct InboxView: View {
             if recordings.isEmpty {
                 WWEmptyState(title: "Inbox is empty",
                              systemImage: "tray",
-                             message: "Recordings from your Watch and the mic button land here.")
+                             message: "Recordings from your Watch and the mic button land here — as does text you import.")
             }
         }
         .sheet(isPresented: $showingRecorder) {
@@ -1653,6 +1783,25 @@ struct InboxView: View {
             TextField("Title", text: $newDocTitle)
             Button("Save") { confirmNewDocument() }
             Button("Cancel", role: .cancel) { pendingNewDocIDs = nil }
+        }
+    }
+
+    // MARK: Importing text
+
+    /// File the clipboard's text away as a new Inbox entry.
+    private func importFromClipboard() {
+        guard let text = model.clipboardText() else { return }
+        model.importText(text, intoInbox: documentID)
+    }
+
+    /// File a picked text file's contents away as a new Inbox entry.
+    private func importTextFile(_ result: Result<URL, Error>) {
+        switch result {
+        case .success(let url):
+            guard let text = model.importedText(from: url) else { return }
+            model.importText(text, intoInbox: documentID)
+        case .failure(let error):
+            model.setupError = "Couldn't open that file: \(error.localizedDescription)"
         }
     }
 
@@ -1860,7 +2009,10 @@ private struct InboxRecordingRow: View {
 
             if !selectionMode {
                 Menu {
-                    Button("Retranscribe", systemImage: "arrow.clockwise", action: onRetranscribe)
+                    // Nothing to re-run speech-to-text over when the entry arrived as text.
+                    if !recording.isTextOnly {
+                        Button("Retranscribe", systemImage: "arrow.clockwise", action: onRetranscribe)
+                    }
                     if recording.transcript?.isEmpty == false {
                         Button("Copy Transcript", systemImage: "doc.on.doc", action: onCopy)
                     }
@@ -1925,6 +2077,10 @@ private struct InboxTranscriptEditor: View {
 
     private var isEmpty: Bool { text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
+    /// An entry that came in as text rather than as a clip: there's no audio to share and no
+    /// original transcription to reset back to.
+    private var isTextOnly: Bool { recording?.isTextOnly ?? false }
+
     var body: some View {
         TextEditorSheet(title: "Edit Transcript", text: $text, onSave: { persist() }) {
             VStack(spacing: 0) {
@@ -1940,12 +2096,17 @@ private struct InboxTranscriptEditor: View {
                 HStack(spacing: 0) {
                     actionButton("Copy", "doc.on.doc") { copy() }
                         .disabled(working || isEmpty)
-                    actionButton("Share", "square.and.arrow.up") { showingShareChoice = true }
-                        .disabled(working)
+                    // With no clip behind it there's no choice to offer — Share goes straight to
+                    // the words.
+                    actionButton("Share", "square.and.arrow.up") {
+                        if isTextOnly { shareTarget = ShareTarget(items: [text]) }
+                        else { showingShareChoice = true }
+                    }
+                    .disabled(working || (isTextOnly && isEmpty))
                     actionButton("Transform", "wand.and.stars") { showingTransform = true }
                         .disabled(!model.modelReady || working || isEmpty)
                     actionButton("Reset", "arrow.uturn.backward") { reset() }
-                        .disabled(working)
+                        .disabled(working || isTextOnly)
                 }
                 .padding(.vertical, 8).padding(.horizontal, 8)
             }

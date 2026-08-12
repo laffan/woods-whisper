@@ -44,6 +44,13 @@
         <string>bluetooth-peripheral</string>
     </array>
 
+    <!-- The recording Live Activity: the Lock Screen / Dynamic Island recorder (with its pause,
+         save, and discard controls) that's up for as long as a recording is running. Its buttons
+         are LiveActivityIntents, performed in this app's process, which reach the recorder because
+         the `audio` background mode above keeps the app alive while it captures. -->
+    <key>NSSupportsLiveActivities</key>
+    <true/>
+
     <key>UILaunchScreen</key>
     <dict/>
 

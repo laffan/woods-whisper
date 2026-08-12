@@ -100,6 +100,10 @@ public final class AudioRecorder: NSObject, ObservableObject {
         recorder.pause()
         if let start = startDate { accumulatedElapsed += Date().timeIntervalSince(start) }
         startDate = nil
+        // Settle `elapsed` on the exact pause instant rather than leaving it wherever the 0.1s
+        // timer last left it — the paused counter is a frozen number, on screen and on the Lock
+        // Screen, so it shouldn't be up to a tenth of a second short.
+        elapsed = accumulatedElapsed
         isPaused = true
         currentLevel = 0
         stopLevelTimer()
