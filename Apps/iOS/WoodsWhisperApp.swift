@@ -427,22 +427,37 @@ extension View {
     }
 }
 
-// MARK: - Round icon button (recorder controls)
+// MARK: - Record button & round icon controls
 
-/// The app's one "start recording" control: a red disc, centered, floating just above the bottom
-/// bar of the Inbox and of a document. It replaces the mic that used to sit in the toolbar — the
-/// thing you do most often shouldn't be the smallest target on the screen.
+/// The app's one "start recording" control: a plain red dot, centered above the bottom bar of the
+/// Inbox and of a document. It replaces the mic that used to sit in the toolbar — the thing you do
+/// most often shouldn't be the smallest target on the screen.
+///
+/// Nothing behind it: no plate, no shadow, no glyph. It floats over the text, which scrolls past
+/// underneath.
 struct WWRecordButton: View {
     var diameter: CGFloat = 62
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: "mic.fill")
+            Circle()
+                .fill(WW.ember)
+                .frame(width: diameter, height: diameter)
+                .contentShape(Circle())
         }
-        .buttonStyle(WWRoundIconButtonStyle(diameter: diameter, fill: WW.ember))
-        .shadow(color: .black.opacity(0.16), radius: 10, y: 3)
+        .buttonStyle(DotStyle())
         .accessibilityLabel("New Recording")
+    }
+
+    /// Press feedback only — the dot itself is the whole button.
+    private struct DotStyle: ButtonStyle {
+        func makeBody(configuration: Configuration) -> some View {
+            configuration.label
+                .opacity(configuration.isPressed ? 0.55 : 1)
+                .scaleEffect(configuration.isPressed ? 0.94 : 1)
+                .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+        }
     }
 }
 

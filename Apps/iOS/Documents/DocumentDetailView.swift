@@ -197,14 +197,14 @@ struct DocumentDetailView: View {
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
                 InsertHereButton(isRecording: recorderTask == .insertBody(at: 0)) {
-                    recorderTask = .insertBody(at: 0)
+                    startInsert(at: 0)
                 }
                 .listRowBackground(Color.clear)
                 .listRowSeparator(.hidden)
             } else {
                 if !editMode.isEditing {
                     InsertHereButton(isRecording: recorderTask == .insertBody(at: 0)) {
-                        recorderTask = .insertBody(at: 0)
+                        startInsert(at: 0)
                     }
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
@@ -238,9 +238,11 @@ struct DocumentDetailView: View {
         let isEditing = editingParagraphID == para.id
         let row = VStack(alignment: .leading, spacing: 10) {
             paragraphContent(para)
-            if !editMode.isEditing && !isEditing {
+            // The "+" stays under the paragraph you're editing: adding a section below what you're
+            // working on is exactly when you want it.
+            if !editMode.isEditing {
                 InsertHereButton(isRecording: recorderTask == .insertBody(at: position)) {
-                    recorderTask = .insertBody(at: position)
+                    startInsert(at: position)
                 }
             }
         }
@@ -736,6 +738,24 @@ struct DocumentDetailView: View {
         }
     }
 
+    /// Tap "+": record a clip whose transcript becomes a new section at `position`.
+    ///
+    /// With an editor open, the buffer is committed first — and committing can change how many
+    /// paragraphs sit above the slot (blank lines split it in two; emptying it removes it), so the
+    /// slot is re-reckoned before the recorder is handed it. Only an edit *above* the slot moves it.
+    private func startInsert(at position: Int) {
+        if let id = editingParagraphID {
+            let index = document?.paragraphs.firstIndex(where: { $0.id == id })
+            let resulting = Document.paragraphs(from: editingText).count
+            finishEditing()
+            if let index, index < position {
+                recorderTask = .insertBody(at: max(0, position + resulting - 1))
+                return
+            }
+        }
+        recorderTask = .insertBody(at: position)
+    }
+
     /// Open the editor on a paragraph, committing whatever was already open. The caret starts at the
     /// end of the text, so "Insert" with nothing else touched appends.
     private func startEditing(_ para: Document.Paragraph) {
@@ -844,6 +864,9 @@ struct TextImportItems: View {
 
 /// A minimal "insert here" affordance: a thin rule across the row with a small + at its center.
 /// While a recording is being captured for this slot it turns into a red dot.
+///
+/// It carries more space below than above, so the rule reads as belonging to the paragraph it sits
+/// under rather than floating midway between two.
 private struct InsertHereButton: View {
     var isRecording: Bool = false
     let action: () -> Void
@@ -860,7 +883,8 @@ private struct InsertHereButton: View {
         }
         .buttonStyle(.plain)
         .disabled(isRecording)
-        .padding(.vertical, 4)
+        .padding(.top, 4)
+        .padding(.bottom, 16)
     }
 
     private var rule: some View {
@@ -949,8 +973,11 @@ struct CaptureBar: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // No background behind the dot — the list's text passes underneath it. The padding is
+            // lopsided on purpose: it lifts the dot clear of the bar without changing the height
+            // this inset takes from the list.
             WWRecordButton(action: onRecord)
-                .padding(.vertical, 10)
+                .padding(.bottom, 20)
 
             VStack(spacing: 0) {
                 WWHairline()
@@ -962,7 +989,6 @@ struct CaptureBar: View {
             }
             .background(WW.surface)
         }
-        .background(WW.paper)
         .onAppear {
             isOn = selected != nil
             showingList = false

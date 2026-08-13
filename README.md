@@ -78,9 +78,9 @@ the rest of the app depends on.
   off either the text or the audio clip); for a paragraph they're **Revise / Insert / Transform**.
   **Done** saves and closes; blank lines you added split the block into separate paragraphs.
 - **One red record button.** Recording isn't a toolbar glyph any more. In the **Inbox** and inside a
-  **document** it's a round red button, centered just above the bottom bar, and it does what the mic
-  did there before: a clip filed into the Inbox, or one added to the document (its transcript
-  appended to the body).
+  **document** it's a plain red dot, centered above the bottom bar — nothing behind it, the text
+  scrolling past underneath — and it does what the mic did there before: a clip filed into the
+  Inbox, or one added to the document (its transcript appended to the body).
 - **Auto transform.** A toggle at the bottom of the Inbox and of every document. Flip it on and a
   list of your transforms opens; pick one and it runs by itself on every new recording the moment
   that recording is first transcribed — so captures arrive already cleaned up, summarized, or
