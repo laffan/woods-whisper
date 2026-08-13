@@ -76,6 +76,16 @@ public final class DocumentStore: ObservableObject {
         persistDocuments()
     }
 
+    /// Choose (or clear, with nil) the transform run automatically the first time a recording in this
+    /// document is transcribed — the "Auto transform" toggle at the bottom of the Inbox and of each
+    /// document. Like pinning, this is metadata rather than an edit, so it doesn't bump `updatedAt`.
+    public func setAutoTransform(_ presetID: UUID?, for documentID: UUID) {
+        guard let idx = index(of: documentID) else { return }
+        guard documents[idx].autoTransformPresetID != presetID else { return }
+        documents[idx].autoTransformPresetID = presetID
+        persistDocuments()
+    }
+
     /// Ordered, lightweight snapshots of the user's documents (Inbox excluded), pinned first then by
     /// most-recently-updated — the list pushed to the Watch as record targets.
     public var documentDescriptors: [DocumentDescriptor] {

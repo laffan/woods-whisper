@@ -67,10 +67,27 @@ the rest of the app depends on.
   now the first top-level section (ahead of Documents) rather than a row inside the documents list.
   It reads as a capture feed — **newest first**, each entry showing its transcript preview over the
   capture date and time. There's no play control on the rows; the text runs the full width.
-- **Inbox gestures.** **Tap** an entry to open its transcript editor straight away, with **Copy /
-  Share / Transform / Reset** under the text — **Share** hands off either the text or the audio
-  clip. **Swipe left** for **Move** (into a document) and **Delete**; **swipe right** for **Copy**
-  and **Transform**. Long-press still enters batch selection.
+- **Inbox gestures.** **Tap** an entry to edit its transcript — **in place**, where it sits (see
+  *Editing in place* below). **Swipe left** for **Move** (into a document) and **Delete**; **swipe
+  right** for **Copy** and **Transform**. Long-press still enters batch selection.
+- **Editing in place.** Editing never opens a sheet over what you're reading. Tap an Inbox entry (or
+  double-tap a paragraph in a document, or swipe it right → **Edit**) and *that block* becomes the
+  editor: an outlined box that grows with the text, everything around it left where it was. The
+  actions live in the bar along the bottom — a compressed row of icons at the **left**, **Done** at
+  the **right**. For an Inbox entry the icons are **Copy / Share / Transform / Reset** (Share hands
+  off either the text or the audio clip); for a paragraph they're **Revise / Insert / Transform**.
+  **Done** saves and closes; blank lines you added split the block into separate paragraphs.
+- **One red record button.** Recording isn't a toolbar glyph any more. In the **Inbox** and inside a
+  **document** it's a round red button, centered just above the bottom bar, and it does what the mic
+  did there before: a clip filed into the Inbox, or one added to the document (its transcript
+  appended to the body).
+- **Auto transform.** A toggle at the bottom of the Inbox and of every document. Flip it on and a
+  list of your transforms opens; pick one and it runs by itself on every new recording the moment
+  that recording is first transcribed — so captures arrive already cleaned up, summarized, or
+  whatever else you asked for. The bar then carries the transform's name (tap it to pick another,
+  flip the toggle off to stop). Each document remembers its own choice, and so does the Inbox. Only
+  a *first* transcription is transformed: **Retranscribe** and **Reset** still give you the original
+  words back.
 - **Record straight to a document from the Watch.** The iPhone syncs your document list to the Watch
   over WatchConnectivity; swipe left on the Watch's record screen to pick a target document (or the
   Inbox). The chosen target's name shows on the record screen, and clips captured there are filed into
@@ -82,9 +99,8 @@ the rest of the app depends on.
   **Pin** — **Unpin** once everything selected is pinned — and **Share** to the whole selection.
   Copy and Share hand over a single Markdown file with each document under its own heading, the
   same way the backup folder writes them. **Done** leaves selection mode.
-- **Insert while editing.** The paragraph editor has an **Insert** button that records a clip,
-  transcribes it, and splices the text in at the cursor — the clip is saved with the document's other
-  recordings.
+- **Insert while editing.** While editing a paragraph, **Insert** records a clip, transcribes it, and
+  splices the text in at the cursor — the clip is saved with the document's other recordings.
 - **Find & replace.** The whole-document editor has a find/replace bar at the bottom (the magnifying
   glass in the editor's toolbar) — search, step through matches, and Replace / Replace All.
 - **Share a whole document as a file.** From a document's overflow menu, **Share as Woods Whisper
@@ -94,7 +110,7 @@ the rest of the app depends on.
 - **Share audio in.** Send an audio file to Woods Whisper from the iOS share sheet / "Open in…"; it's
   imported into the Inbox and transcribed like any other recording.
 - **Import text you already have.** Not everything starts as speech. The **⋯** menu — top right of a
-  document, and beside the mic in the Inbox — offers **Import from Clipboard** and **Import Text
+  document, and top right of the Inbox — offers **Import from Clipboard** and **Import Text
   File…** (`.txt`, `.md`). Into a **document**, the text is split on blank lines and appended to the
   body as ordinary paragraphs, editable and transformable like any other. Into the **Inbox** it
   becomes an entry of its own — no audio behind it, already "transcribed", so you can edit it,

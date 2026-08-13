@@ -52,7 +52,9 @@ storage, and connectivity code without the model dependencies.
 - **`Document`** — a coherent body of ordered, editable **`Paragraph`**s, plus the source
   **`Recording`**s it was built from (kept in a separate "Recordings" section). iOS/iPadOS only.
   Re-transcribing a recording appends its transcript as a paragraph; transforming rewrites the
-  paragraphs in place. The **Inbox** is a `Document` rendered as a flat recordings list.
+  paragraphs in place. The **Inbox** is a `Document` rendered as a flat recordings list. It also
+  carries `autoTransformPresetID` — the "Auto transform" choice — which is why the Inbox and each
+  document remember their own without a second store or a global setting.
 - **`PromptPreset`** — a named, reusable instruction (`systemPrompt` + `template` with a
   `{{transcript}}` token) plus generation params. Three built-ins ship; users add their own.
 - **`DeviceLink`** — describes the Watch↔host pairing; for the direct-to-iPad path it stores the
@@ -79,8 +81,17 @@ Everything downstream — editing, transform, move-to-document, "Reset with Orig
 backup — then works on it unchanged.
 
 **Transform (iOS):** `AppModel.transformDocument` (whole body) / `transformParagraph` (one
-paragraph) → `TextTransformService.transform` → the result **replaces** the paragraphs in place
-rather than appending a new block.
+paragraph) / `transformRecordingTranscript` (one clip's transcript) → `TextTransformService.transform`
+→ the result **replaces** the text in place rather than appending a new block.
+
+**Auto transform (iOS):** `AppModel.transcribe` notes whether the recording's `transcript` was nil
+*before* it ran — the test for "first transcription" — and on success calls `applyAutoTransform`,
+which looks up the document's `autoTransformPresetID` and runs it through the same
+`transformRecordingTranscript` path. Hanging it off `transcribe` (rather than off each capture site)
+is what makes it apply to every arrival — Watch clip, device capture, shared audio — with no branch
+of its own; anchoring it to the first transcription is what keeps **Retranscribe** and **Reset**
+returning the original words. In a document the body text is read back *after* `transcribe` returns,
+so the transformed text is what lands in the body.
 
 ## Persistence
 

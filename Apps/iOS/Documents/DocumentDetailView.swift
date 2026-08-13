@@ -33,8 +33,11 @@ struct DocumentDetailView: View {
     @State private var isTransformingDoc = false
     @State private var transformingParagraphID: UUID?
 
-    // Paragraph editing
-    @State private var editingParagraph: Document.Paragraph?
+    // Paragraph editing — in place, in the list. `editingText` / `editingSelection` are the live
+    // buffer and caret for the paragraph identified by `editingParagraphID`.
+    @State private var editingParagraphID: UUID?
+    @State private var editingText = ""
+    @State private var editingSelection = NSRange(location: 0, length: 0)
 
     // Whole-document editing (the "Edit" action)
     @State private var showingDocEditor = false
@@ -80,40 +83,16 @@ struct DocumentDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbarContent(for: document) }
         .onAppear { playback.onError = { message in model.setupError = message } }
-        .onDisappear { playback.stop() }
+        // Leaving the document commits an open in-place edit rather than dropping it.
+        .onDisappear {
+            playback.stop()
+            finishEditing()
+        }
         .sheet(item: $recorderTask) { task in
             RecordingSheet(title: task.sheetTitle,
                            makeURL: { model.documents.newAudioURL().url }) { url, duration in
                 complete(task, url: url, duration: duration)
             }
-        }
-        .sheet(item: $editingParagraph) { para in
-            ParagraphEditorSheet(
-                initialText: para.text,
-                modelReady: model.modelReady,
-                onSave: { text in
-                    // Blank lines added while editing split into separate sections.
-                    model.documents.replaceParagraph(para.id, in: documentID, withTextSplitInto: text)
-                },
-                onRevise: {
-                    editingParagraph = nil
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                        recorderTask = .revise(paragraphID: para.id)
-                    }
-                },
-                onTransform: {
-                    editingParagraph = nil
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                        withAnimation(.snappy(duration: 0.22)) { paragraphTransformTarget = para.id }
-                    }
-                },
-                onInsert: { text, caret in
-                    editingParagraph = nil
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                        recorderTask = .insertAtCaret(paragraphID: para.id, caret: caret, baseText: text)
-                    }
-                }
-            )
         }
         .sheet(isPresented: $showingDocEditor) {
             TextEditorSheet(title: "Edit Document", text: $docEditorText) {
@@ -172,6 +151,19 @@ struct DocumentDetailView: View {
         }
         .wwList()
         .environment(\.editMode, $editMode)
+        // Bottom furniture: the paragraph editor's icon nav + Done while editing in place,
+        // otherwise the record button and the Auto transform toggle. Both stand down while the
+        // list is in reorder mode, where the toolbar's own Done is the way out.
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if editingParagraphID != nil {
+                paragraphEditBar()
+            } else if !editMode.isEditing {
+                CaptureBar(presets: model.documents.presets,
+                           selected: model.autoTransformPreset(for: documentID),
+                           onSelect: { model.setAutoTransform($0, for: documentID) },
+                           onRecord: { recorderTask = .addToRecordings })
+            }
+        }
         .overlay(alignment: .top) {
             if isTransformingDoc {
                 BusyBanner(message: "Transforming document…").padding(.top, 8)
@@ -220,40 +212,7 @@ struct DocumentDetailView: View {
                 }
                 ForEach(document.paragraphs) { para in
                     let position = (document.paragraphs.firstIndex(of: para) ?? 0) + 1
-                    VStack(alignment: .leading, spacing: 10) {
-                        paragraphContent(para)
-                        if !editMode.isEditing {
-                            InsertHereButton(isRecording: recorderTask == .insertBody(at: position)) {
-                                recorderTask = .insertBody(at: position)
-                            }
-                        }
-                    }
-                    .contentShape(Rectangle())
-                    .listRowBackground(Color.clear)
-                    .listRowSeparator(.hidden)
-                    .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 20))
-                    .onTapGesture(count: 2) {
-                        guard !editMode.isEditing else { return }
-                        startEditing(para)
-                    }
-                    .onLongPressGesture {
-                        withAnimation { editMode = .active }
-                    }
-                    // Swipe left → Replace / Delete
-                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                        Button("Delete", role: .destructive) {
-                            model.documents.deleteParagraph(para.id, in: documentID)
-                        }
-                        .tint(WW.ember)
-                        Button("Revise") { recorderTask = .revise(paragraphID: para.id) }.tint(WW.amber)
-                    }
-                    // Swipe right → Transform / Edit
-                    .swipeActions(edge: .leading, allowsFullSwipe: false) {
-                        Button("Transform") {
-                            withAnimation(.snappy(duration: 0.22)) { paragraphTransformTarget = para.id }
-                        }.tint(WW.violet)
-                        Button("Edit") { startEditing(para) }.tint(WW.slate)
-                    }
+                    paragraphRow(para, position: position)
                 }
                 .onMove { offsets, destination in
                     model.documents.moveParagraphs(in: documentID, from: offsets, to: destination)
@@ -269,9 +228,63 @@ struct DocumentDetailView: View {
         }
     }
 
+    /// One paragraph of the body, with the inter-paragraph "+" beneath it.
+    ///
+    /// The paragraph being edited drops every gesture the others carry: its row *is* the editor, so
+    /// a double tap belongs to the text view (select a word), a long press to the selection handles,
+    /// and a swipe to the caret — not to reorder, delete, or revise.
+    @ViewBuilder
+    private func paragraphRow(_ para: Document.Paragraph, position: Int) -> some View {
+        let isEditing = editingParagraphID == para.id
+        let row = VStack(alignment: .leading, spacing: 10) {
+            paragraphContent(para)
+            if !editMode.isEditing && !isEditing {
+                InsertHereButton(isRecording: recorderTask == .insertBody(at: position)) {
+                    recorderTask = .insertBody(at: position)
+                }
+            }
+        }
+        .contentShape(Rectangle())
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
+        .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 20))
+
+        if isEditing {
+            row
+        } else {
+            row
+                .onTapGesture(count: 2) {
+                    guard !editMode.isEditing else { return }
+                    startEditing(para)
+                }
+                .onLongPressGesture {
+                    withAnimation { editMode = .active }
+                }
+                // Swipe left → Replace / Delete
+                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                    Button("Delete", role: .destructive) {
+                        model.documents.deleteParagraph(para.id, in: documentID)
+                    }
+                    .tint(WW.ember)
+                    Button("Revise") { recorderTask = .revise(paragraphID: para.id) }.tint(WW.amber)
+                }
+                // Swipe right → Transform / Edit
+                .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                    Button("Transform") {
+                        withAnimation(.snappy(duration: 0.22)) { paragraphTransformTarget = para.id }
+                    }.tint(WW.violet)
+                    Button("Edit") { startEditing(para) }.tint(WW.slate)
+                }
+        }
+    }
+
     @ViewBuilder
     private func paragraphContent(_ para: Document.Paragraph) -> some View {
-        if transformingParagraphID == para.id {
+        if editingParagraphID == para.id {
+            InlineTextEditor(text: $editingText, selection: $editingSelection)
+                .wwEditingFrame()
+                .padding(.vertical, 6)
+        } else if transformingParagraphID == para.id {
             HStack(spacing: 8) {
                 ProgressView()
                 Text("Transforming…").foregroundStyle(WW.inkSecondary)
@@ -454,6 +467,7 @@ struct DocumentDetailView: View {
                 Button("Done") { withAnimation { editMode = .inactive } }
             }
         } else {
+            // No mic up here any more: recording is the red button above the bottom bar.
             if let document {
                 ToolbarItem(placement: .primaryAction) {
                     Menu {
@@ -466,11 +480,6 @@ struct DocumentDetailView: View {
                     } label: {
                         Image(systemName: "ellipsis.circle")
                     }
-                }
-            }
-            ToolbarItem(placement: .primaryAction) {
-                Button { recorderTask = .addToRecordings } label: {
-                    Label("Add Recording", systemImage: "mic.badge.plus")
                 }
             }
         }
@@ -713,10 +722,63 @@ struct DocumentDetailView: View {
         return before + lead + piece + trail + after
     }
 
-    // MARK: Paragraph editing
+    // MARK: Paragraph editing (in place)
 
+    /// The bar under an in-place paragraph edit: the actions the editor sheet used to carry, now a
+    /// compressed icon row in the bottom-left corner, with Done at the bottom-right.
+    private func paragraphEditBar() -> some View {
+        WWInlineEditBar(onDone: { finishEditing() }) {
+            WWInlineEditAction("Revise", "mic.fill") { reviseEditingParagraph() }
+            WWInlineEditAction("Insert", "text.insert") { insertIntoEditingParagraph() }
+            WWInlineEditAction("Transform", "wand.and.stars", enabled: model.modelReady) {
+                transformEditingParagraph()
+            }
+        }
+    }
+
+    /// Open the editor on a paragraph, committing whatever was already open. The caret starts at the
+    /// end of the text, so "Insert" with nothing else touched appends.
     private func startEditing(_ para: Document.Paragraph) {
-        editingParagraph = para
+        if editingParagraphID != nil { finishEditing() }
+        editingText = para.text
+        editingSelection = NSRange(location: (para.text as NSString).length, length: 0)
+        withAnimation(.snappy(duration: 0.22)) { editingParagraphID = para.id }
+    }
+
+    /// Done: write the buffer back and close the editor. Blank lines added while editing split into
+    /// separate paragraphs; emptying the text deletes it.
+    private func finishEditing() {
+        guard let id = editingParagraphID else { return }
+        editingParagraphID = nil
+        model.documents.replaceParagraph(id, in: documentID, withTextSplitInto: editingText)
+    }
+
+    /// "Revise": keep what's been typed, then record a clip that replaces the whole paragraph. Saved
+    /// in place (not split) so the paragraph keeps the identity the recorder task refers to.
+    private func reviseEditingParagraph() {
+        guard let id = editingParagraphID else { return }
+        editingParagraphID = nil
+        model.documents.updateParagraph(id, in: documentID, to: editingText)
+        recorderTask = .revise(paragraphID: id)
+    }
+
+    /// "Insert": record a clip and splice its transcript in at the caret. The buffer rides along with
+    /// the task rather than being saved first, so the splice lands in the text as it stands on screen.
+    private func insertIntoEditingParagraph() {
+        guard let id = editingParagraphID else { return }
+        let text = editingText
+        let caret = editingSelection.location
+        editingParagraphID = nil
+        recorderTask = .insertAtCaret(paragraphID: id, caret: caret, baseText: text)
+    }
+
+    /// "Transform": flush the edits in place, then open the transform pane over this paragraph so the
+    /// preset runs on what's on screen.
+    private func transformEditingParagraph() {
+        guard let id = editingParagraphID else { return }
+        editingParagraphID = nil
+        model.documents.updateParagraph(id, in: documentID, to: editingText)
+        withAnimation(.snappy(duration: 0.22)) { paragraphTransformTarget = id }
     }
 
     /// What a presented `RecordingSheet` should do with the finished clip.
@@ -808,14 +870,15 @@ private struct InsertHereButton: View {
 
 // MARK: - Text editor sheet
 
-/// A full-screen text editor used for editing a single paragraph, the whole document, or a
-/// document from the list. An optional `accessory` is pinned below the editor (used by the
-/// paragraph editor to offer Revise / Transform).
-struct TextEditorSheet<Accessory: View>: View {
+/// A full-screen text editor for a whole document — from the Documents list, or the document
+/// screen's own "Edit" action — with find/replace along the bottom.
+///
+/// Editing a single block (an Inbox entry's transcript, one paragraph of a document) doesn't come
+/// here any more: those are edited in place, in the list, by `InlineTextEditor`.
+struct TextEditorSheet: View {
     let title: String
     @Binding var text: String
     let onSave: () -> Void
-    @ViewBuilder var accessory: () -> Accessory
     @Environment(\.dismiss) private var dismiss
 
     @State private var showingFindReplace = false
@@ -839,7 +902,6 @@ struct TextEditorSheet<Accessory: View>: View {
                 TextEditor(text: $text)
                     .padding()
                 #endif
-                accessory()
             }
             .background(WW.paper)
             .navigationTitle(title)
@@ -864,101 +926,161 @@ struct TextEditorSheet<Accessory: View>: View {
     }
 }
 
-extension TextEditorSheet where Accessory == EmptyView {
-    init(title: String, text: Binding<String>, onSave: @escaping () -> Void) {
-        self.init(title: title, text: text, onSave: onSave) { EmptyView() }
+// MARK: - Capture bar (record button + Auto transform)
+
+/// The furniture along the bottom of the Inbox and of a document: the red record button, centered
+/// just above the bar, and the "Auto transform" toggle below it.
+///
+/// Flipping the toggle on opens the list of transforms; picking one closes the list again and the
+/// bar carries its name from then on (tap it to change your mind). The choice is remembered per
+/// document — the Inbox and each document keep their own — and is applied by `AppModel` the first
+/// time a clip filed there is transcribed.
+struct CaptureBar: View {
+    let presets: [PromptPreset]
+    let selected: PromptPreset?
+    let onSelect: (PromptPreset?) -> Void
+    let onRecord: () -> Void
+
+    /// Whether the toggle reads as on. Held locally as well as in the store because "on, but no
+    /// transform picked yet" is a real state: it's what you see between flipping the switch and
+    /// choosing from the list.
+    @State private var isOn = false
+    @State private var showingList = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            WWRecordButton(action: onRecord)
+                .padding(.vertical, 10)
+
+            VStack(spacing: 0) {
+                WWHairline()
+                if isOn && showingList {
+                    presetList
+                    WWHairline()
+                }
+                toggleRow
+            }
+            .background(WW.surface)
+        }
+        .background(WW.paper)
+        .onAppear {
+            isOn = selected != nil
+            showingList = false
+        }
+        // A transform deleted (or reset) out from under the choice turns the toggle back off, rather
+        // than leaving it reading "on" over nothing.
+        .onChange(of: selected?.id) { _, id in
+            if id == nil && !showingList { isOn = false }
+        }
+    }
+
+    private var toggleRow: some View {
+        HStack(spacing: 12) {
+            Button {
+                guard isOn else { return }
+                withAnimation(.snappy(duration: 0.22)) { showingList.toggle() }
+            } label: {
+                HStack(spacing: 8) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Auto transform")
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(WW.ink)
+                        if isOn {
+                            Text(selected?.name ?? "Choose a transform")
+                                .font(.caption)
+                                .foregroundStyle(selected == nil ? WW.amber : WW.inkSecondary)
+                        }
+                    }
+                    if isOn {
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 11, weight: .semibold))
+                            .rotationEffect(.degrees(showingList ? 0 : -90))
+                            .foregroundStyle(WW.inkTertiary)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            Toggle("Auto transform", isOn: Binding(get: { isOn }, set: { setOn($0) }))
+                .labelsHidden()
+                .tint(WW.moss)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 10)
+    }
+
+    /// The transforms to choose from, with a checkmark against the active one. Bounded and
+    /// scrollable so a long preset list can't swallow the screen.
+    private var presetList: some View {
+        ScrollView {
+            VStack(spacing: 0) {
+                ForEach(presets) { preset in
+                    Button {
+                        withAnimation(.snappy(duration: 0.22)) {
+                            onSelect(preset)
+                            showingList = false
+                        }
+                    } label: {
+                        HStack(spacing: 10) {
+                            Text(preset.name)
+                                .foregroundStyle(WW.ink)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            if preset.id == selected?.id {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(WW.moss)
+                            }
+                        }
+                        .padding(.horizontal, 20).padding(.vertical, 11)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    if preset.id != presets.last?.id { WWHairline().padding(.leading, 20) }
+                }
+            }
+        }
+        .frame(maxHeight: 190)
+    }
+
+    /// Flip the toggle: on opens the list to choose from (nothing runs until something is picked),
+    /// off clears the stored choice.
+    private func setOn(_ on: Bool) {
+        withAnimation(.snappy(duration: 0.22)) {
+            isOn = on
+            showingList = on
+            if !on { onSelect(nil) }
+        }
     }
 }
 
-// MARK: - Paragraph editor (caret-aware, with Insert)
+// MARK: - Inline text editor
 
-/// The single-paragraph editor. Unlike the generic `TextEditorSheet` it tracks the caret (via a
-/// `UITextView`) so the "Insert" action can record a clip, transcribe it, and splice the text in at
-/// the cursor. Also offers Revise (re-record the whole paragraph) and Transform.
+/// The editor used for **in-line** editing: an Inbox entry's transcript, or one paragraph of a
+/// document, edited where it sits in the list rather than in a sheet over it.
 ///
-/// It owns its own text/selection state, seeded from the paragraph; the parent is handed the final
-/// text on Save, or — for Insert — the current text and caret offset so it can splice after the
-/// recording finishes. Lives here so the app target picks it up without an xcodegen regen.
-struct ParagraphEditorSheet: View {
-    let modelReady: Bool
-    let onSave: (String) -> Void
-    let onRevise: () -> Void
-    let onTransform: () -> Void
-    /// Called with the current text and caret offset; the parent starts the record→transcribe→splice
-    /// flow (this sheet dismisses first).
-    let onInsert: (_ text: String, _ caret: Int) -> Void
-
-    @State private var text: String
-    @State private var selection: NSRange
-    @Environment(\.dismiss) private var dismiss
-
-    init(initialText: String,
-         modelReady: Bool,
-         onSave: @escaping (String) -> Void,
-         onRevise: @escaping () -> Void,
-         onTransform: @escaping () -> Void,
-         onInsert: @escaping (_ text: String, _ caret: Int) -> Void) {
-        self.modelReady = modelReady
-        self.onSave = onSave
-        self.onRevise = onRevise
-        self.onTransform = onTransform
-        self.onInsert = onInsert
-        _text = State(initialValue: initialText)
-        _selection = State(initialValue: NSRange(location: (initialText as NSString).length, length: 0))
-    }
+/// It grows to fit its text (the enclosing List scrolls, not the editor), takes the keyboard as soon
+/// as it appears, and tracks the caret so "Insert" can splice a fresh recording's transcript in at
+/// the cursor.
+struct InlineTextEditor: View {
+    @Binding var text: String
+    @Binding var selection: NSRange
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                #if canImport(UIKit)
-                CaretTrackingTextEditor(text: $text, selection: $selection)
-                    .padding(8)
-                #else
-                TextEditor(text: $text).padding()
-                #endif
-                WWHairline()
-                HStack(spacing: 0) {
-                    editorAction("Revise", "mic.fill") { onRevise() }
-                    editorAction("Insert", "text.insert") {
-                        onInsert(text, selection.location)
-                    }
-                    editorAction("Transform", "wand.and.stars") { onTransform() }
-                        .disabled(!modelReady)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
-                .padding(.horizontal, 8)
-            }
-            .background(WW.paper)
-            .navigationTitle("Edit Paragraph")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") { onSave(text); dismiss() }
-                }
-            }
-        }
-    }
-
-    private func editorAction(_ title: String, _ icon: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            VStack(spacing: 5) {
-                Image(systemName: icon).font(.system(size: 17, weight: .regular))
-                Text(title).font(.caption2)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 4)
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(WW.moss)
+        #if canImport(UIKit)
+        InlineUITextEditor(text: $text, selection: $selection)
+        #else
+        TextEditor(text: $text).frame(minHeight: 120)
+        #endif
     }
 }
 
 #if canImport(UIKit)
-/// A thin `UITextView` wrapper that surfaces the caret/selection so text can be spliced in at the
-/// cursor. Two-way bindings keep `text` and `selection` in sync with the view.
-struct CaretTrackingTextEditor: UIViewRepresentable {
+/// A `UITextView` wrapper that sizes itself to its content and surfaces the caret/selection.
+/// Scrolling is off, so `sizeThatFits` reports the full text height and the row grows with what you
+/// type; two-way bindings keep `text` and `selection` in step with the view.
+struct InlineUITextEditor: UIViewRepresentable {
     @Binding var text: String
     @Binding var selection: NSRange
 
@@ -967,8 +1089,14 @@ struct CaretTrackingTextEditor: UIViewRepresentable {
         view.delegate = context.coordinator
         view.font = UIFont.preferredFont(forTextStyle: .body)
         view.backgroundColor = .clear
-        view.textContainerInset = UIEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
+        view.isScrollEnabled = false                       // grow instead; the List does the scrolling
+        view.textContainerInset = UIEdgeInsets(top: 2, left: 0, bottom: 2, right: 0)
+        view.textContainer.lineFragmentPadding = 0
+        view.setContentCompressionResistancePriority(.required, for: .vertical)
         view.text = text
+        view.selectedRange = clamp(selection, to: text as NSString)
+        // Focus on the next runloop pass: the view isn't in the window hierarchy yet during make.
+        DispatchQueue.main.async { view.becomeFirstResponder() }
         return view
     }
 
@@ -976,6 +1104,14 @@ struct CaretTrackingTextEditor: UIViewRepresentable {
         if uiView.text != text { uiView.text = text }
         let clamped = clamp(selection, to: uiView.text as NSString)
         if uiView.selectedRange != clamped { uiView.selectedRange = clamped }
+    }
+
+    /// Report the height the text actually needs at the offered width, so the row is exactly as tall
+    /// as what's in it.
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UITextView, context: Context) -> CGSize? {
+        guard let width = proposal.width, width > 0, width < .greatestFiniteMagnitude else { return nil }
+        let fitted = uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
+        return CGSize(width: width, height: max(fitted.height, 32))
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -987,8 +1123,8 @@ struct CaretTrackingTextEditor: UIViewRepresentable {
     }
 
     final class Coordinator: NSObject, UITextViewDelegate {
-        var parent: CaretTrackingTextEditor
-        init(_ parent: CaretTrackingTextEditor) { self.parent = parent }
+        var parent: InlineUITextEditor
+        init(_ parent: InlineUITextEditor) { self.parent = parent }
 
         func textViewDidChange(_ textView: UITextView) {
             parent.text = textView.text
@@ -1622,17 +1758,29 @@ struct RecordingSheet: View {
 // MARK: - Inbox
 
 /// The Inbox: a flat list of recordings (Watch clips and "New Recording" captures), not a
-/// document. Newest capture first. Tapping a row opens its transcript editor; swipe left for
-/// Move / Delete, right for Copy / Transform. Lives here so the app target picks it up without an
-/// xcodegen regen.
+/// document. Newest capture first. Tapping a row opens its transcript for editing **in place** —
+/// the entry grows into an outlined editor with its actions in the bar below — while swipe left
+/// gives Move / Delete and swipe right Copy / Transform. Lives here so the app target picks it up
+/// without an xcodegen regen.
 struct InboxView: View {
     @EnvironmentObject private var model: AppModel
     let documentID: UUID
 
     @State private var showingRecorder = false
-    @State private var editingRecording: Recording?
 
-    // "Import Text File…" from the toolbar menu beside the mic
+    // In-place transcript editing: the open entry, its live buffer and caret, and whether a
+    // transform/reset is currently running against it.
+    @State private var editingID: UUID?
+    @State private var editingText = ""
+    @State private var editingSelection = NSRange(location: 0, length: 0)
+    @State private var isWorking = false
+
+    // The open editor's Transform picker and its Share (text or audio?) choice.
+    @State private var showingEditorTransform = false
+    @State private var showingShareChoice = false
+    @State private var shareTarget: ShareTarget?
+
+    // "Import Text File…" from the toolbar menu
     @State private var showingTextImporter = false
 
     // Long-press-to-select (the Inbox's own batch mode).
@@ -1663,39 +1811,7 @@ struct InboxView: View {
     var body: some View {
         List {
             ForEach(recordings) { recording in
-                InboxRecordingRow(
-                    recording: recording,
-                    selectionMode: selectionMode,
-                    isSelected: selected.contains(recording.id),
-                    isTransforming: transformingIDs.contains(recording.id),
-                    onTapLabel: {
-                        if selectionMode { toggle(recording.id) } else { editingRecording = recording }
-                    },
-                    onLongPress: { enterSelection(with: recording.id) },
-                    onCopy: { copy(recording) },
-                    onRetranscribe: { Task { await model.transcribe(recordingID: recording.id, inDocument: documentID) } },
-                    moveTargets: documentTargets,
-                    onMove: { target in model.documents.moveRecording(recording.id, from: documentID, to: target.id) }
-                )
-                .wwRow()
-                .listRowInsets(EdgeInsets(top: 12, leading: 20, bottom: 12, trailing: 20))
-                // Swipe left → Move / Delete. No full swipe: both are consequential, and a stray
-                // flick shouldn't bin a capture.
-                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                    Button("Delete", role: .destructive) {
-                        model.documents.deleteRecording(recording.id, fromDocument: documentID)
-                    }
-                    .tint(WW.ember)
-                    Button("Move") { withAnimation(.snappy(duration: 0.22)) { movingIDs = [recording.id] } }
-                        .tint(WW.slate)
-                }
-                // Swipe right → Copy / Transform.
-                .swipeActions(edge: .leading, allowsFullSwipe: false) {
-                    Button("Copy") { copy(recording) }.tint(WW.inkTertiary)
-                    Button("Transform") { transformTargetID = recording.id }
-                        .tint(WW.violet)
-                        .disabled(!model.modelReady)
-                }
+                inboxRow(recording)
             }
         }
         .wwList()
@@ -1708,8 +1824,9 @@ struct InboxView: View {
                     Button(selected.count == recordings.count ? "Deselect All" : "Select All") { selectAll() }
                 }
             } else {
-                // The same import menu the documents carry, sitting beside the mic: the Inbox takes
-                // text you already have as readily as it takes something you said.
+                // The import menu the documents carry. (No mic beside it any more — recording is the
+                // red button above the bottom bar.) The Inbox takes text you already have as readily
+                // as it takes something you said.
                 ToolbarItem(placement: .primaryAction) {
                     Menu {
                         TextImportItems(onClipboard: importFromClipboard,
@@ -1719,17 +1836,17 @@ struct InboxView: View {
                     }
                     .accessibilityLabel("Import Text")
                 }
-                ToolbarItem(placement: .primaryAction) {
-                    Button { showingRecorder = true } label: { Image(systemName: "mic.badge.plus") }
-                        .accessibilityLabel("New Recording")
-                }
             }
         }
         .fileImporter(isPresented: $showingTextImporter,
                       allowedContentTypes: TextImportItems.contentTypes,
                       onCompletion: importTextFile)
-        .safeAreaInset(edge: .bottom) {
-            if selectionMode {
+        // One bottom strip, three states: the open entry's editor bar, the batch bar while
+        // selecting, or the record button over the Auto transform toggle.
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if editingID != nil {
+                transcriptEditBar()
+            } else if selectionMode {
                 WWBatchBar {
                     WWBatchButton("Delete", "trash", role: .destructive) {
                         model.documents.deleteRecordings(selected, fromDocument: documentID)
@@ -1742,13 +1859,18 @@ struct InboxView: View {
                     }
                 }
                 .disabled(selected.isEmpty)
+            } else {
+                CaptureBar(presets: model.documents.presets,
+                           selected: model.autoTransformPreset(for: documentID),
+                           onSelect: { model.setAutoTransform($0, for: documentID) },
+                           onRecord: { showingRecorder = true })
             }
         }
         .overlay {
             if recordings.isEmpty {
                 WWEmptyState(title: "Inbox is empty",
                              systemImage: "tray",
-                             message: "Recordings from your Watch and the mic button land here — as does text you import.")
+                             message: "Recordings from your Watch and the record button land here — as does text you import.")
             }
         }
         .sheet(isPresented: $showingRecorder) {
@@ -1757,8 +1879,22 @@ struct InboxView: View {
                 model.addDeviceRecording(audioURL: url, duration: duration, toDocument: documentID)
             }
         }
-        .sheet(item: $editingRecording) { recording in
-            InboxTranscriptEditor(model: model, recording: recording, documentID: documentID)
+        // The open editor's Transform picker: runs against the text as it stands on screen.
+        .confirmationDialog("Transform — \(AppSettings.shared.model.shortName)",
+                            isPresented: $showingEditorTransform, titleVisibility: .visible) {
+            ForEach(model.documents.presets) { preset in
+                Button(preset.name) { transformEditing(preset) }
+            }
+        }
+        // Share the words or the audio. "Text" is offered only once there's something to send.
+        .confirmationDialog("Share", isPresented: $showingShareChoice, titleVisibility: .visible) {
+            if !editingIsEmpty {
+                Button("Text") { shareTarget = ShareTarget(items: [editingText]) }
+            }
+            Button("Audio Recording") { shareEditingAudio() }
+        }
+        .sheet(item: $shareTarget) { target in
+            ActivityView(activityItems: target.items)
         }
         .overlay {
             if let ids = movingIDs {
@@ -1784,6 +1920,185 @@ struct InboxView: View {
             Button("Save") { confirmNewDocument() }
             Button("Cancel", role: .cancel) { pendingNewDocIDs = nil }
         }
+    }
+
+    // MARK: Rows
+
+    /// One Inbox entry. The entry being edited keeps its gestures to itself — a tap, a long press
+    /// and a swipe all belong to the text view (caret, selection handles) rather than to selection
+    /// mode, Move, or Delete.
+    @ViewBuilder
+    private func inboxRow(_ recording: Recording) -> some View {
+        let isEditing = editingID == recording.id
+        let row = InboxRecordingRow(
+            recording: recording,
+            selectionMode: selectionMode,
+            isSelected: selected.contains(recording.id),
+            // Either kind of rewrite reads the same from the row: one you asked for, or the
+            // Auto transform running itself over a clip that has just been transcribed.
+            isTransforming: transformingIDs.contains(recording.id)
+                || model.autoTransformingIDs.contains(recording.id),
+            isEditing: isEditing,
+            editingText: $editingText,
+            editingSelection: $editingSelection,
+            onTapLabel: {
+                if selectionMode { toggle(recording.id) } else { startEditing(recording) }
+            },
+            onLongPress: { enterSelection(with: recording.id) },
+            onCopy: { copy(recording) },
+            onRetranscribe: { Task { await model.transcribe(recordingID: recording.id, inDocument: documentID) } },
+            moveTargets: documentTargets,
+            onMove: { target in model.documents.moveRecording(recording.id, from: documentID, to: target.id) }
+        )
+        .wwRow()
+        .listRowInsets(EdgeInsets(top: 12, leading: 20, bottom: 12, trailing: 20))
+
+        if isEditing {
+            row
+        } else {
+            row
+                // Swipe left → Move / Delete. No full swipe: both are consequential, and a stray
+                // flick shouldn't bin a capture.
+                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                    Button("Delete", role: .destructive) {
+                        model.documents.deleteRecording(recording.id, fromDocument: documentID)
+                    }
+                    .tint(WW.ember)
+                    Button("Move") { withAnimation(.snappy(duration: 0.22)) { movingIDs = [recording.id] } }
+                        .tint(WW.slate)
+                }
+                // Swipe right → Copy / Transform.
+                .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                    Button("Copy") { copy(recording) }.tint(WW.inkTertiary)
+                    Button("Transform") { transformTargetID = recording.id }
+                        .tint(WW.violet)
+                        .disabled(!model.modelReady)
+                }
+        }
+    }
+
+    // MARK: In-place transcript editing
+
+    /// The bar under an open entry: Copy / Share / Transform / Reset as a compressed icon row in the
+    /// bottom-left corner, with Done at the bottom-right. Everything the sheet editor offered, minus
+    /// the sheet.
+    private func transcriptEditBar() -> some View {
+        WWInlineEditBar(onDone: { finishEditing() }) {
+            if isWorking {
+                ProgressView().controlSize(.small).padding(.trailing, 4)
+            }
+            WWInlineEditAction("Copy", "doc.on.doc", enabled: !isWorking && !editingIsEmpty) {
+                copyEditing()
+            }
+            WWInlineEditAction("Share", "square.and.arrow.up",
+                               enabled: !isWorking && !(editingIsTextOnly && editingIsEmpty)) {
+                shareEditing()
+            }
+            WWInlineEditAction("Transform", "wand.and.stars",
+                               enabled: model.modelReady && !isWorking && !editingIsEmpty) {
+                persistEditing()
+                showingEditorTransform = true
+            }
+            WWInlineEditAction("Reset", "arrow.uturn.backward",
+                               enabled: !isWorking && !editingIsTextOnly) {
+                resetEditing()
+            }
+        }
+    }
+
+    /// The entry currently open in the editor, read live so a transform or reset can be read back.
+    private var editingRecording: Recording? { recordings.first { $0.id == editingID } }
+
+    private var editingIsEmpty: Bool {
+        editingText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// An entry that came in as text has no audio to share and no original transcription to reset to.
+    private var editingIsTextOnly: Bool { editingRecording?.isTextOnly ?? false }
+
+    /// Open an entry for editing, committing whatever was open before it. The caret starts at the
+    /// end of the text.
+    private func startEditing(_ recording: Recording) {
+        if editingID != nil { finishEditing() }
+        let text = recording.transcript?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        editingText = text
+        editingSelection = NSRange(location: (text as NSString).length, length: 0)
+        isWorking = false
+        withAnimation(.snappy(duration: 0.22)) { editingID = recording.id }
+    }
+
+    /// Write the buffer back onto the recording. Also run before Transform and Share, so those act
+    /// on what's on screen rather than the last-saved transcript.
+    private func persistEditing() {
+        guard var recording = editingRecording else { return }
+        let text = editingText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard recording.transcript != text else { return }
+        recording.transcript = text
+        model.documents.updateRecording(recording, inDocument: documentID)
+    }
+
+    /// Done: save and close the editor.
+    private func finishEditing() {
+        guard editingID != nil else { return }
+        persistEditing()
+        withAnimation(.snappy(duration: 0.22)) { editingID = nil }
+    }
+
+    private func copyEditing() {
+        #if canImport(UIKit)
+        UIPasteboard.general.string = editingText
+        #endif
+        wwLog("Copied transcript of “\(editingRecording?.name ?? "recording")”", .general)
+    }
+
+    /// Share the words or — when there's a clip behind the entry — offer the audio too.
+    private func shareEditing() {
+        persistEditing()
+        if editingIsTextOnly { shareTarget = ShareTarget(items: [editingText]) }
+        else { showingShareChoice = true }
+    }
+
+    /// Hand the clip's audio file to the share sheet, reporting the missing-file case rather than
+    /// opening a share sheet on a URL that points at nothing.
+    private func shareEditingAudio() {
+        guard let recording = editingRecording else { return }
+        let url = model.documents.audioURL(for: recording)
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            model.setupError = "Couldn't share the audio: the recording file is missing."
+            return
+        }
+        shareTarget = ShareTarget(items: [url])
+    }
+
+    /// Run a preset over the open entry and re-seed the editor from the result.
+    private func transformEditing(_ preset: PromptPreset) {
+        guard let id = editingID else { return }
+        isWorking = true
+        Task {
+            await model.transformRecordingTranscript(preset, recordingID: id, in: documentID)
+            reseedEditor(from: id)
+            isWorking = false
+        }
+    }
+
+    /// Reset: re-run speech-to-text over the audio to restore the original transcription, discarding
+    /// edits. (Not a first transcription, so an Auto transform stays out of it.)
+    private func resetEditing() {
+        guard let id = editingID else { return }
+        isWorking = true
+        Task {
+            await model.transcribe(recordingID: id, inDocument: documentID)
+            reseedEditor(from: id)
+            isWorking = false
+        }
+    }
+
+    /// Pull the stored transcript back into the editor after a transform or reset rewrote it.
+    private func reseedEditor(from recordingID: UUID) {
+        guard editingID == recordingID,
+              let text = recordings.first(where: { $0.id == recordingID })?.transcript else { return }
+        editingText = text
+        editingSelection = NSRange(location: (text as NSString).length, length: 0)
     }
 
     // MARK: Importing text
@@ -1920,6 +2235,7 @@ struct InboxView: View {
 
     private func enterSelection(with id: UUID) {
         guard !selectionMode else { return }
+        finishEditing()          // batch actions and an open editor don't share the bottom bar
         selectionMode = true
         selected = [id]
     }
@@ -1968,11 +2284,18 @@ struct InboxView: View {
 /// One Inbox row. No play control — the transcript is the point here, so it runs the full width of
 /// the row (the audio is still reachable from the editor's Share button). Only the selection
 /// checkmark takes space to its left, and only while selecting.
+///
+/// Tapping the text opens it for editing **in place**: the preview is replaced by an outlined,
+/// self-sizing editor bound to the list's buffer, and the row's own controls stand aside while it's
+/// open.
 private struct InboxRecordingRow: View {
     let recording: Recording
     let selectionMode: Bool
     let isSelected: Bool
     let isTransforming: Bool
+    let isEditing: Bool
+    @Binding var editingText: String
+    @Binding var editingSelection: NSRange
     let onTapLabel: () -> Void
     let onLongPress: () -> Void
     let onCopy: () -> Void
@@ -1989,9 +2312,12 @@ private struct InboxRecordingRow: View {
             }
 
             // Up to an 8-line preview over the capture date/time; tap to edit the transcript (or
-            // toggle the row when selecting).
+            // toggle the row when selecting). While editing, the editor takes the preview's place.
             VStack(alignment: .leading, spacing: 4) {
-                if isTransforming {
+                if isEditing {
+                    InlineTextEditor(text: $editingText, selection: $editingSelection)
+                        .wwEditingFrame()
+                } else if isTransforming {
                     HStack(spacing: 6) {
                         ProgressView().controlSize(.mini)
                         Text("Transforming…").font(.subheadline).foregroundStyle(WW.inkSecondary)
@@ -2005,9 +2331,9 @@ private struct InboxRecordingRow: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
-            .onTapGesture { onTapLabel() }
+            .modifier(TapUnless(disabled: isEditing, action: onTapLabel))
 
-            if !selectionMode {
+            if !selectionMode && !isEditing {
                 Menu {
                     // Nothing to re-run speech-to-text over when the entry arrived as text.
                     if !recording.isTextOnly {
@@ -2033,7 +2359,31 @@ private struct InboxRecordingRow: View {
         }
         .padding(.vertical, 2)
         .contentShape(Rectangle())
-        .onLongPressGesture { onLongPress() }
+        .modifier(LongPressUnless(disabled: isEditing, action: onLongPress))
+    }
+}
+
+/// Attaches a tap gesture only when `disabled` is false — an open editor needs its taps for the
+/// caret, so the gesture has to be absent rather than merely ignored.
+private struct TapUnless: ViewModifier {
+    let disabled: Bool
+    let action: () -> Void
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if disabled { content } else { content.onTapGesture(perform: action) }
+    }
+}
+
+/// The long-press counterpart of `TapUnless`: an open editor keeps its long press for the text
+/// view's selection handles rather than entering batch selection.
+private struct LongPressUnless: ViewModifier {
+    let disabled: Bool
+    let action: () -> Void
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if disabled { content } else { content.onLongPressGesture(perform: action) }
     }
 }
 
@@ -2042,151 +2392,4 @@ private struct InboxRecordingRow: View {
 private struct ShareTarget: Identifiable {
     let id = UUID()
     let items: [Any]
-}
-
-/// The transcript editor for a single Inbox recording — what tapping a row opens. The text is
-/// editable straight away (the same full-screen editor, find/replace and all, that documents use)
-/// with Copy / Share / Transform / Reset pinned below it. Share offers either the text or the
-/// audio clip, which is also the Inbox's only route to the recording itself now that the rows
-/// carry no play control.
-///
-/// Transform and Reset write through the store rather than the editor's buffer, so each one flushes
-/// the text as it stands, runs, then re-seeds the editor from the recording.
-private struct InboxTranscriptEditor: View {
-    @ObservedObject private var model: AppModel
-    private let recordingID: UUID
-    private let documentID: UUID
-
-    @State private var text: String
-    @State private var working = false
-    @State private var showingTransform = false
-    @State private var showingShareChoice = false
-    @State private var shareTarget: ShareTarget?
-
-    init(model: AppModel, recording: Recording, documentID: UUID) {
-        _model = ObservedObject(wrappedValue: model)
-        self.recordingID = recording.id
-        self.documentID = documentID
-        _text = State(initialValue: recording.transcript?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "")
-    }
-
-    /// Looked up live so transform/reset results can be read back.
-    private var recording: Recording? {
-        model.documents.document(with: documentID)?.recordings.first { $0.id == recordingID }
-    }
-
-    private var isEmpty: Bool { text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-
-    /// An entry that came in as text rather than as a clip: there's no audio to share and no
-    /// original transcription to reset back to.
-    private var isTextOnly: Bool { recording?.isTextOnly ?? false }
-
-    var body: some View {
-        TextEditorSheet(title: "Edit Transcript", text: $text, onSave: { persist() }) {
-            VStack(spacing: 0) {
-                if working {
-                    HStack(spacing: 8) {
-                        ProgressView().controlSize(.small)
-                        Text("Working…").font(.caption).foregroundStyle(WW.inkSecondary)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.bottom, 8)
-                }
-                WWHairline()
-                HStack(spacing: 0) {
-                    actionButton("Copy", "doc.on.doc") { copy() }
-                        .disabled(working || isEmpty)
-                    // With no clip behind it there's no choice to offer — Share goes straight to
-                    // the words.
-                    actionButton("Share", "square.and.arrow.up") {
-                        if isTextOnly { shareTarget = ShareTarget(items: [text]) }
-                        else { showingShareChoice = true }
-                    }
-                    .disabled(working || (isTextOnly && isEmpty))
-                    actionButton("Transform", "wand.and.stars") { showingTransform = true }
-                        .disabled(!model.modelReady || working || isEmpty)
-                    actionButton("Reset", "arrow.uturn.backward") { reset() }
-                        .disabled(working || isTextOnly)
-                }
-                .padding(.vertical, 8).padding(.horizontal, 8)
-            }
-        }
-        .confirmationDialog("Transform — \(AppSettings.shared.model.shortName)",
-                            isPresented: $showingTransform, titleVisibility: .visible) {
-            ForEach(model.documents.presets) { preset in
-                Button(preset.name) { transform(preset) }
-            }
-        }
-        // Share the words or the audio. "Text" is offered only once there's something to send.
-        .confirmationDialog("Share", isPresented: $showingShareChoice, titleVisibility: .visible) {
-            if !isEmpty {
-                Button("Text") { shareTarget = ShareTarget(items: [text]) }
-            }
-            Button("Audio Recording") { shareAudio() }
-        }
-        .sheet(item: $shareTarget) { target in
-            ActivityView(activityItems: target.items)
-        }
-    }
-
-    /// Persist the editor's text back onto the recording.
-    private func persist() {
-        guard var recording else { return }
-        recording.transcript = text
-        model.documents.updateRecording(recording, inDocument: documentID)
-    }
-
-    private func actionButton(_ title: String, _ icon: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            VStack(spacing: 5) {
-                Image(systemName: icon).font(.system(size: 17, weight: .regular))
-                Text(title).font(.caption2)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 4)
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(WW.moss)
-    }
-
-    private func copy() {
-        #if canImport(UIKit)
-        UIPasteboard.general.string = text
-        #endif
-        wwLog("Copied transcript of “\(recording?.name ?? "recording")”", .general)
-    }
-
-    /// Hand the clip's audio file to the share sheet, reporting the missing-file case rather than
-    /// opening a share sheet on a URL that points at nothing.
-    private func shareAudio() {
-        guard let recording else { return }
-        let url = model.documents.audioURL(for: recording)
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            model.setupError = "Couldn't share the audio: the recording file is missing."
-            return
-        }
-        shareTarget = ShareTarget(items: [url])
-    }
-
-    /// Transform what's on screen: flush the edits first so the preset runs against them, not the
-    /// last-saved transcript.
-    private func transform(_ preset: PromptPreset) {
-        persist()
-        working = true
-        Task {
-            await model.transformRecordingTranscript(preset, recordingID: recordingID, in: documentID)
-            text = recording?.transcript ?? text
-            working = false
-        }
-    }
-
-    /// Re-run speech-to-text on the audio to restore the original transcription, discarding edits.
-    private func reset() {
-        working = true
-        Task {
-            await model.transcribe(recordingID: recordingID, inDocument: documentID)
-            text = recording?.transcript ?? text
-            working = false
-        }
-    }
 }

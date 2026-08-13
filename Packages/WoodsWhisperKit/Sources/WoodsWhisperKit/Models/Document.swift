@@ -25,6 +25,12 @@ public struct Document: Identifiable, Codable, Hashable, Sendable {
     /// Pinned documents are held at the top of the Documents list, above the unpinned ones.
     public var isPinned: Bool
 
+    /// The `PromptPreset` to run automatically the first time a recording in this document is
+    /// transcribed ("Auto transform", the toggle at the bottom of the Inbox and of each document).
+    /// Nil means off. Only the *first* transcription is transformed — re-transcribing or resetting a
+    /// clip gives the original words back rather than transforming them a second time.
+    public var autoTransformPresetID: UUID?
+
     public init(
         id: UUID = UUID(),
         title: String,
@@ -32,7 +38,8 @@ public struct Document: Identifiable, Codable, Hashable, Sendable {
         updatedAt: Date = Date(),
         paragraphs: [Paragraph] = [],
         recordings: [Recording] = [],
-        isPinned: Bool = false
+        isPinned: Bool = false,
+        autoTransformPresetID: UUID? = nil
     ) {
         self.id = id
         self.title = title
@@ -41,6 +48,7 @@ public struct Document: Identifiable, Codable, Hashable, Sendable {
         self.paragraphs = paragraphs
         self.recordings = recordings
         self.isPinned = isPinned
+        self.autoTransformPresetID = autoTransformPresetID
     }
 
     /// The whole body as plain text — the input for a whole-document transform.
@@ -80,7 +88,7 @@ public struct Document: Identifiable, Codable, Hashable, Sendable {
     // Custom decoding so documents saved by older builds (which stored `transformations` and no
     // `paragraphs`) still load: missing keys default to empty rather than failing the decode.
     enum CodingKeys: String, CodingKey {
-        case id, title, createdAt, updatedAt, paragraphs, recordings, isPinned
+        case id, title, createdAt, updatedAt, paragraphs, recordings, isPinned, autoTransformPresetID
     }
 
     public init(from decoder: Decoder) throws {
@@ -92,5 +100,6 @@ public struct Document: Identifiable, Codable, Hashable, Sendable {
         paragraphs = try c.decodeIfPresent([Paragraph].self, forKey: .paragraphs) ?? []
         recordings = try c.decodeIfPresent([Recording].self, forKey: .recordings) ?? []
         isPinned = try c.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
+        autoTransformPresetID = try c.decodeIfPresent(UUID.self, forKey: .autoTransformPresetID)
     }
 }

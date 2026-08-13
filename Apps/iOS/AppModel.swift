@@ -523,6 +523,9 @@ final class AppModel: ObservableObject {
         guard var recording = documents.document(with: documentID)?
             .recordings.first(where: { $0.id == recordingID }) else { return }
 
+        // Auto transform runs on a clip's *first* transcription only, so a Retranscribe or a Reset
+        // hands back the original words rather than transforming them all over again.
+        let isFirstTranscription = recording.transcript == nil
         recording.status = .transcribing
         documents.updateRecording(recording, inDocument: documentID)
         wwLog("Transcribing “\(recording.name)”…", .transcription)
@@ -535,12 +538,64 @@ final class AppModel: ObservableObject {
             documents.updateRecording(recording, inDocument: documentID)
             wwLog(String(format: "Transcribed “%@” in %.1fs (%d chars)", recording.name,
                          Date().timeIntervalSince(start), result.text.count), .transcription)
+            if isFirstTranscription {
+                await applyAutoTransform(recordingID: recordingID, in: documentID)
+            }
         } catch {
             recording.status = .failed
             documents.updateRecording(recording, inDocument: documentID)
             setupError = error.localizedDescription
             wwLog("Transcription failed for “\(recording.name)”: \(error.localizedDescription)", .error)
         }
+    }
+
+    // MARK: Auto transform
+
+    /// Recordings whose transcript an "Auto transform" is rewriting right now, so their rows can say
+    /// so instead of flashing the plain transcription and then quietly changing it.
+    @Published private(set) var autoTransformingIDs: Set<UUID> = []
+
+    /// The transform a document runs automatically on newly transcribed clips, if one is set and
+    /// still exists (a preset deleted since it was chosen simply reads as "off").
+    func autoTransformPreset(for documentID: UUID) -> PromptPreset? {
+        guard let id = documents.document(with: documentID)?.autoTransformPresetID else { return nil }
+        return documents.presets.first { $0.id == id }
+    }
+
+    /// Turn the document's "Auto transform" on (with `preset`) or off (nil).
+    func setAutoTransform(_ preset: PromptPreset?, for documentID: UUID) {
+        documents.setAutoTransform(preset?.id, for: documentID)
+        let title = documents.document(with: documentID)?.title ?? "document"
+        if let preset {
+            wwLog("Auto transform for “\(title)” set to “\(preset.name)”", .transform)
+        } else {
+            wwLog("Auto transform for “\(title)” turned off", .transform)
+        }
+    }
+
+    /// Run the document's chosen "Auto transform" over a clip that has just been transcribed for the
+    /// first time, rewriting its transcript in place — so a capture arrives already in the shape you
+    /// asked for, without a trip through the Transform pane. In a document the body text is read back
+    /// after this returns, so what lands there is the transformed text.
+    ///
+    /// Quietly does nothing when nothing is chosen, when the transcript came back empty, or when the
+    /// language model isn't loaded — none of those is a reason to interrupt a capture with an alert;
+    /// the clip keeps its plain transcription and the log says why. ("Number Paragraphs" needs no
+    /// model, so it still runs.) A transform that runs and *fails* reports itself the usual way.
+    private func applyAutoTransform(recordingID: UUID, in documentID: UUID) async {
+        guard let preset = autoTransformPreset(for: documentID) else { return }
+        let transcript = documents.document(with: documentID)?
+            .recordings.first(where: { $0.id == recordingID })?
+            .transcript?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !transcript.isEmpty else { return }
+        guard modelReady || preset.isNumberParagraphs else {
+            wwLog("Auto transform “\(preset.name)” skipped — the language model isn't loaded", .transform)
+            return
+        }
+        wwLog("Auto transform: running “\(preset.name)” on a new transcript", .transform)
+        autoTransformingIDs.insert(recordingID)
+        await transformRecordingTranscript(preset, recordingID: recordingID, in: documentID)
+        autoTransformingIDs.remove(recordingID)
     }
 
     /// Transcribe everything still pending/failed — used once the model becomes ready.

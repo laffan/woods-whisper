@@ -354,7 +354,97 @@ struct WWBatchButton: View {
     }
 }
 
+// MARK: - Inline edit bar (in-line editing)
+
+/// The bar pinned below the screen while a piece of text is being edited in place — an Inbox
+/// entry's transcript, or a paragraph in a document. The edit-mode actions sit on the **left** as a
+/// compressed row of icons, and **Done** closes the editor from the **right**. Sits on a surface
+/// strip with a hairline above it, like `WWBatchBar`; as a bottom safe-area inset it rides above
+/// the keyboard.
+struct WWInlineEditBar<Actions: View>: View {
+    let onDone: () -> Void
+    @ViewBuilder var actions: Actions
+
+    var body: some View {
+        HStack(spacing: 6) {
+            actions
+            Spacer(minLength: 12)
+            Button(action: onDone) {
+                Text("Done")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(WW.moss)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 10)
+        .background(WW.surface)
+        .overlay(alignment: .top) { WWHairline() }
+    }
+}
+
+/// One icon in a `WWInlineEditBar`: glyph only (the name rides along as its accessibility label and
+/// its long-press hint), so several actions fit in the bar's left corner without crowding Done.
+struct WWInlineEditAction: View {
+    let title: String
+    let systemImage: String
+    var enabled: Bool = true
+    let action: () -> Void
+
+    init(_ title: String, _ systemImage: String, enabled: Bool = true,
+         action: @escaping () -> Void) {
+        self.title = title
+        self.systemImage = systemImage
+        self.enabled = enabled
+        self.action = action
+    }
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 17, weight: .regular))
+                .foregroundStyle(WW.moss)
+                .frame(width: 38, height: 32)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.35)
+        .accessibilityLabel(title)
+    }
+}
+
+/// The frame drawn around text while it's being edited in place: a moss-outlined card on the raised
+/// surface color, so the block you're working on is unmistakable inside a list of others.
+extension View {
+    func wwEditingFrame() -> some View {
+        self
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(WW.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(WW.moss, lineWidth: 1.5))
+    }
+}
+
 // MARK: - Round icon button (recorder controls)
+
+/// The app's one "start recording" control: a red disc, centered, floating just above the bottom
+/// bar of the Inbox and of a document. It replaces the mic that used to sit in the toolbar — the
+/// thing you do most often shouldn't be the smallest target on the screen.
+struct WWRecordButton: View {
+    var diameter: CGFloat = 62
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "mic.fill")
+        }
+        .buttonStyle(WWRoundIconButtonStyle(diameter: diameter, fill: WW.ember))
+        .shadow(color: .black.opacity(0.16), radius: 10, y: 3)
+        .accessibilityLabel("New Recording")
+    }
+}
 
 /// Circular recorder control. `fill` draws a solid ember/moss disc with paper glyph;
 /// otherwise a hairline-stroked ring with an ink glyph.

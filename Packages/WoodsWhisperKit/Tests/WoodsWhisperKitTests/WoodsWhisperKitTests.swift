@@ -119,6 +119,27 @@ final class WoodsWhisperKitTests: XCTestCase {
         XCTAssertEqual(DocumentStore.inboxTitle, inboxTitle)
     }
 
+    // MARK: Auto transform
+
+    func testAutoTransformChoiceRoundTrips() throws {
+        let preset = PromptPreset(name: "Clean Up", template: "Tidy this.")
+        let doc = Document(title: "Field Notes", autoTransformPresetID: preset.id)
+        let decoded = try JSONDecoder.iso.decode(Document.self,
+                                                 from: try JSONEncoder.iso.encode(doc))
+        XCTAssertEqual(decoded.autoTransformPresetID, preset.id)
+    }
+
+    /// A document saved before Auto transform existed still loads — and reads as "off".
+    func testDocumentWithoutAnAutoTransformKeyDecodesAsOff() throws {
+        let json = """
+        {"id":"\(UUID().uuidString)","title":"Field Notes",\
+        "createdAt":"2026-07-31T14:30:05Z","updatedAt":"2026-07-31T14:30:05Z"}
+        """
+        let decoded = try JSONDecoder.iso.decode(Document.self, from: Data(json.utf8))
+        XCTAssertNil(decoded.autoTransformPresetID)
+        XCTAssertEqual(decoded.title, "Field Notes")
+    }
+
     func testBackupPlanSplitsInboxRecordingsFromDocuments() {
         let clip = Recording(createdAt: date(2026, 7, 31, 14, 30, 5), duration: 7,
                              audioFileName: "a.m4a", origin: .watch, transcript: "Elk by the creek.")
