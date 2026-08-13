@@ -112,6 +112,11 @@ enum WW {
     static let ember = dynamicColor(light: UIColor(red: 0.737, green: 0.322, blue: 0.251, alpha: 1),
                                     dark: UIColor(red: 0.851, green: 0.439, blue: 0.357, alpha: 1))
 
+    /// The ring around the record dot: black on paper, white on pine. Deliberately pure rather than
+    /// drawn from the warm palette — it's there to hold the dot's edge against either background,
+    /// which a softer ink wouldn't do.
+    static let recordRing = dynamicColor(light: .black, dark: .white)
+
     /// Attention / pending states: muted ochre.
     static let amber = dynamicColor(light: UIColor(red: 0.725, green: 0.541, blue: 0.184, alpha: 1),
                                     dark: UIColor(red: 0.812, green: 0.655, blue: 0.333, alpha: 1))
@@ -434,7 +439,7 @@ extension View {
 /// most often shouldn't be the smallest target on the screen.
 ///
 /// Nothing behind it: no plate, no shadow, no glyph. It floats over the text, which scrolls past
-/// underneath.
+/// underneath — held to its own edge by a thin ring (black on paper, white in the dark).
 struct WWRecordButton: View {
     var diameter: CGFloat = 62
     let action: () -> Void
@@ -443,6 +448,9 @@ struct WWRecordButton: View {
         Button(action: action) {
             Circle()
                 .fill(WW.ember)
+                // `strokeBorder`, not `stroke`: the ring is drawn inside the circle, so the button
+                // stays exactly `diameter` across instead of growing by the line width.
+                .overlay(Circle().strokeBorder(WW.recordRing, lineWidth: 3))
                 .frame(width: diameter, height: diameter)
                 .contentShape(Circle())
         }
