@@ -72,11 +72,12 @@ the rest of the app depends on.
   right** for **Copy** and **Transform**. Long-press still enters batch selection.
 - **Editing in place.** Editing never opens a sheet over what you're reading. Tap an Inbox entry (or
   double-tap a paragraph in a document, or swipe it right → **Edit**) and *that block* becomes the
-  editor: an outlined box that grows with the text, everything around it left where it was. The
-  actions live in the bar along the bottom — a compressed row of icons at the **left**, **Done** at
-  the **right**. For an Inbox entry the icons are **Copy / Share / Transform / Reset** (Share hands
-  off either the text or the audio clip); for a paragraph they're **Revise / Insert / Transform**.
-  **Done** saves and closes; blank lines you added split the block into separate paragraphs.
+  editor: an outlined box that grows with the text, in the type it was already set in, everything
+  around it left where it was. The actions sit along the bottom of that same box, inside the
+  outline — a compressed row of icons at the **left**, **Done** at the **right**. For an Inbox entry
+  the icons are **Copy / Share / Transform / Reset** (Share hands off either the text or the audio
+  clip); for a paragraph they're **Revise / Insert / Transform**. **Done** saves and closes; blank
+  lines you added split the block into separate paragraphs.
 - **One red record button.** Recording isn't a toolbar glyph any more. In the **Inbox** and inside a
   **document** it's a plain red dot, centered above the bottom bar — nothing behind it, the text
   scrolling past underneath — and it does what the mic did there before: a clip filed into the

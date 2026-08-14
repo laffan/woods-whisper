@@ -144,6 +144,13 @@ enum WW {
     /// Small tracked-uppercase label font (pairs with `.tracking(1.4)` and `.textCase(.uppercase)`).
     static let sectionLabel = Font.system(size: 11, weight: .semibold)
 
+    // MARK: Measure
+
+    /// The widest a column of content is allowed to get. Everything a screen reads down — lists,
+    /// forms, floating panes, bottom bars — is held to this and centered, so an iPad shows a
+    /// readable column rather than a line of text a foot wide. See `wwContentWidth()`.
+    static let contentMaxWidth: CGFloat = 800
+
     // MARK: Global chrome
 
     /// One-shot UIKit appearance pass: flatten the navigation and tab bars onto the paper
@@ -203,11 +210,15 @@ extension View {
     /// The standard content list treatment: flat rows on the paper background with no
     /// system grouping chrome. (Grouped style rather than plain so section headers stay
     /// transparent instead of picking up a sticky material background.)
+    ///
+    /// The list is held to `wwContentWidth()` and the paper laid behind the whole width, so on an
+    /// iPad the rows read as a centered column on paper rather than running edge to edge.
     func wwList() -> some View {
         self
             .listStyle(.grouped)
             .listSectionSpacing(20)
             .scrollContentBackground(.hidden)
+            .wwContentWidth()
             .background(WW.paper)
     }
 
@@ -216,6 +227,7 @@ extension View {
     func wwForm() -> some View {
         self
             .scrollContentBackground(.hidden)
+            .wwContentWidth()
             .background(WW.paper)
     }
 
@@ -291,13 +303,15 @@ struct WWEmptyState: View {
 
 extension View {
     /// The floating bottom pane treatment shared by the Transform and Move panes: a surface
-    /// card with a hairline stroke and a soft shadow instead of system material.
+    /// card with a hairline stroke and a soft shadow instead of system material, held to the
+    /// content width so it doesn't stretch across an iPad.
     func wwPane() -> some View {
         self
             .background(WW.surface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .stroke(WW.hairline, lineWidth: 1))
             .shadow(color: .black.opacity(0.10), radius: 24, y: 8)
+            .frame(maxWidth: WW.contentMaxWidth)
     }
 }
 
@@ -324,8 +338,8 @@ struct WWBatchBar<Content: View>: View {
         HStack(spacing: 16) {
             content
         }
-        .frame(maxWidth: .infinity)
         .padding()
+        .wwContentWidth()          // the strip runs full width; its buttons don't
         .background(WW.surface)
         .overlay(alignment: .top) { WWHairline() }
     }
@@ -359,37 +373,51 @@ struct WWBatchButton: View {
     }
 }
 
-// MARK: - Inline edit bar (in-line editing)
+// MARK: - Inline edit box (in-line editing)
 
-/// The bar pinned below the screen while a piece of text is being edited in place — an Inbox
-/// entry's transcript, or a paragraph in a document. The edit-mode actions sit on the **left** as a
-/// compressed row of icons, and **Done** closes the editor from the **right**. Sits on a surface
-/// strip with a hairline above it, like `WWBatchBar`; as a bottom safe-area inset it rides above
-/// the keyboard.
-struct WWInlineEditBar<Actions: View>: View {
+/// The box a piece of text is edited in, in place — an Inbox entry's transcript, or a paragraph in
+/// a document. A moss-outlined card holding the editor itself with its own action bar beneath it,
+/// inside the outline: the edit-mode actions as a compressed row of icons at the **left**, **Done**
+/// at the **right**. Keeping the bar inside the outline is the point — what the actions apply to is
+/// whatever the outline is drawn around.
+struct WWInlineEditBox<Content: View, Actions: View>: View {
     let onDone: () -> Void
+    /// Shows a spinner beside Done — on the right, so a transform running doesn't shuffle the
+    /// icons on the left out from under your finger.
+    var isWorking: Bool = false
+    @ViewBuilder var content: Content
     @ViewBuilder var actions: Actions
 
     var body: some View {
-        HStack(spacing: 6) {
-            actions
-            Spacer(minLength: 12)
-            Button(action: onDone) {
-                Text("Done")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(WW.moss)
+        VStack(spacing: 0) {
+            content
+                .padding(.horizontal, 12)
+                .padding(.top, 10)
+                .padding(.bottom, 8)
+            WWHairline()
+            HStack(spacing: 6) {
+                actions
+                Spacer(minLength: 12)
+                if isWorking { ProgressView().controlSize(.small).padding(.trailing, 4) }
+                Button(action: onDone) {
+                    Text("Done")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(WW.moss)
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 4)
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 10)
-        .background(WW.surface)
-        .overlay(alignment: .top) { WWHairline() }
+        .background(WW.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .stroke(WW.moss, lineWidth: 1.5))
     }
 }
 
-/// One icon in a `WWInlineEditBar`: glyph only (the name rides along as its accessibility label and
-/// its long-press hint), so several actions fit in the bar's left corner without crowding Done.
+/// One icon in a `WWInlineEditBox`'s action row: glyph only (the name rides along as its
+/// accessibility label), so several actions fit in the box's bottom-left corner without crowding
+/// Done.
 struct WWInlineEditAction: View {
     let title: String
     let systemImage: String
@@ -419,16 +447,17 @@ struct WWInlineEditAction: View {
     }
 }
 
-/// The frame drawn around text while it's being edited in place: a moss-outlined card on the raised
-/// surface color, so the block you're working on is unmistakable inside a list of others.
+// MARK: - Content width
+
 extension View {
-    func wwEditingFrame() -> some View {
+    /// Hold content to a comfortable reading width and center it. An iPad's full width is far too
+    /// wide for a column of prose — and it puts a bar's two ends a hand-span apart — so lists,
+    /// forms, panes and bars all pass through here. A no-op on iPhone, which is narrower than the
+    /// cap to begin with.
+    func wwContentWidth() -> some View {
         self
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(WW.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(WW.moss, lineWidth: 1.5))
+            .frame(maxWidth: WW.contentMaxWidth)
+            .frame(maxWidth: .infinity)
     }
 }
 

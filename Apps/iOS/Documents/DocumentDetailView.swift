@@ -151,13 +151,11 @@ struct DocumentDetailView: View {
         }
         .wwList()
         .environment(\.editMode, $editMode)
-        // Bottom furniture: the paragraph editor's icon nav + Done while editing in place,
-        // otherwise the record button and the Auto transform toggle. Both stand down while the
-        // list is in reorder mode, where the toolbar's own Done is the way out.
+        // Bottom furniture: the record button and the Auto transform toggle. It stands down while
+        // the list is in reorder mode (the toolbar's own Done is the way out) and while a paragraph
+        // is being edited, where the actions ride inside the edit box instead.
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            if editingParagraphID != nil {
-                paragraphEditBar()
-            } else if !editMode.isEditing {
+            if editingParagraphID == nil && !editMode.isEditing {
                 CaptureBar(presets: model.documents.presets,
                            selected: model.autoTransformPreset(for: documentID),
                            onSelect: { model.setAutoTransform($0, for: documentID) },
@@ -283,8 +281,7 @@ struct DocumentDetailView: View {
     @ViewBuilder
     private func paragraphContent(_ para: Document.Paragraph) -> some View {
         if editingParagraphID == para.id {
-            InlineTextEditor(text: $editingText, selection: $editingSelection)
-                .wwEditingFrame()
+            paragraphEditBox()
                 .padding(.vertical, 6)
         } else if transformingParagraphID == para.id {
             HStack(spacing: 8) {
@@ -726,10 +723,13 @@ struct DocumentDetailView: View {
 
     // MARK: Paragraph editing (in place)
 
-    /// The bar under an in-place paragraph edit: the actions the editor sheet used to carry, now a
-    /// compressed icon row in the bottom-left corner, with Done at the bottom-right.
-    private func paragraphEditBar() -> some View {
-        WWInlineEditBar(onDone: { finishEditing() }) {
+    /// The paragraph, in place, inside its outline — with the actions the editor sheet used to
+    /// carry along the bottom of that same outline: Revise / Insert / Transform at the left, Done
+    /// at the right.
+    private func paragraphEditBox() -> some View {
+        WWInlineEditBox(onDone: { finishEditing() }) {
+            InlineTextEditor(text: $editingText, selection: $editingSelection, style: .documentBody)
+        } actions: {
             WWInlineEditAction("Revise", "mic.fill") { reviseEditingParagraph() }
             WWInlineEditAction("Insert", "text.insert") { insertIntoEditingParagraph() }
             WWInlineEditAction("Transform", "wand.and.stars", enabled: model.modelReady) {
@@ -979,13 +979,15 @@ struct CaptureBar: View {
             WWRecordButton(action: onRecord)
                 .padding(.bottom, 20)
 
+            // The strip runs the full width; what's written on it is held to the content column, so
+            // an iPad doesn't put the label and its switch a hand-span apart.
             VStack(spacing: 0) {
                 WWHairline()
                 if isOn && showingList {
-                    presetList
+                    presetList.wwContentWidth()
                     WWHairline()
                 }
-                toggleRow
+                toggleRow.wwContentWidth()
             }
             .background(WW.surface)
         }
@@ -1087,19 +1089,59 @@ struct CaptureBar: View {
 /// document, edited where it sits in the list rather than in a sheet over it.
 ///
 /// It grows to fit its text (the enclosing List scrolls, not the editor), takes the keyboard as soon
-/// as it appears, and tracks the caret so "Insert" can splice a fresh recording's transcript in at
-/// the cursor.
+/// as it appears, tracks the caret so "Insert" can splice a fresh recording's transcript in at the
+/// cursor, and sets the text in exactly the type it was already in — tapping to edit shouldn't
+/// resize a word of it.
 struct InlineTextEditor: View {
     @Binding var text: String
     @Binding var selection: NSRange
+    /// The type this text is drawn in when it *isn't* being edited.
+    let style: InlineTextStyle
 
     var body: some View {
         #if canImport(UIKit)
-        InlineUITextEditor(text: $text, selection: $selection)
+        InlineUITextEditor(text: $text, selection: $selection, style: style)
         #else
-        TextEditor(text: $text).frame(minHeight: 120)
+        TextEditor(text: $text).font(style.font).frame(minHeight: 120)
         #endif
     }
+}
+
+/// Where a piece of in-line editable text lives, and so how it's set. Each case pairs the SwiftUI
+/// type the row draws with the UIKit type the editor uses, which is the whole point: they have to
+/// match, or the text jumps size the moment you tap it.
+enum InlineTextStyle {
+    /// A paragraph of a document body: `WW.bodyText` at `.lineSpacing(5)`.
+    case documentBody
+    /// An Inbox entry's transcript: the `.subheadline` its preview is set in.
+    case inboxTranscript
+
+    /// What the row uses to draw the text.
+    var font: Font {
+        switch self {
+        case .documentBody:    return WW.bodyText
+        case .inboxTranscript: return .subheadline
+        }
+    }
+
+    #if canImport(UIKit)
+    /// The same type, as UIKit sees it. `.systemFont(ofSize: 17)` rather than the preferred `.body`
+    /// font, because `WW.bodyText` is a fixed 17 — the preferred one is 17 only at the default Text
+    /// Size setting, and grows past it everywhere else.
+    var uiFont: UIFont {
+        switch self {
+        case .documentBody:    return .systemFont(ofSize: 17)
+        case .inboxTranscript: return .preferredFont(forTextStyle: .subheadline)
+        }
+    }
+
+    var lineSpacing: CGFloat {
+        switch self {
+        case .documentBody:    return 5
+        case .inboxTranscript: return 0
+        }
+    }
+    #endif
 }
 
 #if canImport(UIKit)
@@ -1109,17 +1151,25 @@ struct InlineTextEditor: View {
 struct InlineUITextEditor: UIViewRepresentable {
     @Binding var text: String
     @Binding var selection: NSRange
+    let style: InlineTextStyle
 
     func makeUIView(context: Context) -> UITextView {
         let view = UITextView()
         view.delegate = context.coordinator
-        view.font = UIFont.preferredFont(forTextStyle: .body)
         view.backgroundColor = .clear
         view.isScrollEnabled = false                       // grow instead; the List does the scrolling
         view.textContainerInset = UIEdgeInsets(top: 2, left: 0, bottom: 2, right: 0)
         view.textContainer.lineFragmentPadding = 0
         view.setContentCompressionResistancePriority(.required, for: .vertical)
-        view.text = text
+        // Font, line spacing and ink all match the row this text was just being read in, so opening
+        // the editor doesn't resize or recolor a word of it. Three places, because they cover
+        // different moments: `font`/`textColor` for an empty editor (an attributed string with no
+        // characters carries no attributes), the attributed text for what's already there, and the
+        // typing attributes — set last, since assigning text rewrites them — for what's typed next.
+        view.font = style.uiFont
+        view.textColor = UIColor(WW.ink)
+        view.attributedText = NSAttributedString(string: text, attributes: attributes)
+        view.typingAttributes = attributes
         view.selectedRange = clamp(selection, to: text as NSString)
         // Focus on the next runloop pass: the view isn't in the window hierarchy yet during make.
         DispatchQueue.main.async { view.becomeFirstResponder() }
@@ -1127,9 +1177,21 @@ struct InlineUITextEditor: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: UITextView, context: Context) {
-        if uiView.text != text { uiView.text = text }
+        if uiView.text != text {
+            uiView.attributedText = NSAttributedString(string: text, attributes: attributes)
+            uiView.typingAttributes = attributes           // replacing the text clears these
+        }
         let clamped = clamp(selection, to: uiView.text as NSString)
         if uiView.selectedRange != clamped { uiView.selectedRange = clamped }
+    }
+
+    /// The one set of text attributes this editor draws with — see `InlineTextStyle`.
+    private var attributes: [NSAttributedString.Key: Any] {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineSpacing = style.lineSpacing
+        return [.font: style.uiFont,
+                .paragraphStyle: paragraph,
+                .foregroundColor: UIColor(WW.ink)]
     }
 
     /// Report the height the text actually needs at the offered width, so the row is exactly as tall
@@ -1867,12 +1929,11 @@ struct InboxView: View {
         .fileImporter(isPresented: $showingTextImporter,
                       allowedContentTypes: TextImportItems.contentTypes,
                       onCompletion: importTextFile)
-        // One bottom strip, three states: the open entry's editor bar, the batch bar while
-        // selecting, or the record button over the Auto transform toggle.
+        // The bottom strip: the batch bar while selecting, otherwise the record button over the
+        // Auto transform toggle. With an entry open for editing it stands down — those actions ride
+        // inside the edit box, against the text they apply to.
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            if editingID != nil {
-                transcriptEditBar()
-            } else if selectionMode {
+            if selectionMode {
                 WWBatchBar {
                     WWBatchButton("Delete", "trash", role: .destructive) {
                         model.documents.deleteRecordings(selected, fromDocument: documentID)
@@ -1885,7 +1946,7 @@ struct InboxView: View {
                     }
                 }
                 .disabled(selected.isEmpty)
-            } else {
+            } else if editingID == nil {
                 CaptureBar(presets: model.documents.presets,
                            selected: model.autoTransformPreset(for: documentID),
                            onSelect: { model.setAutoTransform($0, for: documentID) },
@@ -1965,8 +2026,6 @@ struct InboxView: View {
             isTransforming: transformingIDs.contains(recording.id)
                 || model.autoTransformingIDs.contains(recording.id),
             isEditing: isEditing,
-            editingText: $editingText,
-            editingSelection: $editingSelection,
             onTapLabel: {
                 if selectionMode { toggle(recording.id) } else { startEditing(recording) }
             },
@@ -1975,7 +2034,9 @@ struct InboxView: View {
             onRetranscribe: { Task { await model.transcribe(recordingID: recording.id, inDocument: documentID) } },
             moveTargets: documentTargets,
             onMove: { target in model.documents.moveRecording(recording.id, from: documentID, to: target.id) }
-        )
+        ) {
+            if isEditing { transcriptEditBox() }
+        }
         .wwRow()
         .listRowInsets(EdgeInsets(top: 12, leading: 20, bottom: 12, trailing: 20))
 
@@ -2005,14 +2066,14 @@ struct InboxView: View {
 
     // MARK: In-place transcript editing
 
-    /// The bar under an open entry: Copy / Share / Transform / Reset as a compressed icon row in the
-    /// bottom-left corner, with Done at the bottom-right. Everything the sheet editor offered, minus
-    /// the sheet.
-    private func transcriptEditBar() -> some View {
-        WWInlineEditBar(onDone: { finishEditing() }) {
-            if isWorking {
-                ProgressView().controlSize(.small).padding(.trailing, 4)
-            }
+    /// The open entry's transcript inside its outline, with Copy / Share / Transform / Reset along
+    /// the bottom of that same outline and Done at its right. Everything the sheet editor offered,
+    /// minus the sheet.
+    private func transcriptEditBox() -> some View {
+        WWInlineEditBox(onDone: { finishEditing() }, isWorking: isWorking) {
+            InlineTextEditor(text: $editingText, selection: $editingSelection,
+                             style: .inboxTranscript)
+        } actions: {
             WWInlineEditAction("Copy", "doc.on.doc", enabled: !isWorking && !editingIsEmpty) {
                 copyEditing()
             }
@@ -2311,23 +2372,22 @@ struct InboxView: View {
 /// the row (the audio is still reachable from the editor's Share button). Only the selection
 /// checkmark takes space to its left, and only while selecting.
 ///
-/// Tapping the text opens it for editing **in place**: the preview is replaced by an outlined,
-/// self-sizing editor bound to the list's buffer, and the row's own controls stand aside while it's
-/// open.
-private struct InboxRecordingRow: View {
+/// Tapping the text opens it for editing **in place**: the preview gives way to `editor` — the
+/// outlined edit box the Inbox hands down, with its own actions inside the outline — and the row's
+/// own controls stand aside while it's open.
+private struct InboxRecordingRow<Editor: View>: View {
     let recording: Recording
     let selectionMode: Bool
     let isSelected: Bool
     let isTransforming: Bool
     let isEditing: Bool
-    @Binding var editingText: String
-    @Binding var editingSelection: NSRange
     let onTapLabel: () -> Void
     let onLongPress: () -> Void
     let onCopy: () -> Void
     let onRetranscribe: () -> Void
     let moveTargets: [Document]
     let onMove: (Document) -> Void
+    @ViewBuilder var editor: Editor
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -2341,8 +2401,7 @@ private struct InboxRecordingRow: View {
             // toggle the row when selecting). While editing, the editor takes the preview's place.
             VStack(alignment: .leading, spacing: 4) {
                 if isEditing {
-                    InlineTextEditor(text: $editingText, selection: $editingSelection)
-                        .wwEditingFrame()
+                    editor
                 } else if isTransforming {
                     HStack(spacing: 6) {
                         ProgressView().controlSize(.mini)
