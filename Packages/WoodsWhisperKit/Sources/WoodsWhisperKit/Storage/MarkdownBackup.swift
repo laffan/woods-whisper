@@ -37,6 +37,10 @@ public enum MarkdownBackup {
 
     /// A document as Markdown: its title as an H1, then the body paragraphs blank-line separated.
     /// No timestamps or other volatile metadata, so a file is only rewritten when its text changed.
+    ///
+    /// A **graph** document renders the same way — the difference is what `combinedText` hands over:
+    /// its nodes as an indented outline rather than paragraphs, so a mind map backs up (and copies,
+    /// and shares) as the outline it already is.
     public static func markdown(for document: Document) -> String {
         let body = document.combinedText
         var out = "# \(document.title)\n"

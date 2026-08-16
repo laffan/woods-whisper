@@ -345,6 +345,48 @@ final class AppModel: ObservableObject {
         }
     }
 
+    // MARK: Graph documents
+
+    /// Hold-to-record on a graph canvas. The node is made the instant the finger goes down — that's
+    /// what's on screen recording into — and this files the clip it was spoken into once the finger
+    /// lifts, then transcribes it. The words reach the node itself through `fillGraphNodes`, so this
+    /// path doesn't have to wait around for them.
+    ///
+    /// It's also how "Revise" replaces a node: the node's text is cleared and re-pointed at the new
+    /// clip, which is precisely the state a fresh capture is in.
+    func captureGraphNode(audioURL: URL, duration: TimeInterval, nodeID: UUID, in documentID: UUID) {
+        let name = Recording.defaultName(for: Date(), duration: duration,
+                                         byteCount: Recording.fileSize(at: audioURL))
+        let recording = Recording(name: name, duration: duration,
+                                  audioFileName: audioURL.lastPathComponent, origin: deviceOrigin())
+        // Point the node at the clip *before* filing it: that's how the store knows this recording
+        // already has a node on the canvas and shouldn't be given a second one.
+        documents.setNodeText(nodeID, in: documentID, to: "")
+        documents.linkNode(nodeID, toRecording: recording.id, in: documentID)
+        documents.addRecording(recording, toDocument: documentID)
+        wwLog("Captured “\(recording.name)” into a graph node", .general)
+        guard transcriptionReady else {
+            setupError = "Speech model isn't ready yet — the recording was saved; transcribe it once setup finishes."
+            return
+        }
+        Task { await transcribe(recordingID: recording.id, inDocument: documentID) }
+    }
+
+    /// Give a graph node the words of the clip it was spoken into, as soon as they exist.
+    ///
+    /// Only a node with nothing in it is filled, so re-transcribing a clip can't overwrite what
+    /// you've since typed or transformed — and "Revise", which empties the node before recording
+    /// over it, is the deliberate way to replace what's there.
+    private func fillGraphNodes(forRecording recordingID: UUID, in documentID: UUID) {
+        guard let document = documents.document(with: documentID), document.isGraph else { return }
+        let text = document.recordings.first(where: { $0.id == recordingID })?
+            .transcript?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !text.isEmpty else { return }
+        for node in document.nodes where node.recordingID == recordingID && !node.hasText {
+            documents.setNodeText(node.id, in: documentID, to: text)
+        }
+    }
+
     private func deviceOrigin() -> Recording.Origin {
         #if os(iOS)
         return UIDevice.current.userInterfaceIdiom == .pad ? .pad : .phone
@@ -541,6 +583,10 @@ final class AppModel: ObservableObject {
             if isFirstTranscription {
                 await applyAutoTransform(recordingID: recordingID, in: documentID)
             }
+            // In a graph, the node this clip was spoken into is still empty and waiting for it —
+            // after the Auto transform, so the canvas shows the shaped text rather than flashing
+            // the raw transcription first.
+            fillGraphNodes(forRecording: recordingID, in: documentID)
         } catch {
             recording.status = .failed
             documents.updateRecording(recording, inDocument: documentID)
@@ -813,6 +859,29 @@ final class AppModel: ObservableObject {
             recording.transcript = result.answer
             documents.updateRecording(recording, inDocument: documentID)
             wwLog(String(format: "Transcript transform “%@” finished (%d chars)", preset.name,
+                         result.answer.count), .transform)
+        } catch {
+            setupError = error.localizedDescription
+            wwLog("Transform failed: \(error.localizedDescription)", .error)
+        }
+    }
+
+    /// Run a preset against a single graph node, replacing its text in place — the node menu's
+    /// "Transform", the graph's answer to a paragraph transform.
+    func transformGraphNode(_ preset: PromptPreset, nodeID: UUID, in documentID: UUID) async {
+        guard let source = documents.document(with: documentID)?.node(with: nodeID)?.trimmedText,
+              !source.isEmpty else { return }
+        if preset.isNumberParagraphs {
+            documents.setNodeText(nodeID, in: documentID,
+                                  to: PromptPreset.numberParagraphs(in: source))
+            wwLog("Numbered a graph node", .transform)
+            return
+        }
+        wwLog("Transforming a graph node with “\(preset.name)”…", .transform)
+        do {
+            let result = try await transform.transform(transcript: source, with: preset, onToken: nil)
+            documents.setNodeText(nodeID, in: documentID, to: result.answer)
+            wwLog(String(format: "Node transform “%@” finished (%d chars)", preset.name,
                          result.answer.count), .transform)
         } catch {
             setupError = error.localizedDescription

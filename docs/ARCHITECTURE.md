@@ -54,7 +54,18 @@ storage, and connectivity code without the model dependencies.
   Re-transcribing a recording appends its transcript as a paragraph; transforming rewrites the
   paragraphs in place. The **Inbox** is a `Document` rendered as a flat recordings list. It also
   carries `autoTransformPresetID` — the "Auto transform" choice — which is why the Inbox and each
-  document remember their own without a second store or a global setting.
+  document remember their own without a second store or a global setting. A `kind` of `.graph`
+  makes the same container a **graph document** (below): the body lives in `nodes` instead of
+  `paragraphs`, and everything around it — recordings, Auto transform, trash, `.wwdoc` sharing, the
+  Markdown mirror — is untouched. Both keys decode as absent-friendly, so documents written before
+  graphs existed load as `.document` with no nodes.
+- **`GraphNode`** — one node of a graph document: its own `text`, a `parentID` (nil for a root), a
+  `position` on the canvas, and optionally the `recordingID` of the clip it was spoken into. The
+  text is the node's own copy — a transcript is *copied* in once, so editing, transforming, or
+  re-recording a node never reaches back into the clip. Structure is that single parent pointer, so
+  dragging a branch, re-parenting on a drop, and the Markdown outline all walk the same thing;
+  `Document.subtree(of:)` and `isAncestor(_:of:)` (both cycle-safe) are what a drop is checked
+  against, since a cycle is a graph no outline could walk out of.
 - **`PromptPreset`** — a named, reusable instruction (`systemPrompt` + `template` with a
   `{{transcript}}` token) plus generation params. Three built-ins ship; users add their own.
 - **`DeviceLink`** — describes the Watch↔host pairing; for the direct-to-iPad path it stores the
@@ -81,8 +92,40 @@ Everything downstream — editing, transform, move-to-document, "Reset with Orig
 backup — then works on it unchanged.
 
 **Transform (iOS):** `AppModel.transformDocument` (whole body) / `transformParagraph` (one
-paragraph) / `transformRecordingTranscript` (one clip's transcript) → `TextTransformService.transform`
-→ the result **replaces** the text in place rather than appending a new block.
+paragraph) / `transformGraphNode` (one node) / `transformRecordingTranscript` (one clip's
+transcript) → `TextTransformService.transform` → the result **replaces** the text in place rather
+than appending a new block.
+
+**Graph documents (iOS).** A graph is a `Document` with `kind == .graph`; `DocumentsView` routes to
+`GraphDocumentView` on that flag alone, so every way in (a row, the widget's deep link) agrees. The
+canvas draws everything in *canvas coordinates* inside one big container and applies a single
+transform — `scaleEffect(anchor: .topLeading)` then `offset` — so a canvas point `c` lands at
+`c * scale + pan` and the inverse used by every gesture is one line. Three pieces underneath:
+
+- `GraphLayout` (shared kit, pure) — the force-directed relaxation: nodes repel, parent–child edges
+  pull like springs, and roots are held loosely to a home position so the graph stays where it was
+  put. Bodies in, bodies out, no clock and no state, which is why it's unit-tested rather than
+  eyeballed.
+- `GraphLayoutEngine` (the view's `@StateObject`) — runs that a step at a time while the graph is
+  moving and stops the moment it settles. It owns the *live* positions the canvas reads; the stored
+  ones are written back only when the graph comes to rest, when a drag ends, and when the canvas
+  closes, so a relaxing graph doesn't rewrite the document (and its Markdown backup) at 30 Hz. Like
+  pinning, node positions don't bump `updatedAt` — where a node sits is layout, not an edit.
+- The canvas's own press: one `DragGesture(minimumDistance: 0)` reads a touch four ways — pan,
+  hold-to-record, tap, double-tap — rather than stacking four recognisers that would have to fight
+  over it. A touch that lands on a node never reaches it, because SwiftUI gives a child's gesture
+  priority over its ancestors'.
+
+**Graph capture (iOS).** Holding the canvas makes the node *first* (there has to be something on
+screen recording into) and files the clip on release via `AppModel.captureGraphNode`, which points
+the node at the recording before adding it. Everything after that is the ordinary transcription
+path: `transcribe` runs, the document's Auto transform has its say, and only then does
+`fillGraphNodes` copy the words into any node that's still empty and pointed at that clip. Hanging
+it off `transcribe` is what makes it work for arrivals that know nothing about graphs —
+`DocumentStore.addRecording` gives a Watch clip, a shared audio file, or a recording moved in from
+the Inbox a node of its own (unless one already claims it), and the words catch up through the same
+hook. Filling only *empty* nodes is what keeps a Retranscribe from overwriting what you've since
+typed; "Revise" empties the node deliberately, which is exactly how it replaces it.
 
 **Auto transform (iOS):** `AppModel.transcribe` notes whether the recording's `transcript` was nil
 *before* it ran — the test for "first transcription" — and on success calls `applyAutoTransform`,
@@ -107,7 +150,11 @@ document, named by its title). Two pieces:
 - `MarkdownBackup` — pure: documents in, `[relative path: file contents]` out. All the naming and
   formatting rules (and their tests) live here, no disk access. Its per-document rendering is also
   what the Documents list's batch Copy/Share hand over (`MarkdownBackup.combined`), so a bundle of
-  documents reads the same wherever it lands.
+  documents reads the same wherever it lands. A **graph** needs no branch of its own here: it's
+  `Document.combinedText` that differs, handing over `Document.outline` — the nodes as an indented
+  bullet list — so the mirror, Copy, Share and a whole-document transform all get the graph in the
+  shape it already has. (A node with nothing in it yet isn't given a bullet, and whatever hangs off
+  it moves up a level, so the outline never has an empty line with children dangling under it.)
 - `LocalBackupStore` — the stateful half: holds the chosen folder as a security-scoped bookmark
   (the folder is outside the sandbox), coalesces change notifications, and does the file work off
   the main actor.

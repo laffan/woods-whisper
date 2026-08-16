@@ -963,7 +963,10 @@ struct CaptureBar: View {
     let presets: [PromptPreset]
     let selected: PromptPreset?
     let onSelect: (PromptPreset?) -> Void
-    let onRecord: () -> Void
+    /// What the red dot does — or nil in a **graph** document, which has no record button of its
+    /// own: recording there is a hold anywhere on the canvas, which places the node at the same
+    /// time. The Auto transform toggle below is the same in all three places.
+    let onRecord: (() -> Void)?
 
     /// Whether the toggle reads as on. Held locally as well as in the store because "on, but no
     /// transform picked yet" is a real state: it's what you see between flipping the switch and
@@ -976,8 +979,10 @@ struct CaptureBar: View {
             // No background behind the dot — the list's text passes underneath it. The padding is
             // lopsided on purpose: it lifts the dot clear of the bar without changing the height
             // this inset takes from the list.
-            WWRecordButton(action: onRecord)
-                .padding(.bottom, 20)
+            if let onRecord {
+                WWRecordButton(action: onRecord)
+                    .padding(.bottom, 20)
+            }
 
             // The strip runs the full width; what's written on it is held to the content column, so
             // an iPad doesn't put the label and its switch a hand-span apart.
@@ -1115,12 +1120,15 @@ enum InlineTextStyle {
     case documentBody
     /// An Inbox entry's transcript: the `.subheadline` its preview is set in.
     case inboxTranscript
+    /// A node on a graph canvas — the same compact type an Inbox entry is set in, since a node card
+    /// is the same small block of text.
+    case graphNode
 
     /// What the row uses to draw the text.
     var font: Font {
         switch self {
-        case .documentBody:    return WW.bodyText
-        case .inboxTranscript: return .subheadline
+        case .documentBody:                 return WW.bodyText
+        case .inboxTranscript, .graphNode:  return .subheadline
         }
     }
 
@@ -1130,15 +1138,15 @@ enum InlineTextStyle {
     /// Size setting, and grows past it everywhere else.
     var uiFont: UIFont {
         switch self {
-        case .documentBody:    return .systemFont(ofSize: 17)
-        case .inboxTranscript: return .preferredFont(forTextStyle: .subheadline)
+        case .documentBody:                 return .systemFont(ofSize: 17)
+        case .inboxTranscript, .graphNode:  return .preferredFont(forTextStyle: .subheadline)
         }
     }
 
     var lineSpacing: CGFloat {
         switch self {
-        case .documentBody:    return 5
-        case .inboxTranscript: return 0
+        case .documentBody:                 return 5
+        case .inboxTranscript, .graphNode:  return 0
         }
     }
     #endif

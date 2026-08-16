@@ -10,6 +10,11 @@ struct DocumentsView: View {
     @ObservedObject private var opener = DocumentLauncher.shared
     @State private var renameTarget: Document?
     @State private var renameText = ""
+    // The New Document dialog: a title and the Document / Graph toggle, which is the one thing
+    // about a document that can't be changed afterwards.
+    @State private var showingNewDocument = false
+    @State private var newDocumentTitle = ""
+    @State private var newDocumentKind: Document.Kind = .document
     @State private var showingRecorder = false
     @State private var shareItem: ShareItem?
     @State private var editingDoc: Document?
@@ -73,10 +78,18 @@ struct DocumentsView: View {
             }
             .wwList()
             .navigationTitle(selectionMode ? "\(selected.count) selected" : "Documents")
+            // A graph opens onto its canvas rather than the paragraph list — same route, picked by
+            // the document's own kind so every way in (a row, the widget's deep link) agrees.
             .navigationDestination(for: Route.self) { route in
                 switch route {
-                case .document(let id): DocumentDetailView(documentID: id)
-                case .trash:            TrashView()
+                case .document(let id):
+                    if model.documents.document(with: id)?.isGraph == true {
+                        GraphDocumentView(documentID: id)
+                    } else {
+                        DocumentDetailView(documentID: id)
+                    }
+                case .trash:
+                    TrashView()
                 }
             }
             .toolbar {
@@ -92,8 +105,9 @@ struct DocumentsView: View {
                 } else {
                     ToolbarItem(placement: .primaryAction) {
                         Button {
-                            let doc = model.documents.createDocument()
-                            startRename(doc)
+                            newDocumentTitle = ""
+                            newDocumentKind = .document
+                            showingNewDocument = true
                         } label: { Image(systemName: "square.and.pencil") }
                         .accessibilityLabel("New Document")
                     }
@@ -123,7 +137,12 @@ struct DocumentsView: View {
                 if userDocuments.isEmpty {
                     WWEmptyState(title: "No documents yet",
                                  systemImage: "doc.text",
-                                 message: "Tap ✎ to start a document, or the mic to record straight to your Inbox. Watch recordings land in the Inbox tab.")
+                                 message: "Tap ✎ to start a document — or a graph — or the mic to record straight to your Inbox. Watch recordings land in the Inbox tab.")
+                }
+            }
+            .sheet(isPresented: $showingNewDocument) {
+                NewDocumentSheet(title: $newDocumentTitle, kind: $newDocumentKind) {
+                    createDocument()
                 }
             }
             .alert("Rename document", isPresented: Binding(get: { renameTarget != nil },
@@ -213,9 +232,14 @@ struct DocumentsView: View {
         }
         .swipeActions(edge: .leading) {
             if !selectionMode {
+                // Copy and Share hand over the body as text either way — for a graph that's its
+                // outline. Edit is the one action a graph has no answer to: there's no column of
+                // text to open, and writing one back would quietly bury the canvas.
                 Button("Copy") { copy(doc) }.tint(WW.inkTertiary)
                 Button("Share") { shareItem = ShareItem(text: doc.combinedText) }.tint(WW.violet)
-                Button("Edit") { startEdit(doc) }.tint(WW.slate)
+                if !doc.isGraph {
+                    Button("Edit") { startEdit(doc) }.tint(WW.slate)
+                }
             }
         }
     }
@@ -274,6 +298,16 @@ struct DocumentsView: View {
         wwLog("Copied \(count) document\(count == 1 ? "" : "s") to clipboard", .general)
     }
 
+    /// Confirm the New Document dialog: create the document (or the graph) under the typed title,
+    /// falling back to a name of its own kind when nothing was typed.
+    private func createDocument() {
+        let trimmed = newDocumentTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallback = newDocumentKind == .graph ? "New Graph" : "New Document"
+        let doc = model.documents.createDocument(title: trimmed.isEmpty ? fallback : trimmed,
+                                                 kind: newDocumentKind)
+        wwLog("Created \(newDocumentKind == .graph ? "graph" : "document") “\(doc.title)”", .general)
+    }
+
     private func startRename(_ document: Document) {
         renameText = document.title
         renameTarget = document
@@ -298,6 +332,66 @@ struct DocumentsView: View {
     }
 }
 
+/// The dialog behind the ✎ button: name the thing, and choose what it is.
+///
+/// The toggle is here rather than on the document itself because it's the one decision that can't
+/// be revisited — a graph and a document have different bodies, so there's nothing sensible to
+/// convert between them.
+private struct NewDocumentSheet: View {
+    @Binding var title: String
+    @Binding var kind: Document.Kind
+    let onCreate: () -> Void
+    @Environment(\.dismiss) private var dismiss
+    @FocusState private var titleFocused: Bool
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 20) {
+                Picker("Kind", selection: $kind) {
+                    Text("Document").tag(Document.Kind.document)
+                    Text("Graph").tag(Document.Kind.graph)
+                }
+                .pickerStyle(.segmented)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    TextField("Title", text: $title)
+                        .font(WW.rowTitle)
+                        .textFieldStyle(.plain)
+                        .focused($titleFocused)
+                        .submitLabel(.done)
+                        .onSubmit { create() }
+                        .padding(.horizontal, 12).padding(.vertical, 10)
+                        .background(WW.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(WW.hairline, lineWidth: 1))
+                    WWFooter(kind == .graph
+                             ? "A pannable canvas of nodes. Hold anywhere on it to record a node; double-tap to type one. Exports as a Markdown outline."
+                             : "Paragraphs, read top to bottom. Record into it, import text, and transform what's there.")
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .wwContentWidth()
+            .background(WW.paper)
+            .navigationTitle("New")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) { Button("Create") { create() } }
+            }
+        }
+        .presentationDetents([.height(300)])
+        .onAppear { titleFocused = true }
+    }
+
+    private func create() {
+        onCreate()
+        dismiss()
+    }
+}
+
 private struct DocumentRow: View {
     let document: Document
     var body: some View {
@@ -307,6 +401,12 @@ private struct DocumentRow: View {
                     Image(systemName: "pin.fill")
                         .font(.system(size: 10))
                         .foregroundStyle(WW.moss)
+                }
+                // A graph says so in the list: it opens onto a canvas, not a page.
+                if document.isGraph {
+                    Image(systemName: "point.3.connected.trianglepath.dotted")
+                        .font(.system(size: 11))
+                        .foregroundStyle(WW.inkSecondary)
                 }
                 Text(document.title)
                     .font(WW.rowTitle)
@@ -318,8 +418,14 @@ private struct DocumentRow: View {
         }
     }
     private var subtitle: String {
-        let paras = document.paragraphs.count
-        let body = "\(paras) paragraph\(paras == 1 ? "" : "s")"
+        let body: String
+        if document.isGraph {
+            let nodes = document.nodes.count
+            body = "\(nodes) node\(nodes == 1 ? "" : "s")"
+        } else {
+            let paras = document.paragraphs.count
+            body = "\(paras) paragraph\(paras == 1 ? "" : "s")"
+        }
         let count = document.recordings.count
         let clips = count == 0 ? "" : " · \(count) recording\(count == 1 ? "" : "s")"
         return body + clips

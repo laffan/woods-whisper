@@ -54,8 +54,9 @@ public final class DocumentStore: ObservableObject {
     // MARK: Documents
 
     @discardableResult
-    public func createDocument(title: String = "New Document") -> Document {
-        let doc = Document(title: title)
+    public func createDocument(title: String = "New Document",
+                               kind: Document.Kind = .document) -> Document {
+        let doc = Document(title: title, kind: kind)
         documents.insert(doc, at: 0)
         persistDocuments()
         return doc
@@ -179,7 +180,37 @@ public final class DocumentStore: ObservableObject {
         }
         guard let idx = index(of: documentID) else { return }
         documents[idx].recordings.append(recording)
+        adoptIntoGraph(recording, at: idx)
         touch(idx)
+    }
+
+    /// A clip that lands in a **graph** document needs somewhere to be, so it's given a node of its
+    /// own — unless one already points at it, which is the canvas's own hold-to-record (there the
+    /// node exists from the moment the finger goes down, and the clip catches up on release).
+    ///
+    /// This is what lets a Watch capture, a shared audio file, or a recording moved in from the
+    /// Inbox arrive in a graph without any of those paths knowing graphs exist. The node starts
+    /// with whatever transcript came with the clip — usually none, in which case `AppModel` fills
+    /// it in the moment transcription finishes.
+    private func adoptIntoGraph(_ recording: Recording, at idx: Int) {
+        guard documents[idx].isGraph,
+              !documents[idx].nodes.contains(where: { $0.recordingID == recording.id }) else { return }
+        let text = recording.transcript?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        documents[idx].nodes.append(GraphNode(text: text,
+                                              position: documents[idx].nextRootPosition(),
+                                              recordingID: recording.id))
+    }
+
+    /// Drop any node's link to a recording that has just left this document (deleted or moved
+    /// away). The node keeps its words — they're its own copy — but stops offering to play, revise
+    /// or re-transcribe a clip that isn't there any more.
+    private func unlinkNodes(from recordingIDs: Set<UUID>, at idx: Int) {
+        guard documents[idx].isGraph else { return }
+        for nodeIdx in documents[idx].nodes.indices {
+            if let id = documents[idx].nodes[nodeIdx].recordingID, recordingIDs.contains(id) {
+                documents[idx].nodes[nodeIdx].recordingID = nil
+            }
+        }
     }
 
     public func updateRecording(_ recording: Recording, inDocument documentID: UUID) {
@@ -204,6 +235,7 @@ public final class DocumentStore: ObservableObject {
         else { return }
         removeAudio(documents[docIdx].recordings[recIdx])
         documents[docIdx].recordings.remove(at: recIdx)
+        unlinkNodes(from: [recordingID], at: docIdx)
         touch(docIdx)
     }
 
@@ -215,7 +247,9 @@ public final class DocumentStore: ObservableObject {
               let dstIdx = index(of: targetID)
         else { return }
         let recording = documents[srcIdx].recordings.remove(at: recIdx)
+        unlinkNodes(from: [recordingID], at: srcIdx)
         documents[dstIdx].recordings.append(recording)
+        adoptIntoGraph(recording, at: dstIdx)
         documents[srcIdx].updatedAt = Date()
         touch(dstIdx)
     }
@@ -266,6 +300,7 @@ public final class DocumentStore: ObservableObject {
             removeAudio(recording)
         }
         documents[docIdx].recordings.removeAll { ids.contains($0.id) }
+        unlinkNodes(from: ids, at: docIdx)
         touch(docIdx)
     }
 
@@ -305,7 +340,9 @@ public final class DocumentStore: ObservableObject {
             .sorted { $0.createdAt < $1.createdAt }
         guard !moving.isEmpty else { return }
         documents[srcIdx].recordings.removeAll { ids.contains($0.id) }
+        unlinkNodes(from: Set(moving.map(\.id)), at: srcIdx)
         documents[dstIdx].recordings.append(contentsOf: moving)
+        for recording in moving { adoptIntoGraph(recording, at: dstIdx) }
         documents[srcIdx].updatedAt = Date()
         touch(dstIdx)
     }
@@ -378,6 +415,133 @@ public final class DocumentStore: ObservableObject {
         touch(idx)
     }
 
+    // MARK: Graph body (nodes)
+
+    public func addNode(_ node: GraphNode, to documentID: UUID) {
+        guard let idx = index(of: documentID) else { return }
+        documents[idx].nodes.append(node)
+        touch(idx)
+    }
+
+    /// Write a node's text back (the in-place editor's Done, a transform's result, a transcript
+    /// arriving). Stored trimmed, so "has this node anything to say?" is the same question
+    /// everywhere.
+    public func setNodeText(_ nodeID: UUID, in documentID: UUID, to text: String) {
+        guard let docIdx = index(of: documentID),
+              let nodeIdx = documents[docIdx].nodes.firstIndex(where: { $0.id == nodeID })
+        else { return }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard documents[docIdx].nodes[nodeIdx].text != trimmed else { return }
+        documents[docIdx].nodes[nodeIdx].text = trimmed
+        touch(docIdx)
+    }
+
+    /// Point a node at the clip it was spoken into — or at nothing (`nil`), which is what "Revise"
+    /// does before it records a replacement.
+    public func linkNode(_ nodeID: UUID, toRecording recordingID: UUID?, in documentID: UUID) {
+        guard let docIdx = index(of: documentID),
+              let nodeIdx = documents[docIdx].nodes.firstIndex(where: { $0.id == nodeID }),
+              documents[docIdx].nodes[nodeIdx].recordingID != recordingID
+        else { return }
+        documents[docIdx].nodes[nodeIdx].recordingID = recordingID
+        touch(docIdx)
+    }
+
+    /// Write settled positions back — from a finished drag, or from the layout once it has come to
+    /// rest. Like pinning, where a node *sits* is metadata rather than an edit, so this doesn't bump
+    /// `updatedAt`: nudging a branch around shouldn't re-sort the Documents list.
+    public func moveNodes(_ positions: [UUID: GraphPoint], in documentID: UUID) {
+        guard !positions.isEmpty, let idx = index(of: documentID) else { return }
+        var changed = false
+        for nodeIdx in documents[idx].nodes.indices {
+            guard let position = positions[documents[idx].nodes[nodeIdx].id],
+                  documents[idx].nodes[nodeIdx].position != position else { continue }
+            documents[idx].nodes[nodeIdx].position = position
+            changed = true
+        }
+        guard changed else { return }
+        persistDocuments()
+    }
+
+    /// Re-parent a node — and with it everything hanging off it — which is what dropping one node
+    /// onto another does. Refuses a move that would make a node its own ancestor: that leaves a
+    /// cycle, and a cycle is a graph no outline can walk out of.
+    @discardableResult
+    public func reparentNode(_ nodeID: UUID, to newParentID: UUID?, in documentID: UUID) -> Bool {
+        guard let docIdx = index(of: documentID),
+              let nodeIdx = documents[docIdx].nodes.firstIndex(where: { $0.id == nodeID }),
+              documents[docIdx].nodes[nodeIdx].parentID != newParentID
+        else { return false }
+        if let newParentID {
+            guard newParentID != nodeID,
+                  documents[docIdx].nodes.contains(where: { $0.id == newParentID }),
+                  !documents[docIdx].isAncestor(nodeID, of: newParentID)
+            else { return false }
+        }
+        documents[docIdx].nodes[nodeIdx].parentID = newParentID
+        touch(docIdx)
+        return true
+    }
+
+    /// Delete one node. Its children are promoted to its own parent rather than deleted along with
+    /// it — a branch is usually worth more than the node it happens to hang from, and deleting them
+    /// one at a time is possible where un-deleting a subtree isn't.
+    ///
+    /// The clip the node was spoken into goes with it: a graph has no Recordings list, so the node
+    /// was the only way to reach that audio, and leaving it behind would be weight nobody could see
+    /// or delete.
+    public func deleteNode(_ nodeID: UUID, in documentID: UUID) {
+        guard let docIdx = index(of: documentID),
+              let nodeIdx = documents[docIdx].nodes.firstIndex(where: { $0.id == nodeID })
+        else { return }
+        let node = documents[docIdx].nodes.remove(at: nodeIdx)
+        for idx in documents[docIdx].nodes.indices
+        where documents[docIdx].nodes[idx].parentID == nodeID {
+            documents[docIdx].nodes[idx].parentID = node.parentID
+        }
+        if let recordingID = node.recordingID,
+           let recIdx = documents[docIdx].recordings.firstIndex(where: { $0.id == recordingID }) {
+            removeAudio(documents[docIdx].recordings[recIdx])
+            documents[docIdx].recordings.remove(at: recIdx)
+        }
+        touch(docIdx)
+    }
+
+    /// Add a child to `parentID` — the "+" on a node's right edge. It starts to the right of its
+    /// parent and below any siblings; the layout takes it from there.
+    @discardableResult
+    public func addChildNode(to parentID: UUID, in documentID: UUID, text: String = "") -> GraphNode? {
+        guard let docIdx = index(of: documentID),
+              let parent = documents[docIdx].node(with: parentID) else { return nil }
+        let siblings = documents[docIdx].children(of: parentID).count
+        let node = GraphNode(text: text,
+                             parentID: parentID,
+                             position: GraphPoint(x: parent.position.x + 190,
+                                                  y: parent.position.y + Double(siblings) * 80))
+        documents[docIdx].nodes.append(node)
+        touch(docIdx)
+        return node
+    }
+
+    /// Add a node *between* an existing parent and child — the "+" halfway along the line joining
+    /// them. It lands at the midpoint and adopts the child, so the branch below stays intact.
+    @discardableResult
+    public func insertNode(between parentID: UUID, and childID: UUID, in documentID: UUID) -> GraphNode? {
+        guard let docIdx = index(of: documentID),
+              let parent = documents[docIdx].node(with: parentID),
+              let childIdx = documents[docIdx].nodes.firstIndex(where: { $0.id == childID }),
+              documents[docIdx].nodes[childIdx].parentID == parentID
+        else { return nil }
+        let child = documents[docIdx].nodes[childIdx]
+        let node = GraphNode(parentID: parentID,
+                             position: GraphPoint(x: (parent.position.x + child.position.x) / 2,
+                                                  y: (parent.position.y + child.position.y) / 2))
+        documents[docIdx].nodes[childIdx].parentID = node.id
+        documents[docIdx].nodes.append(node)
+        touch(docIdx)
+        return node
+    }
+
     // MARK: Sharing (Woods Whisper document files)
 
     /// Pack a document — its edited body, its recordings' metadata/transcripts, and every recording's
@@ -431,8 +595,12 @@ public final class DocumentStore: ObservableObject {
             importedRecordings.append(recording)
         }
 
+        // Kind and nodes ride along with the body, so a graph shared from another device opens as a
+        // graph — laid out exactly as it was drawn there.
         let imported = Document(title: archive.document.title,
+                                kind: archive.document.kind,
                                 paragraphs: archive.document.paragraphs,
+                                nodes: archive.document.nodes,
                                 recordings: importedRecordings)
         documents.insert(imported, at: 0)
         persistDocuments()

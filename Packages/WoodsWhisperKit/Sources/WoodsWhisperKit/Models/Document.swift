@@ -7,6 +7,11 @@ import Foundation
 /// The body is the document the user reads and edits; recordings are the source material.
 /// Re-transcribing a recording appends its transcript as a paragraph at the bottom of the body;
 /// transforming rewrites paragraphs in place.
+///
+/// A document can also be a **graph** (`kind == .graph`): the same container, but its body is a set
+/// of `GraphNode`s laid out on a canvas rather than paragraphs read top to bottom. Everything
+/// around the body — recordings, Auto transform, the trash, sharing, the backup mirror — is
+/// unchanged, which is the point of making it a kind of document rather than a second type.
 public struct Document: Identifiable, Codable, Hashable, Sendable {
     public let id: UUID
 
@@ -15,8 +20,16 @@ public struct Document: Identifiable, Codable, Hashable, Sendable {
     public let createdAt: Date
     public var updatedAt: Date
 
-    /// The document body: ordered, editable, reorderable text blocks.
+    /// What this document *is* — prose or a mind map. Chosen in the New Document dialog and fixed
+    /// from then on: the two have different bodies, so there's nothing sensible to convert.
+    public var kind: Kind
+
+    /// The document body: ordered, editable, reorderable text blocks. Empty in a graph document,
+    /// which keeps its body in `nodes` instead.
     public var paragraphs: [Paragraph]
+
+    /// The graph body: the nodes on the canvas of a `.graph` document. Empty in an ordinary one.
+    public var nodes: [GraphNode]
 
     /// The recordings this document was assembled from, kept separate from the body and shown in
     /// their own "Recordings" section.
@@ -36,7 +49,9 @@ public struct Document: Identifiable, Codable, Hashable, Sendable {
         title: String,
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
+        kind: Kind = .document,
         paragraphs: [Paragraph] = [],
+        nodes: [GraphNode] = [],
         recordings: [Recording] = [],
         isPinned: Bool = false,
         autoTransformPresetID: UUID? = nil
@@ -45,22 +60,42 @@ public struct Document: Identifiable, Codable, Hashable, Sendable {
         self.title = title
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+        self.kind = kind
         self.paragraphs = paragraphs
+        self.nodes = nodes
         self.recordings = recordings
         self.isPinned = isPinned
         self.autoTransformPresetID = autoTransformPresetID
     }
 
-    /// The whole body as plain text — the input for a whole-document transform.
+    /// Which body this document has.
+    public enum Kind: String, Codable, Hashable, Sendable {
+        /// Paragraphs, read top to bottom.
+        case document
+        /// Nodes on a canvas — a force-directed mind map.
+        case graph
+    }
+
+    /// The whole body as plain text — what Copy, Share and a whole-document transform work on, and
+    /// what the Markdown backup writes under the title. A graph has no top-to-bottom body to hand
+    /// over, so it hands over its outline: the same content, in the shape the canvas already has.
     public var combinedText: String {
-        paragraphs
-            .map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-            .joined(separator: "\n\n")
+        switch kind {
+        case .document:
+            return paragraphs
+                .map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+                .joined(separator: "\n\n")
+        case .graph:
+            return outline
+        }
     }
 
     public var hasBodyText: Bool {
-        paragraphs.contains { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        switch kind {
+        case .document: return paragraphs.contains { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        case .graph:    return nodes.contains { $0.hasText }
+        }
     }
 
     /// One editable block of the document body.
@@ -86,9 +121,11 @@ public struct Document: Identifiable, Codable, Hashable, Sendable {
     }
 
     // Custom decoding so documents saved by older builds (which stored `transformations` and no
-    // `paragraphs`) still load: missing keys default to empty rather than failing the decode.
+    // `paragraphs`, and knew nothing of graphs) still load: missing keys default rather than
+    // failing the decode. A document saved before graphs existed reads back as `.document`.
     enum CodingKeys: String, CodingKey {
-        case id, title, createdAt, updatedAt, paragraphs, recordings, isPinned, autoTransformPresetID
+        case id, title, createdAt, updatedAt, kind, paragraphs, nodes, recordings, isPinned,
+             autoTransformPresetID
     }
 
     public init(from decoder: Decoder) throws {
@@ -97,7 +134,9 @@ public struct Document: Identifiable, Codable, Hashable, Sendable {
         title = try c.decode(String.self, forKey: .title)
         createdAt = try c.decode(Date.self, forKey: .createdAt)
         updatedAt = try c.decode(Date.self, forKey: .updatedAt)
+        kind = try c.decodeIfPresent(Kind.self, forKey: .kind) ?? .document
         paragraphs = try c.decodeIfPresent([Paragraph].self, forKey: .paragraphs) ?? []
+        nodes = try c.decodeIfPresent([GraphNode].self, forKey: .nodes) ?? []
         recordings = try c.decodeIfPresent([Recording].self, forKey: .recordings) ?? []
         isPinned = try c.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
         autoTransformPresetID = try c.decodeIfPresent(UUID.self, forKey: .autoTransformPresetID)

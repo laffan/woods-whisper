@@ -89,6 +89,21 @@ the rest of the app depends on.
   flip the toggle off to stop). Each document remembers its own choice, and so does the Inbox. Only
   a *first* transcription is transformed: **Retranscribe** and **Reset** still give you the original
   words back.
+- **Graph documents (experimental).** The **✎** button now asks what you're making: a **Document** or
+  a **Graph**. A graph is a force-directed mind map on a pannable, zoomable canvas over a very light
+  grid — endless in every direction, so there's always more room a drag away. **Hold anywhere on the
+  canvas** and a node appears under your finger and starts recording; lift and it stops, transcribes,
+  and the words drop into that node — one gesture for "make a node and say what's in it".
+  **Double-tap** the canvas for a node you type instead. Nodes are the same edit blocks as
+  everywhere else, shrunk to cards: **tap twice** to edit one in place, **long-press** for the
+  actions a paragraph gets from a swipe (Edit, Add Child, Revise, Transform, Delete) as a dropdown.
+  **Drag** a node and its children come with it; **drop it on another node** and the whole branch
+  hangs off that one. The **"+"** on a node's right edge adds a child, and the one midway along a
+  line drops a node between the two it joins. There's no red record button along the bottom — the
+  hold is the record button — but the **Auto transform** toggle is the same one the Inbox and
+  documents carry, and shapes each node as it's transcribed. Copy, Share, and the backup folder all
+  hand over the graph as a **Markdown outline**: one bullet per node, indented by depth, in the order
+  the canvas reads.
 - **Record straight to a document from the Watch.** The iPhone syncs your document list to the Watch
   over WatchConnectivity; swipe left on the Watch's record screen to pick a target document (or the
   Inbox). The chosen target's name shows on the record screen, and clips captured there are filed into
@@ -147,13 +162,15 @@ iCloud Drive, an external drive) and Woods Whisper creates a **`WoodsWhisper`** 
 │   └── 2026-07-31 14-30-05.md
 └── Documents/
     ├── Field Notes.md              # one file per document, named by its title
+    ├── Route Plan.md               # a graph is written as a Markdown outline
     └── Trip Log.md
 ```
 
 Every creation and edit saves a fresh copy of the current state — the newest version **overwrites**
 the previous one (no history is kept, for now). Writes are coalesced while you type and only files
 whose text actually changed are rewritten. **Text only:** audio stays in the app, so the folder is
-readable in any Markdown editor. Turning backup off leaves the files where they are.
+readable in any Markdown editor (a **graph** is written as its outline — nested bullets — which is
+also what its Copy and Share hand over). Turning backup off leaves the files where they are.
 
 ## Building
 
@@ -170,6 +187,11 @@ open WoodsWhisper.xcodeproj
 Then in Xcode: select the **WoodsWhisper** scheme (or **WoodsWhisperWatch** to run on the Watch
 directly), set your signing team on each target, and run on a device (the ML models need real
 hardware; the Simulator can't use the ANE).
+
+> **Re-run `xcodegen generate` after pulling.** The spec globs `Apps/iOS` when the project is
+> generated, so a source file added since your last run — the graph canvas is one — won't be in an
+> existing `.xcodeproj` until you generate again. (Files added to `Packages/WoodsWhisperKit` are
+> picked up by SwiftPM on their own.)
 
 > **"New Recording" everywhere.** A `StartRecordingIntent` App Intent (in `WoodsWhisperKit`) lets you
 > start a recording from **Siri, Spotlight, Shortcuts, the iOS Action Button, and a Lock Screen /

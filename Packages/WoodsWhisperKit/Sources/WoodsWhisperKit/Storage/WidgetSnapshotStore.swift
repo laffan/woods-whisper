@@ -65,11 +65,20 @@ public enum WidgetSnapshotStore {
 
     /// A one-line preview of the document body: the first non-empty paragraph with its internal
     /// line breaks collapsed, capped so the snapshot stays small however long the paragraph is.
+    /// For a graph document it's the first node the outline reaches, which is the same idea — the
+    /// first thing you'd read if you opened it.
     public static func preview(of document: Document) -> String {
-        let first = document.paragraphs
-            .lazy
-            .map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .first { !$0.isEmpty } ?? ""
+        let blocks: [String]
+        if document.isGraph {
+            // The outline's first bullet, minus its dash — that's markup, not words.
+            blocks = document.outline
+                .components(separatedBy: .newlines)
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .map { $0.hasPrefix("- ") ? String($0.dropFirst(2)) : $0 }
+        } else {
+            blocks = document.paragraphs.map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }
+        }
+        let first = blocks.first { !$0.isEmpty } ?? ""
         let collapsed = first
             .components(separatedBy: .newlines)
             .map { $0.trimmingCharacters(in: .whitespaces) }

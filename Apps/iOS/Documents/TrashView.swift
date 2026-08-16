@@ -73,8 +73,14 @@ private struct TrashDocumentRow: View {
         }
     }
     private var subtitle: String {
-        let paras = document.paragraphs.count
-        let body = "\(paras) paragraph\(paras == 1 ? "" : "s")"
+        let body: String
+        if document.isGraph {
+            let nodes = document.nodes.count
+            body = "\(nodes) node\(nodes == 1 ? "" : "s")"
+        } else {
+            let paras = document.paragraphs.count
+            body = "\(paras) paragraph\(paras == 1 ? "" : "s")"
+        }
         let count = document.recordings.count
         let clips = count == 0 ? "" : " · \(count) recording\(count == 1 ? "" : "s")"
         return body + clips
