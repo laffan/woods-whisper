@@ -447,48 +447,21 @@ final class WoodsWhisperKitTests: XCTestCase {
         XCTAssertEqual(WidgetSnapshotStore.preview(of: doc), "Elk by the creek")
     }
 
-    // MARK: Graph layout
+    func testNodeListIsOutlineOrderWithDepthsAndKeepsEmptyNodes() {
+        // The list is how you find your way back to a node, so a clip still transcribing — no words
+        // yet — has to be in it, even though the outline leaves it out.
+        let camp = graphNode("Camp", y: 0)
+        let waiting = graphNode("", parent: camp.id, y: 40)
+        let firewood = graphNode("Firewood", parent: waiting.id, y: 60)
+        let weather = graphNode("Weather", y: 300)
+        let doc = Document(title: "Trip", kind: .graph,
+                           nodes: [weather, firewood, waiting, camp])
 
-    private func separation(_ a: GraphPoint, _ b: GraphPoint) -> Double {
-        let dx = a.x - b.x, dy = a.y - b.y
-        return (dx * dx + dy * dy).squareRoot()
-    }
-
-    func testLayoutPushesNodesOffOneAnother() {
-        // Two nodes dropped on the exact same spot — no direction to separate along until the
-        // layout invents one.
-        let bodies = [GraphLayout.Body(id: UUID(), position: GraphPoint.zero, home: GraphPoint.zero),
-                      GraphLayout.Body(id: UUID(), position: GraphPoint.zero, home: GraphPoint.zero)]
-        let settled = GraphLayout.relaxed(bodies)
-        XCTAssertGreaterThan(separation(settled[0].position, settled[1].position), 60)
-    }
-
-    func testLayoutHangsAChildNearItsParent() {
-        let parent = GraphLayout.Body(id: UUID(), position: GraphPoint.zero, home: GraphPoint.zero, isPinned: true)
-        let child = GraphLayout.Body(id: UUID(), parentID: parent.id,
-                                     position: GraphPoint(x: 600, y: 0))
-        let settled = GraphLayout.relaxed([parent, child])
-
-        let distance = separation(settled[0].position, settled[1].position)
-        XCTAssertGreaterThan(distance, 100)
-        XCTAssertLessThan(distance, 320)
-    }
-
-    func testPinnedNodesNeverMove() {
-        let anchor = GraphLayout.Body(id: UUID(), position: GraphPoint(x: 10, y: 20), isPinned: true)
-        let free = GraphLayout.Body(id: UUID(), position: GraphPoint(x: 12, y: 22))
-        let settled = GraphLayout.relaxed([anchor, free])
-
-        XCTAssertEqual(settled.first { $0.id == anchor.id }?.position, anchor.position)
-        XCTAssertNotEqual(settled.first { $0.id == free.id }?.position, free.position)
-    }
-
-    /// A root is held to where it was put, so a graph doesn't wander off the spot the user left it.
-    func testARootIsDrawnBackToItsHome() {
-        let home = GraphPoint(x: 100, y: -40)
-        let body = GraphLayout.Body(id: UUID(), position: GraphPoint(x: 400, y: 400), home: home)
-        let settled = GraphLayout.relaxed([body], iterations: 1000)
-        XCTAssertLessThan(separation(settled[0].position, home), 5)
+        let entries = doc.nodeEntries
+        XCTAssertEqual(entries.map(\.node.id), [camp.id, waiting.id, firewood.id, weather.id])
+        XCTAssertEqual(entries.map(\.depth), [0, 1, 2, 0])
+        // …while the export still promotes what hangs off the empty one.
+        XCTAssertEqual(doc.outline, "- Camp\n  - Firewood\n- Weather")
     }
 
     // MARK: Pairing / subnet math

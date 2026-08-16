@@ -63,7 +63,8 @@ storage, and connectivity code without the model dependencies.
   `position` on the canvas, and optionally the `recordingID` of the clip it was spoken into. The
   text is the node's own copy — a transcript is *copied* in once, so editing, transforming, or
   re-recording a node never reaches back into the clip. Structure is that single parent pointer, so
-  dragging a branch, re-parenting on a drop, and the Markdown outline all walk the same thing;
+  dragging a branch, re-parenting on a drop, the Markdown outline, and the canvas's "List Nodes"
+  (`nodeEntries` — every node with its depth, in outline order) all walk the same thing;
   `Document.subtree(of:)` and `isAncestor(_:of:)` (both cycle-safe) are what a drop is checked
   against, since a cycle is a graph no outline could walk out of.
 - **`PromptPreset`** — a named, reusable instruction (`systemPrompt` + `template` with a
@@ -102,21 +103,28 @@ recorder, so the app target picks it up without an xcodegen regen) on that flag 
 in (a row, the widget's deep link) agrees. The
 canvas draws everything in *canvas coordinates* inside one big container and applies a single
 transform — `scaleEffect(anchor: .topLeading)` then `offset` — so a canvas point `c` lands at
-`c * scale + pan` and the inverse used by every gesture is one line. Three pieces underneath:
+`c * scale + pan` and the inverse used by every gesture is one line. Four things are worth knowing:
 
-- `GraphLayout` (shared kit, pure) — the force-directed relaxation: nodes repel, parent–child edges
-  pull like springs, and roots are held loosely to a home position so the graph stays where it was
-  put. Bodies in, bodies out, no clock and no state, which is why it's unit-tested rather than
-  eyeballed.
-- `GraphLayoutEngine` (the view's `@StateObject`) — runs that a step at a time while the graph is
-  moving and stops the moment it settles. It owns the *live* positions the canvas reads; the stored
-  ones are written back only when the graph comes to rest, when a drag ends, and when the canvas
-  closes, so a relaxing graph doesn't rewrite the document (and its Markdown backup) at 30 Hz. Like
-  pinning, node positions don't bump `updatedAt` — where a node sits is layout, not an edit.
-- The canvas's own press: one `DragGesture(minimumDistance: 0)` reads a touch four ways — pan,
-  hold-to-record, tap, double-tap — rather than stacking four recognisers that would have to fight
-  over it. A touch that lands on a node never reaches it, because SwiftUI gives a child's gesture
-  priority over its ancestors'.
+- **Nodes sit where they're put.** There is no simulation: a node's `position` is the truth, a drag
+  moves it (and its branch), and nothing else ever does. An earlier build relaxed the graph with a
+  force-directed layout, which read well right up until you tried to drop one node onto another and
+  the target slid out of the way; it was removed in favour of this, and lives in the history if it's
+  ever wanted back. Because positions are stable, the minimap is a real map — where a dot is, is
+  where the node is.
+- **A drag is one edit.** The live translation stays in view state and is written to the nodes only
+  when the finger lifts, so dragging a branch doesn't rewrite the document (and its Markdown mirror)
+  once per frame. Like pinning, positions don't bump `updatedAt` — where a node sits is layout, not
+  an edit.
+- **One press, read four ways.** A single `DragGesture(minimumDistance: 0)` decides between pan,
+  hold-to-record, tap and double-tap, rather than stacking four recognisers that would fight over
+  the same touch. The phase it's in is anchored to the gesture's `startLocation`: a gesture the
+  system cancels never sends `onEnded`, so rather than trusting leftover state, the next touch to
+  begin somewhere else takes over. A touch that lands on a node never reaches the canvas at all,
+  because SwiftUI gives a child's gesture priority over its ancestors'.
+- **Pan and zoom compose.** Both gestures move `pan` *incrementally* — neither re-derives it from
+  where it started — so the drag that keeps running through a pinch can pan while the pinch zooms,
+  instead of one overwriting the other on every frame. The pinch also settles the ambiguity of the
+  touch it shares: a second finger means this was never a hold.
 
 **Graph capture (iOS).** Holding the canvas makes the node *first* (there has to be something on
 screen recording into) and files the clip on release via `AppModel.captureGraphNode`, which points
@@ -128,6 +136,12 @@ it off `transcribe` is what makes it work for arrivals that know nothing about g
 the Inbox a node of its own (unless one already claims it), and the words catch up through the same
 hook. Filling only *empty* nodes is what keeps a Retranscribe from overwriting what you've since
 typed; "Revise" empties the node deliberately, which is exactly how it replaces it.
+
+Microphone permission is *checked* (`AVAudioApplication.shared.recordPermission`), never awaited, on
+every path that starts capture from a hold — the canvas's and both "+" buttons'. By the time a hold
+is recognised the user is already holding, so an `await` there is a beat of silence at the head of
+every clip and a promise that has to come back before anything happens at all. Asking is a separate
+path, taken once, the first time a hold finds permission undetermined.
 
 **Auto transform (iOS):** `AppModel.transcribe` notes whether the recording's `transcript` was nil
 *before* it ran — the test for "first transcription" — and on success calls `applyAutoTransform`,

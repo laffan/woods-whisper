@@ -17,7 +17,7 @@ public struct GraphPoint: Codable, Hashable, Sendable {
     public static let zero = GraphPoint(x: 0, y: 0)
 }
 
-/// One node of a **graph document** — a force-directed mind map rather than a body of prose.
+/// One node of a **graph document** — a mind map rather than a body of prose.
 ///
 /// A node is the graph's answer to a document's `Paragraph`: a small block of editable text, laid
 /// out on the canvas, optionally with the clip it was spoken into behind it (`recordingID`, which
@@ -38,8 +38,8 @@ public struct GraphNode: Identifiable, Codable, Hashable, Sendable {
     /// The node this one hangs off; nil for a root.
     public var parentID: UUID?
 
-    /// Where the node sits on the canvas. Written back by the layout when it settles and by a drag
-    /// when it ends — not on every frame of either.
+    /// Where the node sits on the canvas: exactly where it was put, and there until it's dragged
+    /// somewhere else. Written back when a drag ends rather than on every frame of one.
     public var position: GraphPoint
 
     /// The recording this node was spoken into, if any. Nil for a node typed straight onto the
@@ -69,6 +69,20 @@ public struct GraphNode: Identifiable, Codable, Hashable, Sendable {
     /// Whether this node has anything to say yet. An empty node is a real state — it exists from the
     /// moment a hold starts recording, and only fills in once the words come back.
     public var hasText: Bool { !trimmedText.isEmpty }
+}
+
+/// A node and how deep it hangs in the graph — one line of the node list, and the shape the
+/// outline is built from.
+public struct GraphNodeEntry: Identifiable, Hashable, Sendable {
+    public let node: GraphNode
+    public let depth: Int
+
+    public var id: UUID { node.id }
+
+    public init(node: GraphNode, depth: Int) {
+        self.node = node
+        self.depth = depth
+    }
 }
 
 // MARK: - Reading a graph
@@ -169,9 +183,31 @@ extension Document {
         return [indent + "- " + first] + parts.dropFirst().map { indent + "  " + $0 }
     }
 
+    /// Every node in the order the outline reads, each with how deep it sits — what the canvas's
+    /// "List Nodes" shows, so the list is in the same order as the export and you can go from a
+    /// line of it straight to that node on the canvas.
+    ///
+    /// Unlike `outline` this keeps the nodes with nothing in them yet: a clip still transcribing is
+    /// exactly the sort of thing you'd want to find your way back to.
+    public var nodeEntries: [GraphNodeEntry] {
+        var entries: [GraphNodeEntry] = []
+        var seen: Set<UUID> = []
+
+        func walk(_ branch: [GraphNode], depth: Int) {
+            for node in branch {
+                guard seen.insert(node.id).inserted else { continue }   // cycle guard
+                entries.append(GraphNodeEntry(node: node, depth: depth))
+                walk(children(of: node.id), depth: depth + 1)
+            }
+        }
+
+        walk(rootNodes, depth: 0)
+        return entries
+    }
+
     /// Somewhere to put a node that arrived without a place of its own — a Watch clip filed into a
     /// graph, or a recording moved in from the Inbox. Below whatever is already there, so nothing
-    /// lands on top of an existing node; the layout takes it from there.
+    /// lands on top of an existing node.
     public func nextRootPosition(spacing: Double = 150) -> GraphPoint {
         guard let lowest = nodes.map(\.position.y).max() else { return .zero }
         return GraphPoint(x: 0, y: lowest + spacing)

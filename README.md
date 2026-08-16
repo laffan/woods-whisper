@@ -90,20 +90,26 @@ the rest of the app depends on.
   a *first* transcription is transformed: **Retranscribe** and **Reset** still give you the original
   words back.
 - **Graph documents (experimental).** The **✎** button now asks what you're making: a **Document** or
-  a **Graph**. A graph is a force-directed mind map on a pannable, zoomable canvas over a very light
-  grid — endless in every direction, so there's always more room a drag away. **Hold anywhere on the
-  canvas** and a node appears under your finger and starts recording; lift and it stops, transcribes,
-  and the words drop into that node — one gesture for "make a node and say what's in it".
-  **Double-tap** the canvas for a node you type instead. Nodes are the same edit blocks as
-  everywhere else, shrunk to cards: **tap twice** to edit one in place, **long-press** for the
-  actions a paragraph gets from a swipe (Edit, Add Child, Revise, Transform, Delete) as a dropdown.
-  **Drag** a node and its children come with it; **drop it on another node** and the whole branch
-  hangs off that one. The **"+"** on a node's right edge adds a child, and the one midway along a
-  line drops a node between the two it joins. There's no red record button along the bottom — the
-  hold is the record button — but the **Auto transform** toggle is the same one the Inbox and
-  documents carry, and shapes each node as it's transcribed. Copy, Share, and the backup folder all
-  hand over the graph as a **Markdown outline**: one bullet per node, indented by depth, in the order
-  the canvas reads.
+  a **Graph**. A graph is a mind map on a pannable, zoomable canvas over a very light grid — endless
+  in every direction, so there's always more room a drag away. **Hold anywhere on the canvas** and a
+  node appears under your finger and starts recording; lift and it stops, transcribes, and the words
+  drop into that node — one gesture for "make a node and say what's in it". **Double-tap** the
+  canvas for a node you type instead. Nodes are the same edit blocks as everywhere else, shrunk to
+  cards: **tap twice** to edit one in place, **long-press** for the actions a paragraph gets from a
+  swipe (Edit, Add Child, Revise, Transform, Delete) as a dropdown. **Drag** a node and its children
+  come with it; **drop it on another node** and the whole branch hangs off that one. Nodes stay
+  exactly where you put them — nothing rearranges them behind your back. The **"+"** on a node's
+  right edge adds a child and the one midway along a line drops a node between the two it joins;
+  **tap** either to type, or **hold** either to record into the new node the way the canvas does.
+  Pinch to zoom, and drag while pinching to move around at the same time. There's no red record
+  button along the bottom — the hold is the record button — but the **Auto transform** toggle is the
+  same one the Inbox and documents carry, and shapes each node as it's transcribed.
+- **Finding your way around a graph.** A **minimap** sits along the bottom: every node as a dot
+  inside a box showing what's on screen — touch or drag it to go there. The **⋯** menu adds **List
+  Nodes** (the graph as an indented list, in outline order; tap a line to fly to that node),
+  **Center Graph**, and a switch for the minimap itself. The same menu's **Copy Outline** / **Share
+  Outline** — and the backup folder — hand over the graph as a **Markdown outline**: one bullet per
+  node, indented by depth, in the order the canvas reads.
 - **Record straight to a document from the Watch.** The iPhone syncs your document list to the Watch
   over WatchConnectivity; swipe left on the Watch's record screen to pick a target document (or the
   Inbox). The chosen target's name shows on the record screen, and clips captured there are filed into

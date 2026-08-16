@@ -2487,7 +2487,6 @@ private struct ShareTarget: Identifiable {
     let items: [Any]
 }
 
-
 // MARK: - Graph documents
 //
 // The graph canvas lives at the bottom of this file — rather than in one of its own — for the same
@@ -2496,8 +2495,8 @@ private struct ShareTarget: Identifiable {
 // re-runs xcodegen. Everything below is self-contained; it just rides in on a file the target
 // already compiles.
 
-/// A **graph document**: a force-directed mind map on a pannable, zoomable canvas, as opposed to a
-/// document's column of paragraphs.
+/// A **graph document**: a mind map on a pannable, zoomable canvas, as opposed to a document's
+/// column of paragraphs.
 ///
 /// • **Hold anywhere** on the canvas and a node appears under your finger and starts recording;
 ///   lift and it stops, transcribes, and the words drop into that node. One gesture, one node.
@@ -2507,7 +2506,12 @@ private struct ShareTarget: Identifiable {
 /// • **Drag** a node and its children come along; **drop it on another node** and the whole branch
 ///   hangs off that one instead.
 /// • The **"+"** on a node's right edge adds a child; the one midway along a line inserts a node
-///   between the two it joins.
+///   between the two it joins. Tap either to type; **hold** either to record, the same way the
+///   canvas does.
+///
+/// Nodes stay exactly where they're put. There's no simulation nudging them around: a graph you
+/// arranged reads the same when you come back to it, and a node you're dragging onto another one
+/// doesn't slide out from under it.
 ///
 /// There's no red record button along the bottom — the hold *is* the record button — but the Auto
 /// transform toggle is the same one the Inbox and documents carry, and applies to nodes the same
@@ -2516,38 +2520,46 @@ struct GraphDocumentView: View {
     @EnvironmentObject private var model: AppModel
     let documentID: UUID
 
-    /// Live node positions and the relaxation that produces them. The canvas reads this rather than
-    /// the stored positions, which are only written back once the graph settles.
-    @StateObject private var layout = GraphLayoutEngine()
-
     /// The recorder behind hold-to-record. (Revise uses the ordinary `RecordingSheet` instead —
     /// replacing a node deliberately deserves the pause/discard controls.)
     @StateObject private var recorder = AudioRecorder()
 
-    // Canvas transform. `pan` is where the canvas origin sits in view coordinates, `scale` the zoom.
+    // The canvas transform. `pan` is where the canvas origin sits in view coordinates, `scale` the
+    // zoom. Both gestures move `pan` *incrementally*, never by re-deriving it from where they
+    // started, which is what lets a pan and a pinch run at the same time without one erasing the
+    // other's work.
     @State private var pan: CGPoint = .zero
-    @State private var panOrigin: CGPoint?
     @State private var scale: CGFloat = 1
-    @State private var zoomStart: ZoomStart?
+    @State private var lastPanTranslation: CGSize = .zero
+    @State private var zoomAnchor: CGPoint?
+    @State private var lastMagnification: CGFloat = 1
     @State private var canvasSize: CGSize = .zero
     @State private var didPlaceCanvas = false
 
-    // The finger on the bare canvas: pan, hold-to-record, or a tap.
+    // The finger on the bare canvas: a pan, a hold that records, or a tap.
     @State private var phase: CanvasPhase = .idle
+    /// The `startLocation` of the gesture `phase` is about. A gesture the system cancels never
+    /// sends `onEnded`, so the phase is anchored to a gesture rather than trusted between them:
+    /// the next touch to begin somewhere else takes over regardless of what was left behind.
+    @State private var gestureStart: CGPoint?
     @State private var holdTask: Task<Void, Never>?
     @State private var recordingNodeID: UUID?
     @State private var lastTap: (at: Date, point: CGPoint)?
+
+    // Dragging a branch. The translation lives here until the finger lifts; only then is it written
+    // to the nodes, so a drag is one edit rather than sixty.
+    @State private var draggingNodeID: UUID?
+    @State private var draggingBranch: Set<UUID> = []
+    @State private var dragTranslation: CGSize = .zero
+    @State private var dropTargetID: UUID?
 
     // Node editing, in place, in its own card.
     @State private var editingNodeID: UUID?
     @State private var editingText = ""
     @State private var editingSelection = NSRange(location: 0, length: 0)
 
-    // Node interaction: the long-press dropdown, a drag and where it would drop, and the transforms
-    // running right now.
+    // The long-press dropdown, the transform picker, and the transforms running right now.
     @State private var menuNodeID: UUID?
-    @State private var draggingNodeID: UUID?
-    @State private var dropTargetID: UUID?
     @State private var transformTargetID: UUID?
     @State private var transformingNodeIDs: Set<UUID> = []
     @State private var reviseTask: ReviseTask?
@@ -2555,6 +2567,11 @@ struct GraphDocumentView: View {
     /// Measured card sizes, so a drop lands on the node it looks like it lands on and the "+" sits
     /// on the actual edge rather than an assumed one.
     @State private var nodeSizes: [UUID: CGSize] = [:]
+
+    /// The minimap along the bottom, and the list of nodes. The minimap is remembered across
+    /// graphs — it's a preference about how you like to work, not about one document.
+    @AppStorage("graphShowsMinimap") private var showsMinimap = true
+    @State private var showingNodeList = false
 
     // Title, sharing.
     @State private var showingRename = false
@@ -2587,21 +2604,15 @@ struct GraphDocumentView: View {
                            onRecord: nil)
             }
         }
-        .onAppear {
-            layout.onSettle = { positions in
-                model.documents.moveNodes(positions, in: documentID)
-            }
-        }
-        // Leaving commits the open editor and the settled layout, the way leaving a document commits
-        // an open paragraph — and closes off a hold that never got its finger back (a gesture the
-        // system cancelled, or a screen left mid-recording), which would otherwise leave the
-        // recorder running behind a node that says "Recording" forever.
+        // Leaving commits the open editor, and closes off a hold that never got its finger back (a
+        // gesture the system cancelled, a screen left mid-recording) — which would otherwise leave
+        // the recorder running behind a node that says "Recording" for ever.
         .onDisappear {
             cancelHold()
             if recordingNodeID != nil { finishHoldRecording() }
             phase = .idle
+            gestureStart = nil
             finishEditing()
-            layout.stop()
         }
         .sheet(item: $reviseTask) { task in
             RecordingSheet(title: "Revise Node",
@@ -2609,6 +2620,9 @@ struct GraphDocumentView: View {
                 model.captureGraphNode(audioURL: url, duration: duration,
                                        nodeID: task.nodeID, in: documentID)
             }
+        }
+        .sheet(isPresented: $showingNodeList) {
+            if let document { nodeListSheet(for: document) }
         }
         .sheet(item: $shareItem) { item in
             ActivityView(activityItems: [item.text])
@@ -2653,6 +2667,7 @@ struct GraphDocumentView: View {
                 // bare canvas.
                 .gesture(canvasGesture())
                 .simultaneousGesture(zoomGesture())
+                .overlay(alignment: .bottom) { minimap(for: document) }
                 .overlay(alignment: .topLeading) { menuOverlay(for: document, in: geo.size) }
                 .overlay {
                     if document.nodes.isEmpty {
@@ -2663,15 +2678,14 @@ struct GraphDocumentView: View {
                 }
                 .onAppear {
                     canvasSize = geo.size
-                    layout.sync(with: document)
                     placeCanvas(in: geo.size, document: document)
+                    // Whatever a previous visit left behind, this one starts with nothing in
+                    // progress — otherwise a gesture cut short back then would keep the next hold
+                    // from ever arming.
+                    phase = .idle
+                    gestureStart = nil
                 }
                 .onChange(of: geo.size) { _, size in canvasSize = size }
-                // Nodes added, removed, or re-parented: the layout needs the new shape. Text and
-                // positions change constantly and it doesn't care about either.
-                .onChange(of: structureKey(of: document)) { _, _ in
-                    if let latest = self.document { layout.sync(with: latest) }
-                }
         }
     }
 
@@ -2687,7 +2701,11 @@ struct GraphDocumentView: View {
                 .allowsHitTesting(false)
 
             ForEach(lines) { edge in
-                GraphPlusButton { insertNode(on: edge) }
+                GraphPlusButton(onTap: { insertNode(on: edge) },
+                                onHold: { holdRecord { model.documents.insertNode(between: edge.parentID,
+                                                                                 and: edge.id,
+                                                                                 in: documentID) } },
+                                onRelease: { finishHoldRecording() })
                     .accessibilityLabel("Insert node between")
                     .position(x: edge.midpoint.x + GraphCanvas.center,
                               y: edge.midpoint.y + GraphCanvas.center)
@@ -2716,9 +2734,12 @@ struct GraphDocumentView: View {
             .background { sizeReader(for: node.id) }
             .overlay(alignment: .trailing) {
                 if !isEditing {
-                    GraphPlusButton { addChild(to: node) }
+                    GraphPlusButton(onTap: { addChild(to: node) },
+                                    onHold: { holdRecord { model.documents.addChildNode(to: node.id,
+                                                                                        in: documentID) } },
+                                    onRelease: { finishHoldRecording() })
                         .accessibilityLabel("Add child node")
-                        .offset(x: 17)
+                        .offset(x: 27)     // half the padded frame, plus the overhang
                 }
             }
 
@@ -2841,20 +2862,13 @@ struct GraphDocumentView: View {
         }
     }
 
-    /// Where a node is *right now*: the layout's live position while the canvas is open, falling
-    /// back to the stored one for a node it hasn't adopted yet.
+    /// Where a node is: where it's stored — plus the live translation, if it's part of the branch
+    /// currently under a finger.
     private func point(of id: UUID, in document: Document) -> CGPoint {
-        if let live = layout.points[id] { return CGPoint(x: live.x, y: live.y) }
         guard let node = document.node(with: id) else { return .zero }
-        return CGPoint(x: node.position.x, y: node.position.y)
-    }
-
-    /// What the layout needs to be told about: which nodes exist, and what hangs off what.
-    private func structureKey(of document: Document) -> String {
-        document.nodes
-            .map { "\($0.id.uuidString)>\($0.parentID?.uuidString ?? "-")" }
-            .sorted()
-            .joined(separator: ",")
+        let base = CGPoint(x: node.position.x, y: node.position.y)
+        guard draggingBranch.contains(id) else { return base }
+        return CGPoint(x: base.x + dragTranslation.width, y: base.y + dragTranslation.height)
     }
 
     // MARK: Canvas gestures (pan · hold to record · double-tap)
@@ -2866,25 +2880,23 @@ struct GraphDocumentView: View {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
                 let moved: CGFloat = hypot(value.translation.width, value.translation.height)
-                switch phase {
-                case .idle:
-                    // Every touch starts out ambiguous: it becomes a pan the moment it moves, a
-                    // recording if it stays put long enough, and a tap if it does neither.
+                if gestureStart != value.startLocation {
+                    // A new touch. Every one starts out ambiguous: it becomes a pan the moment it
+                    // moves, a recording if it stays put long enough, and a tap if it does neither.
+                    gestureStart = value.startLocation
                     phase = .pressing
-                    panOrigin = pan
+                    lastPanTranslation = value.translation
                     armHold(at: value.startLocation)
-                case .pressing:
-                    if moved > GraphCanvas.tapSlop {
-                        cancelHold()
-                        phase = .panning
-                    }
-                case .panning, .recording:
-                    break
+                } else if phase == .pressing, moved > GraphCanvas.tapSlop {
+                    cancelHold()
+                    phase = .panning
                 }
-                if phase == .panning, let panOrigin {
-                    pan = CGPoint(x: panOrigin.x + value.translation.width,
-                                  y: panOrigin.y + value.translation.height)
+                if phase == .panning {
+                    // Incremental, so a pinch running alongside can move `pan` too.
+                    pan.x += value.translation.width - lastPanTranslation.width
+                    pan.y += value.translation.height - lastPanTranslation.height
                 }
+                lastPanTranslation = value.translation
             }
             .onEnded { value in
                 cancelHold()
@@ -2898,25 +2910,42 @@ struct GraphDocumentView: View {
                     break
                 }
                 phase = .idle
-                panOrigin = nil
+                gestureStart = nil
+                lastPanTranslation = .zero
             }
     }
 
+    /// Pinch to zoom — about the pinch, and without taking the pan with it. The scale is applied a
+    /// step at a time against whatever `pan` currently is, so the one-finger drag that keeps
+    /// running through a pinch can pan at the same time instead of being overwritten each frame.
     private func zoomGesture() -> some Gesture {
         MagnifyGesture()
             .onChanged { value in
-                let start = zoomStart ?? ZoomStart(scale: scale, pan: pan, anchor: value.startLocation)
-                if zoomStart == nil { zoomStart = start }
-                let next = min(max(start.scale * value.magnification,
-                                   GraphCanvas.minScale), GraphCanvas.maxScale)
-                // Hold the canvas point under the pinch still, so zooming goes where you're looking.
-                let focus = CGPoint(x: (start.anchor.x - start.pan.x) / start.scale,
-                                    y: (start.anchor.y - start.pan.y) / start.scale)
-                pan = CGPoint(x: start.anchor.x - focus.x * next,
-                              y: start.anchor.y - focus.y * next)
+                // A second finger means this touch was never a hold, and never a tap either.
+                if phase == .pressing {
+                    cancelHold()
+                    phase = .panning
+                }
+                let anchor: CGPoint
+                if let existing = zoomAnchor {
+                    anchor = existing
+                } else {
+                    anchor = value.startLocation
+                    zoomAnchor = anchor
+                    lastMagnification = 1
+                }
+                let step: CGFloat = value.magnification / max(lastMagnification, 0.01)
+                lastMagnification = value.magnification
+                let next: CGFloat = min(max(scale * step, GraphCanvas.minScale), GraphCanvas.maxScale)
+                let factor: CGFloat = next / scale
+                pan = CGPoint(x: anchor.x - (anchor.x - pan.x) * factor,
+                              y: anchor.y - (anchor.y - pan.y) * factor)
                 scale = next
             }
-            .onEnded { _ in zoomStart = nil }
+            .onEnded { _ in
+                zoomAnchor = nil
+                lastMagnification = 1
+            }
     }
 
     /// A view point in canvas coordinates — the inverse of the transform `content` applies.
@@ -2938,7 +2967,7 @@ struct GraphDocumentView: View {
         holdTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: UInt64(GraphCanvas.holdDuration * 1_000_000_000))
             guard !Task.isCancelled, phase == .pressing else { return }
-            await beginHoldRecording(at: viewPoint)
+            beginHoldRecording(at: viewPoint)
         }
     }
 
@@ -2948,15 +2977,8 @@ struct GraphDocumentView: View {
     }
 
     /// The hold has been held: put a node under the finger and start capturing into it.
-    @MainActor
-    private func beginHoldRecording(at viewPoint: CGPoint) async {
-        guard await recorder.requestPermission() else {
-            model.setupError = "Microphone permission is required to record."
-            return
-        }
-        // The permission prompt only ever appears once, but the finger may well have lifted while
-        // it was up — there's nothing to record into then.
-        guard phase == .pressing else { return }
+    private func beginHoldRecording(at viewPoint: CGPoint) {
+        guard canRecord() else { return }
         finishEditing()
         menuNodeID = nil
 
@@ -2969,19 +2991,56 @@ struct GraphDocumentView: View {
             return
         }
         model.documents.addNode(node, to: documentID)
-        layout.hold(node.id)          // stay under the finger for as long as it's down
         recordingNodeID = node.id
         phase = .recording
-        #if canImport(UIKit)
-        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        #endif
+        haptic(strong: true)
+    }
+
+    /// A "+" held rather than tapped: make the node it would have made, and record into it until
+    /// the finger lifts — the canvas's hold, at a place in the graph that's already decided.
+    private func holdRecord(_ make: () -> GraphNode?) {
+        guard canRecord() else { return }
+        finishEditing()
+        menuNodeID = nil
+        guard let node = make() else { return }
+        do {
+            try recorder.start(to: model.documents.newAudioURL().url)
+        } catch {
+            model.setupError = error.localizedDescription
+            model.documents.deleteNode(node.id, in: documentID)
+            return
+        }
+        recordingNodeID = node.id
+        haptic(strong: true)
+    }
+
+    /// Whether capture can start this instant.
+    ///
+    /// Permission is *checked*, never awaited: by the time a hold is recognised the user is already
+    /// holding, so an await here is a beat of silence at the head of every clip — and a promise
+    /// from elsewhere that has to come back before anything happens. Asking is a separate path,
+    /// taken once, on the first hold of the app's life.
+    private func canRecord() -> Bool {
+        guard AVAudioApplication.shared.recordPermission == .granted else {
+            requestMicrophoneAccess()
+            return false
+        }
+        return true
+    }
+
+    private func requestMicrophoneAccess() {
+        Task { @MainActor in
+            let granted = await recorder.requestPermission()
+            if !granted {
+                model.setupError = "Microphone permission is required to record."
+            }
+        }
     }
 
     /// The finger lifted: stop, file the clip against the node it was spoken into, and transcribe.
     private func finishHoldRecording() {
         guard let nodeID = recordingNodeID else { return }
         recordingNodeID = nil
-        layout.hold(nil)
         guard let result = recorder.stop() else {
             model.documents.deleteNode(nodeID, in: documentID)
             return
@@ -3023,44 +3082,66 @@ struct GraphDocumentView: View {
         startEditing(node)
     }
 
+    private func haptic(strong: Bool = false) {
+        #if canImport(UIKit)
+        UIImpactFeedbackGenerator(style: strong ? .medium : .light).impactOccurred()
+        #endif
+    }
+
     // MARK: Dragging a node (and its branch)
 
     private func nodeDrag(_ node: GraphNode, in document: Document) -> some Gesture {
         DragGesture(minimumDistance: 6)
             .onChanged { value in
                 if draggingNodeID != node.id {
-                    draggingNodeID = node.id
-                    menuNodeID = nil
                     finishEditing()
-                    layout.beginDrag(subtree: document.subtree(of: node.id))
+                    menuNodeID = nil
+                    draggingNodeID = node.id
+                    draggingBranch = Set(document.subtree(of: node.id))
                 }
-                // Translations are in view points; the canvas is in canvas points.
-                layout.drag(by: GraphPoint(x: value.translation.width / scale,
-                                           y: value.translation.height / scale))
+                // Translations arrive in view points; the canvas is in canvas points.
+                dragTranslation = CGSize(width: value.translation.width / scale,
+                                         height: value.translation.height / scale)
                 dropTargetID = dropTarget(for: node, in: document)
             }
             .onEnded { _ in
                 let target = dropTargetID
-                dropTargetID = nil
+                let branch = draggingBranch
+                let translation = dragTranslation
                 draggingNodeID = nil
-                layout.endDrag()
-                if let target,
-                   model.documents.reparentNode(node.id, to: target, in: documentID) {
-                    let name = document.node(with: target)?.trimmedText ?? ""
-                    wwLog("Hung a graph branch under “\(name.isEmpty ? "a node" : name)”", .general)
-                    #if canImport(UIKit)
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    #endif
+                draggingBranch = []
+                dragTranslation = .zero
+                dropTargetID = nil
+
+                if let latest = self.document {
+                    commit(branch: branch, movedBy: translation, in: latest)
+                    if let target, model.documents.reparentNode(node.id, to: target, in: documentID) {
+                        let name = latest.node(with: target)?.trimmedText ?? ""
+                        wwLog("Hung a graph branch under “\(name.isEmpty ? "a node" : name)”", .general)
+                        haptic()
+                    }
                 }
-                layout.commit()
             }
+    }
+
+    /// Write a dragged branch's new positions back — one edit at the end of the drag rather than
+    /// one per frame of it.
+    private func commit(branch: Set<UUID>, movedBy translation: CGSize, in document: Document) {
+        guard translation != .zero else { return }
+        var positions: [UUID: GraphPoint] = [:]
+        for id in branch {
+            guard let node = document.node(with: id) else { continue }
+            positions[id] = GraphPoint(x: node.position.x + translation.width,
+                                       y: node.position.y + translation.height)
+        }
+        model.documents.moveNodes(positions, in: documentID)
     }
 
     /// The node a drop would land on: whichever card the dragged node's centre is over, ignoring
     /// the branch being dragged (a node can't hang off itself, or off its own child).
     private func dropTarget(for node: GraphNode, in document: Document) -> UUID? {
         let center = point(of: node.id, in: document)
-        let excluded = Set(document.subtree(of: node.id))
+        let excluded = draggingBranch
         return document.nodes.first(where: { other in
             guard !excluded.contains(other.id) else { return false }
             return rect(of: other, in: document).contains(center)
@@ -3076,25 +3157,14 @@ struct GraphDocumentView: View {
 
     // MARK: Adding nodes from the "+" buttons
 
-    /// The store places a child relative to its parent's *stored* position; the canvas is showing
-    /// the live one, which can be a beat ahead of it while the graph is still moving. Both of these
-    /// re-place the new node against what's actually on screen, before the layout adopts it, so it
-    /// appears where the "+" was rather than where the last save left things.
     private func addChild(to parent: GraphNode) {
         guard let node = model.documents.addChildNode(to: parent.id, in: documentID) else { return }
-        let live = layout.points[parent.id] ?? parent.position
-        model.documents.moveNodes(
-            [node.id: GraphPoint(x: live.x + (node.position.x - parent.position.x),
-                                 y: live.y + (node.position.y - parent.position.y))],
-            in: documentID)
         startEditing(node)
     }
 
     private func insertNode(on edge: GraphEdgeLine) {
         guard let node = model.documents.insertNode(between: edge.parentID, and: edge.id,
                                                     in: documentID) else { return }
-        model.documents.moveNodes([node.id: GraphPoint(x: edge.midpoint.x, y: edge.midpoint.y)],
-                                  in: documentID)
         startEditing(node)
     }
 
@@ -3106,9 +3176,6 @@ struct GraphDocumentView: View {
         let text = node.trimmedText
         editingText = text
         editingSelection = NSRange(location: (text as NSString).length, length: 0)
-        // Hold it still while it's open: a card that drifts out from under the keyboard mid-sentence
-        // is its own kind of infuriating.
-        layout.hold(node.id)
         withAnimation(.snappy(duration: 0.22)) { editingNodeID = node.id }
     }
 
@@ -3118,7 +3185,6 @@ struct GraphDocumentView: View {
     private func finishEditing() {
         guard let id = editingNodeID else { return }
         editingNodeID = nil
-        layout.hold(nil)
         model.documents.setNodeText(id, in: documentID, to: editingText)
         guard let document, let node = document.node(with: id) else { return }
         if !node.hasText, node.recordingID == nil, document.children(of: id).isEmpty {
@@ -3130,7 +3196,6 @@ struct GraphDocumentView: View {
     private func reviseEditingNode() {
         guard let id = editingNodeID else { return }
         editingNodeID = nil
-        layout.hold(nil)
         model.documents.setNodeText(id, in: documentID, to: editingText)
         reviseTask = ReviseTask(nodeID: id)
     }
@@ -3139,7 +3204,6 @@ struct GraphDocumentView: View {
     private func transformEditingNode() {
         guard let id = editingNodeID else { return }
         editingNodeID = nil
-        layout.hold(nil)
         model.documents.setNodeText(id, in: documentID, to: editingText)
         transformTargetID = id
     }
@@ -3156,9 +3220,7 @@ struct GraphDocumentView: View {
 
     private func openMenu(for node: GraphNode) {
         finishEditing()
-        #if canImport(UIKit)
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        #endif
+        haptic()
         withAnimation(.snappy(duration: 0.2)) { menuNodeID = node.id }
     }
 
@@ -3238,6 +3300,89 @@ struct GraphDocumentView: View {
         return CGPoint(x: min(max(margin, x), maxX), y: min(max(margin, y), maxY))
     }
 
+    // MARK: Minimap
+
+    /// The whole graph, small, along the bottom — every node a dot, with a box around what's on
+    /// screen. It stands down while a node is open for editing, where the keyboard wants the room.
+    @ViewBuilder
+    private func minimap(for document: Document) -> some View {
+        if showsMinimap, !document.nodes.isEmpty, editingNodeID == nil, menuNodeID == nil {
+            GraphMinimap(nodes: document.nodes, viewport: viewportInCanvas) { spot in
+                center(on: spot, animated: false)
+            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 10)
+            .transition(.opacity)
+        }
+    }
+
+    /// What the canvas is currently showing, in canvas coordinates.
+    private var viewportInCanvas: CGRect {
+        guard canvasSize.width > 0, scale > 0 else { return .zero }
+        return CGRect(x: -pan.x / scale, y: -pan.y / scale,
+                      width: canvasSize.width / scale, height: canvasSize.height / scale)
+    }
+
+    // MARK: Node list
+
+    /// "List Nodes": the graph as an indented list, in the same order as the outline it exports.
+    /// Tapping a line takes you to that node on the canvas — the way back to something you recorded
+    /// twenty screens away and can no longer see.
+    @ViewBuilder
+    private func nodeListSheet(for document: Document) -> some View {
+        NavigationStack {
+            List {
+                ForEach(document.nodeEntries) { entry in
+                    Button {
+                        showingNodeList = false
+                        center(on: CGPoint(x: entry.node.position.x, y: entry.node.position.y))
+                    } label: {
+                        nodeListRow(entry, in: document)
+                    }
+                    .buttonStyle(.plain)
+                    .wwRow()
+                }
+            }
+            .wwList()
+            .navigationTitle("Nodes")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { showingNodeList = false }
+                }
+            }
+            .overlay {
+                if document.nodes.isEmpty {
+                    WWEmptyState(title: "No nodes yet", systemImage: "list.bullet.indent")
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func nodeListRow(_ entry: GraphNodeEntry, in document: Document) -> some View {
+        HStack(spacing: 8) {
+            // Depth as indentation, so the list reads like the outline the graph exports.
+            if entry.depth > 0 {
+                Color.clear.frame(width: CGFloat(entry.depth) * 16, height: 1)
+                Image(systemName: "arrow.turn.down.right")
+                    .font(.system(size: 10))
+                    .foregroundStyle(WW.inkTertiary)
+            }
+            Text(entry.node.hasText ? entry.node.trimmedText : "Empty node")
+                .font(.subheadline)
+                .foregroundStyle(entry.node.hasText ? WW.ink : WW.inkTertiary)
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if recording(for: entry.node, in: document) != nil {
+                Image(systemName: "waveform")
+                    .font(.system(size: 11))
+                    .foregroundStyle(WW.inkTertiary)
+            }
+        }
+        .contentShape(Rectangle())
+    }
+
     // MARK: Placing the canvas
 
     /// Open onto the graph rather than onto wherever the origin happens to be: the first time the
@@ -3258,6 +3403,19 @@ struct GraphDocumentView: View {
             focus = .zero
         }
         return CGPoint(x: size.width / 2 - focus.x * scale, y: size.height / 2 - focus.y * scale)
+    }
+
+    /// Put a canvas point in the middle of the screen — where the node list and the minimap both
+    /// send you.
+    private func center(on spot: CGPoint, animated: Bool = true) {
+        guard canvasSize.width > 0 else { return }
+        let target = CGPoint(x: canvasSize.width / 2 - spot.x * scale,
+                             y: canvasSize.height / 2 - spot.y * scale)
+        if animated {
+            withAnimation(.snappy(duration: 0.3)) { pan = target }
+        } else {
+            pan = target
+        }
     }
 
     private func recenter() {
@@ -3298,8 +3456,16 @@ struct GraphDocumentView: View {
                         Label("Share as Woods Whisper File", systemImage: "arrow.up.doc")
                     }
                     Divider()
+                    Button { showingNodeList = true } label: {
+                        Label("List Nodes", systemImage: "list.bullet.indent")
+                    }
                     Button { recenter() } label: {
                         Label("Center Graph", systemImage: "scope")
+                    }
+                    Button {
+                        withAnimation(.snappy(duration: 0.2)) { showsMinimap.toggle() }
+                    } label: {
+                        Label(showsMinimap ? "Hide Minimap" : "Show Minimap", systemImage: "map")
                     }
                 } label: {
                     Image(systemName: "ellipsis.circle")
@@ -3324,13 +3490,6 @@ struct GraphDocumentView: View {
     }
 
     // MARK: Small types
-
-    /// A pinch in progress, as it stood when it began — the fixed point the zoom is worked out from.
-    private struct ZoomStart {
-        let scale: CGFloat
-        let pan: CGPoint
-        let anchor: CGPoint
-    }
 
     /// Drives the `RecordingSheet` that records a node's replacement ("Revise").
     private struct ReviseTask: Identifiable {
@@ -3374,6 +3533,7 @@ enum GraphCanvas {
     static let editingNodeWidth: CGFloat = 240
     static let menuWidth: CGFloat = 210
     static let gridSpacing: CGFloat = 44
+    static let minimapHeight: CGFloat = 76
 
     static let minScale: CGFloat = 0.35
     static let maxScale: CGFloat = 2.5
@@ -3401,7 +3561,7 @@ struct GraphEdgeLine: Identifiable {
 }
 
 /// Every edge as one stroked path — cheaper than a view per line, and it can't get out of step with
-/// the nodes because both read the same live positions.
+/// the nodes because both read the same positions.
 private struct GraphEdgeShape: Shape {
     let edges: [GraphEdgeLine]
 
@@ -3455,163 +3615,146 @@ private struct GraphGrid: View {
 // MARK: - The "+" button
 
 /// The small "+" that hangs off a node's right edge (add a child) and sits midway along each line
-/// (insert a node between the two it joins). One control, two places, so both read as the same
-/// "put something here".
+/// (insert a node between the two it joins).
+///
+/// **Tap** it and the node it makes opens for typing; **hold** it and the node it makes starts
+/// recording instead, until you let go — the canvas's own hold, at a place in the graph that's
+/// already decided. It turns into a red dot while it's recording, the way the record button does.
 private struct GraphPlusButton: View {
     var diameter: CGFloat = 22
-    let action: () -> Void
+    let onTap: () -> Void
+    let onHold: () -> Void
+    let onRelease: () -> Void
+
+    /// The gesture this press belongs to, so a touch the system cancels can't leave the button
+    /// stuck "pressed" for good — the next one to begin elsewhere takes over.
+    @State private var gestureStart: CGPoint?
+    @State private var holding = false
+    @State private var holdTask: Task<Void, Never>?
 
     var body: some View {
-        Button(action: action) {
-            Image(systemName: "plus")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(WW.moss)
-                .frame(width: diameter, height: diameter)
-                .background(Circle().fill(WW.surface))
-                .overlay(Circle().stroke(WW.hairline, lineWidth: 1))
-                .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
+        Image(systemName: holding ? "circle.fill" : "plus")
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(holding ? WW.ember : WW.moss)
+            .frame(width: diameter, height: diameter)
+            .background(Circle().fill(WW.surface))
+            .overlay(Circle().stroke(holding ? WW.ember : WW.hairline, lineWidth: 1))
+            .scaleEffect(gestureStart == nil ? 1 : 0.92)
+            // A 22-point dot is a 22-point target, which is half of what a finger needs. The
+            // padding gives it a proper one without drawing anything bigger; it grows evenly, so
+            // wherever the dot was centred it stays.
+            .padding(10)
+            .contentShape(Circle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        guard gestureStart != value.startLocation else { return }
+                        gestureStart = value.startLocation
+                        holdTask?.cancel()
+                        holdTask = Task { @MainActor in
+                            try? await Task.sleep(nanoseconds: UInt64(GraphCanvas.holdDuration * 1_000_000_000))
+                            guard !Task.isCancelled, gestureStart != nil else { return }
+                            holding = true
+                            onHold()
+                        }
+                    }
+                    .onEnded { _ in
+                        holdTask?.cancel()
+                        holdTask = nil
+                        gestureStart = nil
+                        if holding {
+                            holding = false
+                            onRelease()
+                        } else {
+                            onTap()
+                        }
+                    }
+            )
     }
 }
 
-// MARK: - Layout engine
+// MARK: - Minimap
 
-/// Runs `GraphLayout` for an open canvas: holds the live positions, steps the simulation until the
-/// graph settles, and writes the settled positions back through `onSettle`.
+/// The whole graph in a strip along the bottom of the canvas: one dot per node — filled for a node
+/// with words, hollow for one still waiting on them — inside a box showing what's on screen.
 ///
-/// Positions are deliberately *not* stored on every frame — a relaxing graph would otherwise rewrite
-/// the document (and its Markdown backup) sixty times a second. They're written when the graph comes
-/// to rest, when a drag ends, and when the canvas closes.
-@MainActor
-final class GraphLayoutEngine: ObservableObject {
-    /// Where every node is right now. The canvas reads this rather than the stored positions.
-    @Published private(set) var points: [UUID: GraphPoint] = [:]
+/// Touch anywhere on it (or drag across it) to go there. With no simulation moving nodes about,
+/// where a dot sits on this map is exactly where the node is, which is what makes it a map.
+private struct GraphMinimap: View {
+    let nodes: [GraphNode]
+    /// What the canvas is showing, in canvas points.
+    let viewport: CGRect
+    /// The canvas point the user picked out.
+    let onGo: (CGPoint) -> Void
 
-    /// Called with the positions worth keeping, once the graph has stopped moving.
-    var onSettle: (([UUID: GraphPoint]) -> Void)?
+    var body: some View {
+        GeometryReader { geo in
+            let fit = mapping(in: geo.size)
+            Canvas { context, _ in
+                // What's on screen, as a box.
+                let box = CGRect(origin: project(CGPoint(x: viewport.minX, y: viewport.minY), fit),
+                                 size: CGSize(width: viewport.width * fit.scale,
+                                              height: viewport.height * fit.scale))
+                context.fill(Path(roundedRect: box, cornerRadius: 3), with: .color(WW.moss.opacity(0.10)))
+                context.stroke(Path(roundedRect: box, cornerRadius: 3),
+                               with: .color(WW.moss.opacity(0.7)), lineWidth: 1)
 
-    private var bodies: [GraphLayout.Body] = []
-    private var pinned: Set<UUID> = []
-    private var held: UUID?
-    private var dragOrigins: [UUID: GraphPoint] = [:]
-    private var timer: Timer?
-    private var frames = 0
-
-    private let frameInterval: TimeInterval = 1.0 / 30
-    private let settledDistance: Double = 0.2
-    /// A graph that won't settle stops after this many steps rather than spinning forever.
-    private let maxFrames = 600
-
-    /// Adopt the document's nodes: new ones arrive at their stored position, familiar ones keep the
-    /// position the simulation has them at. Any change to the shape of the graph starts it moving.
-    func sync(with document: Document) {
-        var next: [GraphLayout.Body] = []
-        var changed = bodies.count != document.nodes.count
-        for node in document.nodes {
-            let existing = bodies.first { $0.id == node.id }
-            if existing == nil || existing?.parentID != node.parentID { changed = true }
-            next.append(GraphLayout.Body(
-                id: node.id,
-                parentID: node.parentID,
-                position: existing?.position ?? node.position,
-                // Only roots are anchored, and only to where they were put — a child hangs wherever
-                // its springs leave it.
-                home: node.parentID == nil ? (existing?.home ?? node.position) : nil,
-                isPinned: isFrozen(node.id)))
+                for node in nodes {
+                    let point = project(CGPoint(x: node.position.x, y: node.position.y), fit)
+                    let dot = CGRect(x: point.x - 2.5, y: point.y - 2.5, width: 5, height: 5)
+                    if node.hasText {
+                        context.fill(Path(ellipseIn: dot), with: .color(WW.ink))
+                    } else {
+                        context.stroke(Path(ellipseIn: dot), with: .color(WW.inkTertiary), lineWidth: 1)
+                    }
+                }
+            }
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in onGo(unproject(value.location, fit)) }
+            )
         }
-        bodies = next
-        publish()
-        if changed { start() }
+        .frame(height: GraphCanvas.minimapHeight)
+        .frame(maxWidth: WW.contentMaxWidth)
+        .background(WW.surface.opacity(0.92), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+            .stroke(WW.hairline, lineWidth: 1))
+        .shadow(color: .black.opacity(0.10), radius: 12, y: 3)
     }
 
-    /// Hold one node exactly where it is — the one being edited, or the one being recorded into. A
-    /// card shouldn't wander out from under the keyboard while you're typing into it, or away from
-    /// the finger that's holding it down. Pass nil to let it go.
-    func hold(_ id: UUID?) {
-        guard held != id else { return }
-        held = id
-        for index in bodies.indices { bodies[index].isPinned = isFrozen(bodies[index].id) }
-        start()
+    /// How canvas points map onto the map: everything there is, plus what's on screen, fitted with
+    /// room to spare so a node never sits on the very edge.
+    private struct Fit {
+        let scale: CGFloat
+        let offset: CGPoint
     }
 
-    /// Nodes the simulation may not move: the branch under a drag, and the held node.
-    private func isFrozen(_ id: UUID) -> Bool { pinned.contains(id) || held == id }
-
-    // MARK: Dragging
-
-    /// Pin a branch under the user's finger. It stops being moved by the simulation, but keeps
-    /// pushing everything else around — so the rest of the graph makes room as it's dragged through.
-    func beginDrag(subtree ids: [UUID]) {
-        pinned = Set(ids)
-        dragOrigins = [:]
-        for index in bodies.indices {
-            bodies[index].isPinned = isFrozen(bodies[index].id)
-            guard pinned.contains(bodies[index].id) else { continue }
-            dragOrigins[bodies[index].id] = bodies[index].position
+    private func mapping(in size: CGSize) -> Fit {
+        var minX = viewport.minX, maxX = viewport.maxX
+        var minY = viewport.minY, maxY = viewport.maxY
+        for node in nodes {
+            minX = min(minX, CGFloat(node.position.x))
+            maxX = max(maxX, CGFloat(node.position.x))
+            minY = min(minY, CGFloat(node.position.y))
+            maxY = max(maxY, CGFloat(node.position.y))
         }
-        start()
+        let padding: CGFloat = 160
+        let width: CGFloat = max(maxX - minX + padding * 2, 1)
+        let height: CGFloat = max(maxY - minY + padding * 2, 1)
+        let scale: CGFloat = min(size.width / width, size.height / height)
+        let offset = CGPoint(x: (size.width - width * scale) / 2 - (minX - padding) * scale,
+                             y: (size.height - height * scale) / 2 - (minY - padding) * scale)
+        return Fit(scale: scale, offset: offset)
     }
 
-    /// Move the pinned branch to `delta` from where it was when the drag began. (Cumulative, not
-    /// incremental: it's the gesture's own translation, so nothing drifts.)
-    func drag(by delta: GraphPoint) {
-        for index in bodies.indices {
-            guard let origin = dragOrigins[bodies[index].id] else { continue }
-            bodies[index].position = GraphPoint(x: origin.x + delta.x, y: origin.y + delta.y)
-        }
-        publish()
+    private func project(_ point: CGPoint, _ fit: Fit) -> CGPoint {
+        CGPoint(x: point.x * fit.scale + fit.offset.x, y: point.y * fit.scale + fit.offset.y)
     }
 
-    func endDrag() {
-        for index in bodies.indices where pinned.contains(bodies[index].id) {
-            // A root dropped somewhere new wants to stay there, so that's its home from now on.
-            if bodies[index].parentID == nil { bodies[index].home = bodies[index].position }
-        }
-        pinned = []
-        for index in bodies.indices { bodies[index].isPinned = isFrozen(bodies[index].id) }
-        dragOrigins = [:]
-        publish()
-        start()
-    }
-
-    // MARK: The loop
-
-    func start() {
-        frames = 0
-        guard timer == nil else { return }
-        timer = Timer.scheduledTimer(withTimeInterval: frameInterval, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.tick() }
-        }
-    }
-
-    /// Stop stepping, and write the positions back.
-    func stop() {
-        timer?.invalidate()
-        timer = nil
-        commit()
-    }
-
-    func commit() {
-        guard !points.isEmpty else { return }
-        onSettle?(points)
-    }
-
-    private func tick() {
-        let next = GraphLayout.step(bodies)
-        let moved = GraphLayout.maxDisplacement(from: bodies, to: next)
-        bodies = next
-        publish()
-        frames += 1
-        // A drag keeps it running however still the graph looks: the branch under the finger is
-        // pinned, so "nothing moved" says nothing about whether the gesture is over.
-        if (moved < settledDistance && pinned.isEmpty) || frames >= maxFrames { stop() }
-    }
-
-    private func publish() {
-        var next: [UUID: GraphPoint] = [:]
-        next.reserveCapacity(bodies.count)
-        for body in bodies { next[body.id] = body.position }
-        points = next
+    private func unproject(_ point: CGPoint, _ fit: Fit) -> CGPoint {
+        guard fit.scale > 0 else { return .zero }
+        return CGPoint(x: (point.x - fit.offset.x) / fit.scale,
+                       y: (point.y - fit.offset.y) / fit.scale)
     }
 }

@@ -525,6 +525,10 @@ public final class DocumentStore: ObservableObject {
 
     /// Add a node *between* an existing parent and child — the "+" halfway along the line joining
     /// them. It lands at the midpoint and adopts the child, so the branch below stays intact.
+    ///
+    /// The branch below also slides further from the parent, along the line the two already make,
+    /// to leave the new node somewhere to be: nothing moves nodes around on the canvas by itself,
+    /// so if room isn't made here the new card simply lands on top of the two it went between.
     @discardableResult
     public func insertNode(between parentID: UUID, and childID: UUID, in documentID: UUID) -> GraphNode? {
         guard let docIdx = index(of: documentID),
@@ -536,11 +540,29 @@ public final class DocumentStore: ObservableObject {
         let node = GraphNode(parentID: parentID,
                              position: GraphPoint(x: (parent.position.x + child.position.x) / 2,
                                                   y: (parent.position.y + child.position.y) / 2))
+
+        let dx = child.position.x - parent.position.x
+        let dy = child.position.y - parent.position.y
+        let distance = (dx * dx + dy * dy).squareRoot()
+        if distance > 0.01 {
+            let pushX = dx / distance * Self.insertedNodeSpacing
+            let pushY = dy / distance * Self.insertedNodeSpacing
+            for id in documents[docIdx].subtree(of: childID) {
+                guard let idx = documents[docIdx].nodes.firstIndex(where: { $0.id == id }) else { continue }
+                documents[docIdx].nodes[idx].position.x += pushX
+                documents[docIdx].nodes[idx].position.y += pushY
+            }
+        }
+
         documents[docIdx].nodes[childIdx].parentID = node.id
         documents[docIdx].nodes.append(node)
         touch(docIdx)
         return node
     }
+
+    /// How far the branch below is pushed out to make room for a node inserted above it — a card's
+    /// width and a little air.
+    private static let insertedNodeSpacing: Double = 200
 
     // MARK: Sharing (Woods Whisper document files)
 

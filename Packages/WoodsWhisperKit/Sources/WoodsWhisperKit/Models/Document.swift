@@ -72,7 +72,7 @@ public struct Document: Identifiable, Codable, Hashable, Sendable {
     public enum Kind: String, Codable, Hashable, Sendable {
         /// Paragraphs, read top to bottom.
         case document
-        /// Nodes on a canvas — a force-directed mind map.
+        /// Nodes on a canvas — a mind map.
         case graph
     }
 
