@@ -97,7 +97,9 @@ transcript) → `TextTransformService.transform` → the result **replaces** the
 than appending a new block.
 
 **Graph documents (iOS).** A graph is a `Document` with `kind == .graph`; `DocumentsView` routes to
-`GraphDocumentView` on that flag alone, so every way in (a row, the widget's deep link) agrees. The
+`GraphDocumentView` (at the bottom of `DocumentDetailView.swift`, alongside the Inbox and the
+recorder, so the app target picks it up without an xcodegen regen) on that flag alone, so every way
+in (a row, the widget's deep link) agrees. The
 canvas draws everything in *canvas coordinates* inside one big container and applies a single
 transform — `scaleEffect(anchor: .topLeading)` then `offset` — so a canvas point `c` lands at
 `c * scale + pan` and the inverse used by every gesture is one line. Three pieces underneath:

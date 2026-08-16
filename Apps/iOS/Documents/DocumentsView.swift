@@ -78,19 +78,8 @@ struct DocumentsView: View {
             }
             .wwList()
             .navigationTitle(selectionMode ? "\(selected.count) selected" : "Documents")
-            // A graph opens onto its canvas rather than the paragraph list — same route, picked by
-            // the document's own kind so every way in (a row, the widget's deep link) agrees.
             .navigationDestination(for: Route.self) { route in
-                switch route {
-                case .document(let id):
-                    if model.documents.document(with: id)?.isGraph == true {
-                        GraphDocumentView(documentID: id)
-                    } else {
-                        DocumentDetailView(documentID: id)
-                    }
-                case .trash:
-                    TrashView()
-                }
+                destination(for: route)
             }
             .toolbar {
                 if selectionMode {
@@ -174,6 +163,27 @@ struct DocumentsView: View {
             // id waits in the launcher until then).
             .onChange(of: opener.pendingDocumentID) { openPendingDocument() }
             .onAppear { openPendingDocument() }
+        }
+    }
+
+    /// Where a pushed route lands. A graph opens onto its canvas rather than the paragraph list —
+    /// picked by the document's own kind, so every way in (a row, the widget's deep link) agrees.
+    ///
+    /// Its own function rather than a closure body: the destination builder sits inside an already
+    /// long chain of modifiers, and leaving a two-branch conditional in there gives the type checker
+    /// the whole list to solve at once.
+    @ViewBuilder
+    private func destination(for route: Route) -> some View {
+        switch route {
+        case .document(let id):
+            let isGraph = model.documents.document(with: id)?.isGraph ?? false
+            if isGraph {
+                GraphDocumentView(documentID: id)
+            } else {
+                DocumentDetailView(documentID: id)
+            }
+        case .trash:
+            TrashView()
         }
     }
 

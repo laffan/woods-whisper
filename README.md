@@ -188,10 +188,11 @@ Then in Xcode: select the **WoodsWhisper** scheme (or **WoodsWhisperWatch** to r
 directly), set your signing team on each target, and run on a device (the ML models need real
 hardware; the Simulator can't use the ANE).
 
-> **Re-run `xcodegen generate` after pulling.** The spec globs `Apps/iOS` when the project is
-> generated, so a source file added since your last run — the graph canvas is one — won't be in an
-> existing `.xcodeproj` until you generate again. (Files added to `Packages/WoodsWhisperKit` are
-> picked up by SwiftPM on their own.)
+> **New source files need a fresh `xcodegen generate`.** The spec globs `Apps/iOS` when the project
+> is generated, so a file added to an app target since your last run won't be in an existing
+> `.xcodeproj` until you generate again — which is why several features (the recorder, the Inbox,
+> the graph canvas) ride along in an existing file rather than one of their own. Files added under
+> `Packages/WoodsWhisperKit` are picked up by SwiftPM on their own.
 
 > **"New Recording" everywhere.** A `StartRecordingIntent` App Intent (in `WoodsWhisperKit`) lets you
 > start a recording from **Siri, Spotlight, Shortcuts, the iOS Action Button, and a Lock Screen /
