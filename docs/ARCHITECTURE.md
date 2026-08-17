@@ -124,12 +124,16 @@ transform — `scaleEffect(anchor: .topLeading)` then `offset` — so a canvas p
   Inserting a node on an edge is the same idea in miniature — the branch below slides out by a
   node's width and the new node takes the middle of the widened gap, so it has the room the "+" had.
   Both go through one rigid `translate(subtreeOf:)`, which is why nothing below ever gets scrambled.
-- **One press, read four ways.** A single `DragGesture(minimumDistance: 0)` decides between pan,
-  hold-to-record, tap and double-tap, rather than stacking four recognisers that would fight over
-  the same touch. The phase it's in is anchored to the gesture's `startLocation`: a gesture the
-  system cancels never sends `onEnded`, so rather than trusting leftover state, the next touch to
-  begin somewhere else takes over. A touch that lands on a node never reaches the canvas at all,
-  because SwiftUI gives a child's gesture priority over its ancestors'.
+- **One press, read five ways.** A single `DragGesture(minimumDistance: 0)` decides between pan,
+  selection box, hold-to-record, tap and double-tap, rather than stacking recognisers that would
+  fight over the same touch. What a *held* finger becomes turns on whether it follows a tap: on its
+  own it drags out a selection box, and as the second of a pair it records. That pairing is
+  therefore recognised on the way **down**, not on release — by the time a finger lifts, the
+  decision has already been needed, because holding the second tap has to start recording while
+  it's still held. The phase is anchored to the gesture's `startLocation`: a gesture the system
+  cancels never sends `onEnded`, so rather than trusting leftover state, the next touch to begin
+  somewhere else takes over. A touch that lands on a node never reaches the canvas at all, because
+  SwiftUI gives a child's gesture priority over its ancestors'.
 - **Pan and zoom compose.** Both gestures move `pan` *incrementally* — neither re-derives it from
   where it started — so the drag that keeps running through a pinch can pan while the pinch zooms,
   instead of one overwriting the other on every frame. The pinch also settles the ambiguity of the

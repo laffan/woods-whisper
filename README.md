@@ -93,10 +93,12 @@ the rest of the app depends on.
   words back.
 - **Graph documents (experimental).** The **✎** button now asks what you're making: a **Document** or
   a **Graph**. A graph is a mind map on a pannable, zoomable canvas over a very light grid — endless
-  in every direction, so there's always more room a drag away. **Hold anywhere on the canvas** and a
-  node appears under your finger and starts recording; lift and it stops, transcribes, and the words
-  drop into that node — one gesture for "make a node and say what's in it". **Double-tap** the
-  canvas for a node you type instead. Nodes are the same edit blocks as everywhere else, shrunk to
+  in every direction, so there's always more room a drag away. **Tap the canvas, then tap and
+  hold**, and a node appears under your finger and starts recording; lift and it stops, transcribes,
+  and the words drop into that node — one gesture for "make a node and say what's in it". Let that
+  second tap go instead of holding it — an ordinary **double-tap** — and you get a node to type
+  into. **Holding on its own** drags out a selection box: everything it touches is selected, any one
+  of them drags the whole lot, and a bar along the bottom deletes them or lets them go. Nodes are the same edit blocks as everywhere else, shrunk to
   cards: **tap twice** to edit one in place, **long-press** for the actions a paragraph gets from a
   swipe (Edit, Add Child, Revise, Transform, Delete) as a dropdown. **Drag** a node and its children
   come with it; **drop it on another node** and the whole branch hangs off that one — settling into

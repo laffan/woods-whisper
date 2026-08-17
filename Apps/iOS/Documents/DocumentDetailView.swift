@@ -2546,6 +2546,13 @@ struct GraphDocumentView: View {
     /// The canvas coasting to a stop after a flick.
     @State private var glideTask: Task<Void, Never>?
 
+    // Selecting: the box a held finger drags out, and what it caught.
+    @State private var selectedNodeIDs: Set<UUID> = []
+    @State private var marqueeOrigin: CGPoint?
+    @State private var marqueeCurrent: CGPoint?
+    /// Whether the touch in progress is the second of a pair — the one that records if it's held.
+    @State private var isSecondTouch = false
+
     // Dragging a branch. The translation lives here until the finger lifts; only then is it written
     // to the nodes, so a drag is one edit rather than sixty.
     @State private var draggingNodeID: UUID?
@@ -2606,6 +2613,8 @@ struct GraphDocumentView: View {
             if recordingNodeID != nil { finishHoldRecording() }
             phase = .idle
             gestureStart = nil
+            marqueeOrigin = nil
+            marqueeCurrent = nil
             finishEditing()
         }
         .sheet(item: $reviseTask) { task in
@@ -2661,14 +2670,19 @@ struct GraphDocumentView: View {
                 // bare canvas.
                 .gesture(canvasGesture())
                 .simultaneousGesture(zoomGesture())
-                .overlay(alignment: .bottom) { minimap(for: document) }
+                .overlay(alignment: .bottom) {
+                    VStack(spacing: 8) {
+                        selectionBar()
+                        minimap(for: document)
+                    }
+                }
                 .overlay { recordingReadout(in: geo.size) }
                 .overlay(alignment: .topLeading) { menuOverlay(for: document, in: geo.size) }
                 .overlay {
                     if document.nodes.isEmpty {
                         WWEmptyState(title: "An empty canvas",
                                      systemImage: "point.3.connected.trianglepath.dotted",
-                                     message: "Hold anywhere to record a node — it appears where your finger is and stops when you lift it. Double-tap to type one instead.")
+                                     message: "Tap, then tap and hold, to record a node — it appears under your finger and stops when you lift it. Double-tap to type one instead. Holding on its own drags out a selection box.")
                     }
                 }
                 .onAppear {
@@ -2712,6 +2726,17 @@ struct GraphDocumentView: View {
 
             ForEach(document.nodes) { node in
                 nodeView(node, in: document)
+            }
+
+            if let box = marqueeRect {
+                Rectangle()
+                    .fill(WW.moss.opacity(0.10))
+                    .overlay(Rectangle().stroke(WW.moss.opacity(0.65),
+                                                style: StrokeStyle(lineWidth: 1.5, dash: [6, 4])))
+                    .frame(width: max(box.width, 1), height: max(box.height, 1))
+                    .position(x: box.midX + GraphCanvas.center, y: box.midY + GraphCanvas.center)
+                    .allowsHitTesting(false)
+                    .zIndex(3)
             }
         }
         .frame(width: GraphCanvas.extent, height: GraphCanvas.extent, alignment: .topLeading)
@@ -2837,13 +2862,14 @@ struct GraphDocumentView: View {
     }
 
     private func nodeBorder(_ node: GraphNode) -> Color {
-        if dropTargetID == node.id { return WW.moss }
         if recordingNodeID == node.id { return WW.ember }
+        if dropTargetID == node.id || selectedNodeIDs.contains(node.id) { return WW.moss }
         return WW.hairline
     }
 
     private func nodeBorderWidth(_ node: GraphNode) -> CGFloat {
-        (dropTargetID == node.id || recordingNodeID == node.id) ? 2 : 1
+        if recordingNodeID == node.id || dropTargetID == node.id { return 2 }
+        return selectedNodeIDs.contains(node.id) ? 2 : 1
     }
 
     private func recording(for node: GraphNode, in document: Document) -> Recording? {
@@ -2904,7 +2930,7 @@ struct GraphDocumentView: View {
     // MARK: Canvas gestures (pan · hold to record · double-tap)
 
     /// What the finger on the bare canvas turned out to be doing.
-    private enum CanvasPhase { case idle, pressing, panning, recording }
+    private enum CanvasPhase { case idle, pressing, panning, selecting, recording }
 
     private func canvasGesture() -> some Gesture {
         DragGesture(minimumDistance: 0)
@@ -2912,24 +2938,34 @@ struct GraphDocumentView: View {
                 let moved: CGFloat = hypot(value.translation.width, value.translation.height)
                 if gestureStart != value.startLocation {
                     // A new touch. Every one starts out ambiguous: it becomes a pan the moment it
-                    // moves, a recording if it stays put long enough, and a tap if it does neither.
-                    // Whatever the canvas was still coasting through, a finger down stops it.
+                    // moves, and if it stays put, either a selection box or — when it's the second
+                    // tap of a pair — a recording. Whatever the canvas was still coasting through,
+                    // a finger down stops it.
                     stopGlide()
+                    // A box left over from a gesture the system cancelled goes with the new touch.
+                    marqueeOrigin = nil
+                    marqueeCurrent = nil
                     gestureStart = value.startLocation
+                    isSecondTouch = isFollowUpTouch(at: value.startLocation)
                     phase = .pressing
                     lastPanTranslation = value.translation
-                    armHold(at: value.startLocation)
+                    armHold(at: value.startLocation, records: isSecondTouch)
                 } else if phase == .pressing, moved > GraphCanvas.tapSlop {
                     cancelHold()
                     phase = .panning
                 }
-                if phase == .panning {
+                switch phase {
+                case .panning:
                     // Incremental, so a pinch running alongside can move `pan` too.
                     pan.x += value.translation.width - lastPanTranslation.width
                     pan.y += value.translation.height - lastPanTranslation.height
-                } else if phase == .recording {
+                case .recording:
                     // The readout follows the finger, so it stays in sight however the hand drifts.
                     recordingAnchor = value.location
+                case .selecting:
+                    marqueeCurrent = canvasPoint(for: value.location)
+                case .idle, .pressing:
+                    break
                 }
                 lastPanTranslation = value.translation
             }
@@ -2939,6 +2975,8 @@ struct GraphDocumentView: View {
                 switch phase {
                 case .recording:
                     finishHoldRecording()
+                case .selecting:
+                    finishMarquee()
                 case .idle, .pressing:
                     if moved <= GraphCanvas.tapSlop { registerTap(at: value.startLocation) }
                 case .panning:
@@ -2946,6 +2984,7 @@ struct GraphDocumentView: View {
                 }
                 phase = .idle
                 gestureStart = nil
+                isSecondTouch = false
                 lastPanTranslation = .zero
             }
     }
@@ -2998,13 +3037,31 @@ struct GraphDocumentView: View {
 
     // MARK: Hold to record
 
-    private func armHold(at viewPoint: CGPoint) {
+    /// Hold a finger still on the canvas and one of two things happens, depending on whether this
+    /// touch follows a tap: on its own it drags out a **selection box**; as the second of a pair —
+    /// tap, then tap and hold — it makes a node and **records** into it.
+    private func armHold(at viewPoint: CGPoint, records: Bool) {
         holdTask?.cancel()
         holdTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: UInt64(GraphCanvas.holdDuration * 1_000_000_000))
             guard !Task.isCancelled, phase == .pressing else { return }
-            beginHoldRecording(at: viewPoint)
+            if records {
+                beginHoldRecording(at: viewPoint)
+            } else {
+                beginMarquee(at: viewPoint)
+            }
         }
+    }
+
+    /// Whether this touch is the second of a pair: soon enough after the last tap, and close enough
+    /// to it. Consumed on the way past, so three taps in a row don't all count as seconds.
+    private func isFollowUpTouch(at viewPoint: CGPoint) -> Bool {
+        guard let last = lastTap,
+              Date().timeIntervalSince(last.at) < GraphCanvas.doubleTapWindow,
+              hypot(viewPoint.x - last.point.x, viewPoint.y - last.point.y) < 44
+        else { return false }
+        lastTap = nil
+        return true
     }
 
     private func cancelHold() {
@@ -3101,22 +3158,23 @@ struct GraphDocumentView: View {
                                nodeID: nodeID, in: documentID)
     }
 
-    /// Taps on bare canvas: the second of a pair makes a node to type into, a lone one puts away
-    /// whatever is open. (Detected here rather than with a tap gesture of its own, which would be
-    /// one more recogniser competing with the press this canvas already reads four ways.)
+    /// A touch that came and went without moving. The second of a pair makes a node to type into —
+    /// the same pair that *records* if you hold the second tap instead of letting it go — while a
+    /// lone tap puts away whatever is open and drops the selection.
+    ///
+    /// Pairs are recognised on the way *down* (`isFollowUpTouch`) rather than here, because by the
+    /// time a finger lifts the decision has already been needed: holding the second tap has to
+    /// start recording while it's still held.
     private func registerTap(at viewPoint: CGPoint) {
-        let now = Date()
-        let drift: CGFloat = lastTap.map {
-            hypot(viewPoint.x - $0.point.x, viewPoint.y - $0.point.y)
-        } ?? .greatestFiniteMagnitude
-        if let last = lastTap, now.timeIntervalSince(last.at) < GraphCanvas.doubleTapWindow,
-           drift < 44 {
-            lastTap = nil
+        if isSecondTouch {
             addTypedNode(at: viewPoint)
-        } else {
-            lastTap = (now, viewPoint)
-            finishEditing()
-            withAnimation(.snappy(duration: 0.2)) { menuNodeID = nil }
+            return
+        }
+        lastTap = (Date(), viewPoint)
+        finishEditing()
+        withAnimation(.snappy(duration: 0.2)) {
+            menuNodeID = nil
+            selectedNodeIDs = []
         }
     }
 
@@ -3186,6 +3244,55 @@ struct GraphDocumentView: View {
         glideTask = nil
     }
 
+    // MARK: Selecting
+
+    /// A held finger on bare canvas drags out a selection box.
+    private func beginMarquee(at viewPoint: CGPoint) {
+        finishEditing()
+        menuNodeID = nil
+        let spot = canvasPoint(for: viewPoint)
+        marqueeOrigin = spot
+        marqueeCurrent = spot
+        selectedNodeIDs = []
+        phase = .selecting
+        haptic(strong: true)
+    }
+
+    /// The box as it stands, in canvas points, however it was dragged out.
+    private var marqueeRect: CGRect? {
+        guard let origin = marqueeOrigin, let current = marqueeCurrent else { return nil }
+        return CGRect(x: min(origin.x, current.x), y: min(origin.y, current.y),
+                      width: abs(current.x - origin.x), height: abs(current.y - origin.y))
+    }
+
+    /// Everything the box touched is selected — touched, not swallowed whole, since a card is wide
+    /// and a box drawn across a column of them should take the column.
+    private func finishMarquee() {
+        let box = marqueeRect
+        marqueeOrigin = nil
+        marqueeCurrent = nil
+        guard let box, let document else { return }
+        let caught = document.nodes.filter { box.intersects(rect(of: $0, in: document)) }
+        withAnimation(.snappy(duration: 0.2)) { selectedNodeIDs = Set(caught.map(\.id)) }
+        if !caught.isEmpty { haptic() }
+    }
+
+    /// The nodes a drag should carry: the whole selection when the node under the finger is part of
+    /// it, otherwise just that node's own branch.
+    private func draggedBranch(from node: GraphNode, in document: Document) -> Set<UUID> {
+        guard selectedNodeIDs.contains(node.id) else {
+            return Set(document.subtree(of: node.id))
+        }
+        return Set(selectedNodeIDs.flatMap { document.subtree(of: $0) })
+    }
+
+    private func deleteSelection() {
+        let ids = selectedNodeIDs
+        selectedNodeIDs = []
+        for id in ids { model.documents.deleteNode(id, in: documentID) }
+        wwLog("Deleted \(ids.count) graph node\(ids.count == 1 ? "" : "s")", .general)
+    }
+
     private func haptic(strong: Bool = false) {
         #if canImport(UIKit)
         UIImpactFeedbackGenerator(style: strong ? .medium : .light).impactOccurred()
@@ -3209,12 +3316,14 @@ struct GraphDocumentView: View {
                     finishEditing()
                     menuNodeID = nil
                     draggingNodeID = node.id
-                    draggingBranch = Set(document.subtree(of: node.id))
+                    draggingBranch = draggedBranch(from: node, in: document)
                 }
                 // Translations arrive in view points; the canvas is in canvas points.
                 dragTranslation = CGSize(width: value.translation.width / scale,
                                          height: value.translation.height / scale)
-                dropTargetID = dropTarget(for: node, in: document)
+                // Re-parenting is a single-node idea: a whole selection dropped on one node has no
+                // one answer, so a multi-drag just moves.
+                dropTargetID = isMultiDrag ? nil : dropTarget(for: node, in: document)
             }
             .onEnded { _ in
                 let target = dropTargetID
@@ -3247,6 +3356,12 @@ struct GraphDocumentView: View {
                                        y: node.position.y + translation.height)
         }
         model.documents.moveNodes(positions, in: documentID)
+    }
+
+    /// Whether the drag in progress is carrying more than one selected branch.
+    private var isMultiDrag: Bool {
+        guard let id = draggingNodeID else { return false }
+        return selectedNodeIDs.count > 1 && selectedNodeIDs.contains(id)
     }
 
     /// The node a drop would land on: whichever card the dragged node's centre is over, ignoring
@@ -3428,6 +3543,53 @@ struct GraphDocumentView: View {
         let x: CGFloat = view.x - GraphCanvas.menuWidth / 2
         let y: CGFloat = view.y + cardHeight / 2 + 10
         return CGPoint(x: min(max(margin, x), maxX), y: min(max(margin, y), maxY))
+    }
+
+    // MARK: Selection bar
+
+    /// What a selection can do, in the app's usual batch-bar shape but floating over the canvas:
+    /// how many are held, a reminder that they move together, and the one action that isn't a drag.
+    @ViewBuilder
+    private func selectionBar() -> some View {
+        if !selectedNodeIDs.isEmpty {
+            HStack(spacing: 14) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("\(selectedNodeIDs.count) selected")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(WW.ink)
+                    Text("Drag any of them to move the lot")
+                        .font(.caption2)
+                        .foregroundStyle(WW.inkSecondary)
+                }
+                Spacer(minLength: 8)
+                Button { deleteSelection() } label: {
+                    Label("Delete", systemImage: "trash")
+                        .labelStyle(.iconOnly)
+                        .font(.system(size: 17))
+                        .foregroundStyle(WW.ember)
+                        .frame(width: 40, height: 34)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                Button {
+                    withAnimation(.snappy(duration: 0.2)) { selectedNodeIDs = [] }
+                } label: {
+                    Text("Done")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(WW.moss)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .frame(maxWidth: WW.contentMaxWidth)
+            .background(WW.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(WW.hairline, lineWidth: 1))
+            .shadow(color: .black.opacity(0.12), radius: 14, y: 4)
+            .padding(.horizontal, 12)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+        }
     }
 
     // MARK: Minimap
