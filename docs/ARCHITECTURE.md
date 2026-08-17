@@ -67,6 +67,14 @@ storage, and connectivity code without the model dependencies.
   (`nodeEntries` — every node with its depth, in outline order) all walk the same thing;
   `Document.subtree(of:)` and `isAncestor(_:of:)` (both cycle-safe) are what a drop is checked
   against, since a cycle is a graph no outline could walk out of.
+- **`GraphGroup`** — a ring drawn round a handful of nodes, with an optional label. Deliberately
+  *not* structure: no parent, nothing hangs off it, and the outline walks straight past it — it's the
+  mind-map equivalent of circling a cluster in pencil, which is why membership is a plain list of
+  ids and a node can be in a group while hanging off a parent somewhere else. The ring's geometry
+  isn't stored either; it's the union of the members' cards, so it follows them. Membership is
+  edited by *moving nodes*: after a drag, the canvas re-measures each ring from the members that
+  didn't move and adds or drops the ones that did, so a node can't hold itself in by its own
+  presence.
 - **`PromptPreset`** — a named, reusable instruction (`systemPrompt` + `template` with a
   `{{transcript}}` token) plus generation params. Three built-ins ship; users add their own.
 - **`DeviceLink`** — describes the Watch↔host pairing; for the direct-to-iPad path it stores the
@@ -110,6 +118,13 @@ transform — `scaleEffect(anchor: .topLeading)` then `offset` — so a canvas p
   centre ray exits through — is wrong for cards this shape: a node is three times wider than it is
   tall, so that ray leaves through the *top* as soon as the other node is about 18° above the
   horizontal, and a child sitting out to the right and a little high gets joined top-to-bottom.
+- **A hold can run on into a chain.** While recording, a ring is drawn round the node being spoken
+  into; leaving it files that clip, starts another, and hangs the new node off the last. The new
+  node follows the finger until it *settles*, which needs a clock rather than the gesture — a finger
+  held perfectly still sends no events, and stillness is exactly what's being waited for. On
+  settling the position is committed once and the canvas centres on it. A clip too short to keep
+  takes its node with it, so the next node checks its intended parent still exists before pointing
+  at it: a dangling `parentID` would be a node in neither `rootNodes` nor anyone's `children`.
 - **Nodes sit where they're put.** There is no simulation: a node's `position` is the truth, a drag
   moves it (and its branch), and nothing else ever does. An earlier build relaxed the graph with a
   force-directed layout, which read well right up until you tried to drop one node onto another and

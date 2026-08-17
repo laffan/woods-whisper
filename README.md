@@ -98,7 +98,14 @@ the rest of the app depends on.
   and the words drop into that node — one gesture for "make a node and say what's in it". Let that
   second tap go instead of holding it — an ordinary **double-tap** — and you get a node to type
   into. **Holding on its own** drags out a selection box: everything it touches is selected, any one
-  of them drags the whole lot, and a bar along the bottom deletes them or lets them go. Nodes are the same edit blocks as everywhere else, shrunk to
+  of them drags the whole lot, and a bar along the bottom groups them, deletes them, or lets them go.
+- **Speak a whole chain without lifting your finger.** While a hold is recording, a thin ring is
+  drawn around the node you're speaking into. Slide out of the ring and that clip is filed there and
+  then, a fresh one starts, and the node it makes hangs off the one you just finished — so a train
+  of thought becomes a line of linked nodes in one continuous gesture. The new node follows your
+  finger until it settles (a second in one place is enough), then the canvas slides over to centre
+  it, leaving room to strike out in any direction for the next one.
+- **Working with nodes.** Nodes are the same edit blocks as everywhere else, shrunk to
   cards: **tap twice** to edit one in place, **long-press** for the actions a paragraph gets from a
   swipe (Edit, Add Child, Revise, Transform, Delete) as a dropdown. **Drag** a node and its children
   come with it; **drop it on another node** and the whole branch hangs off that one — settling into
@@ -114,6 +121,14 @@ the rest of the app depends on.
   There's no bottom bar at all — the hold is the record button, and a graph's auto transform is an
   app-wide setting (**Settings → Graphs**) rather than a per-document toggle — so the canvas runs
   all the way to the edge.
+- **Groups.** Select a few nodes and tap **Group**: a dashed ring is drawn round them, and it
+  follows them wherever they go. Tap the corner to name it (or to ungroup), drag the ring's **edge**
+  to move everything inside, and drag a node **in or out** of the ring to change what's in the
+  group — membership is a matter of where things are, not a list to manage. A ring left with fewer
+  than two nodes dissolves itself.
+- **Unlink.** A node's edit bar (and its long-press menu) has an **unlink** action: it takes the
+  node out of the tree without taking its words with it — its parent and its children are joined to
+  each other, so the branch survives, and the node floats free where it stands.
 - **Finding your way around a graph.** A **minimap** sits along the bottom: every node as a dot
   inside a box showing what's on screen — touch or drag it to go there. The **⋯** menu adds **List
   Nodes** (the graph as an indented list, in outline order; tap a line to fly to that node),

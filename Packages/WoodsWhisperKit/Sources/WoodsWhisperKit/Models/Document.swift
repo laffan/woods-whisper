@@ -31,6 +31,10 @@ public struct Document: Identifiable, Codable, Hashable, Sendable {
     /// The graph body: the nodes on the canvas of a `.graph` document. Empty in an ordinary one.
     public var nodes: [GraphNode]
 
+    /// Rings drawn round clusters of those nodes — spatial annotation, not structure. Empty in an
+    /// ordinary document, and in most graphs.
+    public var groups: [GraphGroup]
+
     /// The recordings this document was assembled from, kept separate from the body and shown in
     /// their own "Recordings" section.
     public var recordings: [Recording]
@@ -52,6 +56,7 @@ public struct Document: Identifiable, Codable, Hashable, Sendable {
         kind: Kind = .document,
         paragraphs: [Paragraph] = [],
         nodes: [GraphNode] = [],
+        groups: [GraphGroup] = [],
         recordings: [Recording] = [],
         isPinned: Bool = false,
         autoTransformPresetID: UUID? = nil
@@ -63,6 +68,7 @@ public struct Document: Identifiable, Codable, Hashable, Sendable {
         self.kind = kind
         self.paragraphs = paragraphs
         self.nodes = nodes
+        self.groups = groups
         self.recordings = recordings
         self.isPinned = isPinned
         self.autoTransformPresetID = autoTransformPresetID
@@ -124,7 +130,7 @@ public struct Document: Identifiable, Codable, Hashable, Sendable {
     // `paragraphs`, and knew nothing of graphs) still load: missing keys default rather than
     // failing the decode. A document saved before graphs existed reads back as `.document`.
     enum CodingKeys: String, CodingKey {
-        case id, title, createdAt, updatedAt, kind, paragraphs, nodes, recordings, isPinned,
+        case id, title, createdAt, updatedAt, kind, paragraphs, nodes, groups, recordings, isPinned,
              autoTransformPresetID
     }
 
@@ -137,6 +143,7 @@ public struct Document: Identifiable, Codable, Hashable, Sendable {
         kind = try c.decodeIfPresent(Kind.self, forKey: .kind) ?? .document
         paragraphs = try c.decodeIfPresent([Paragraph].self, forKey: .paragraphs) ?? []
         nodes = try c.decodeIfPresent([GraphNode].self, forKey: .nodes) ?? []
+        groups = try c.decodeIfPresent([GraphGroup].self, forKey: .groups) ?? []
         recordings = try c.decodeIfPresent([Recording].self, forKey: .recordings) ?? []
         isPinned = try c.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
         autoTransformPresetID = try c.decodeIfPresent(UUID.self, forKey: .autoTransformPresetID)

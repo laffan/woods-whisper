@@ -541,6 +541,28 @@ public final class DocumentStore: ObservableObject {
         return false
     }
 
+    /// Take a node out of the tree without deleting it: its children are joined to its parent, and
+    /// the node itself becomes a root, floating free where it stands.
+    ///
+    /// The same promotion `deleteNode` does — a branch shouldn't fall apart because something above
+    /// it moved — minus the deletion. This is the "unlink" button, and the one way to detach a node
+    /// from the network while keeping what it says.
+    public func unlinkNode(_ nodeID: UUID, in documentID: UUID) {
+        guard let docIdx = index(of: documentID),
+              let nodeIdx = documents[docIdx].nodes.firstIndex(where: { $0.id == nodeID })
+        else { return }
+        let parentID = documents[docIdx].nodes[nodeIdx].parentID
+        let hadChildren = documents[docIdx].nodes.contains { $0.parentID == nodeID }
+        guard parentID != nil || hadChildren else { return }   // already loose
+
+        for idx in documents[docIdx].nodes.indices
+        where documents[docIdx].nodes[idx].parentID == nodeID {
+            documents[docIdx].nodes[idx].parentID = parentID
+        }
+        documents[docIdx].nodes[nodeIdx].parentID = nil
+        touch(docIdx)
+    }
+
     /// Delete one node. Its children are promoted to its own parent rather than deleted along with
     /// it — a branch is usually worth more than the node it happens to hang from, and deleting them
     /// one at a time is possible where un-deleting a subtree isn't.
@@ -562,7 +584,64 @@ public final class DocumentStore: ObservableObject {
             removeAudio(documents[docIdx].recordings[recIdx])
             documents[docIdx].recordings.remove(at: recIdx)
         }
+        pruneGroups(of: [nodeID], at: docIdx)
         touch(docIdx)
+    }
+
+    // MARK: Groups
+
+    /// Draw a ring round a set of nodes. Two is the fewest worth circling; anything less is refused.
+    @discardableResult
+    public func addGroup(members: Set<UUID>, in documentID: UUID) -> GraphGroup? {
+        guard let docIdx = index(of: documentID) else { return nil }
+        let present = documents[docIdx].nodes.map(\.id).filter { members.contains($0) }
+        guard present.count >= GraphGroup.minimumMembers else { return nil }
+        let group = GraphGroup(memberIDs: present)
+        documents[docIdx].groups.append(group)
+        touch(docIdx)
+        return group
+    }
+
+    public func setGroupLabel(_ groupID: UUID, in documentID: UUID, to label: String) {
+        guard let docIdx = index(of: documentID),
+              let idx = documents[docIdx].groups.firstIndex(where: { $0.id == groupID })
+        else { return }
+        let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard documents[docIdx].groups[idx].label != trimmed else { return }
+        documents[docIdx].groups[idx].label = trimmed
+        touch(docIdx)
+    }
+
+    /// Set who's inside the ring — what a node dragged in or out of it comes to. A group left with
+    /// too few members dissolves rather than lingering round a single node.
+    public func setGroupMembers(_ groupID: UUID, in documentID: UUID, to members: Set<UUID>) {
+        guard let docIdx = index(of: documentID),
+              let idx = documents[docIdx].groups.firstIndex(where: { $0.id == groupID })
+        else { return }
+        let present = documents[docIdx].nodes.map(\.id).filter { members.contains($0) }
+        guard documents[docIdx].groups[idx].memberIDs != present else { return }
+        if present.count < GraphGroup.minimumMembers {
+            documents[docIdx].groups.remove(at: idx)
+        } else {
+            documents[docIdx].groups[idx].memberIDs = present
+        }
+        touch(docIdx)
+    }
+
+    public func removeGroup(_ groupID: UUID, in documentID: UUID) {
+        guard let docIdx = index(of: documentID),
+              documents[docIdx].groups.contains(where: { $0.id == groupID }) else { return }
+        documents[docIdx].groups.removeAll { $0.id == groupID }
+        touch(docIdx)
+    }
+
+    /// Drop departed nodes out of every ring, and dissolve any ring that's left with too few.
+    private func pruneGroups(of removed: Set<UUID>, at docIdx: Int) {
+        guard !documents[docIdx].groups.isEmpty else { return }
+        for idx in documents[docIdx].groups.indices {
+            documents[docIdx].groups[idx].memberIDs.removeAll { removed.contains($0) }
+        }
+        documents[docIdx].groups.removeAll { $0.memberIDs.count < GraphGroup.minimumMembers }
     }
 
     /// Add a child to `parentID` — the "+" on a node's right edge. It starts to the right of its
@@ -754,6 +833,7 @@ public final class DocumentStore: ObservableObject {
                                 kind: archive.document.kind,
                                 paragraphs: archive.document.paragraphs,
                                 nodes: archive.document.nodes,
+                                groups: archive.document.groups,
                                 recordings: importedRecordings)
         documents.insert(imported, at: 0)
         persistDocuments()

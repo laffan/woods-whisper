@@ -364,6 +364,41 @@ final class WoodsWhisperKitTests: XCTestCase {
         let decoded = try JSONDecoder.iso.decode(Document.self, from: Data(json.utf8))
         XCTAssertEqual(decoded.kind, .document)
         XCTAssertTrue(decoded.nodes.isEmpty)
+        XCTAssertTrue(decoded.groups.isEmpty)
+    }
+
+    func testGroupsRoundTripAndCarryTheirLabel() throws {
+        let camp = graphNode("Camp")
+        let firewood = graphNode("Firewood", y: 120)
+        let doc = Document(title: "Trip", kind: .graph,
+                           nodes: [camp, firewood],
+                           groups: [GraphGroup(label: "  Overnight  ",
+                                               memberIDs: [camp.id, firewood.id])])
+
+        let decoded = try JSONDecoder.iso.decode(Document.self, from: JSONEncoder.iso.encode(doc))
+
+        XCTAssertEqual(decoded.groups.count, 1)
+        XCTAssertEqual(decoded.groups.first?.trimmedLabel, "Overnight")
+        XCTAssertEqual(decoded.groups.first?.members, [camp.id, firewood.id])
+        // A ring round one node isn't a ring round anything.
+        XCTAssertEqual(GraphGroup.minimumMembers, 2)
+    }
+
+    func testAGroupWithoutALabelSaysSo() {
+        let group = GraphGroup(memberIDs: [UUID(), UUID()])
+        XCTAssertFalse(group.hasLabel)
+        XCTAssertTrue(GraphGroup(label: "   ", memberIDs: []).trimmedLabel.isEmpty)
+    }
+
+    /// Groups are annotation, not structure: the outline walks straight past them.
+    func testGroupsDoNotChangeTheOutline() {
+        let camp = graphNode("Camp")
+        let firewood = graphNode("Firewood", parent: camp.id, y: 60)
+        let grouped = Document(title: "Trip", kind: .graph, nodes: [camp, firewood],
+                               groups: [GraphGroup(label: "Overnight",
+                                                   memberIDs: [camp.id, firewood.id])])
+        let plain = Document(title: "Trip", kind: .graph, nodes: [camp, firewood])
+        XCTAssertEqual(grouped.outline, plain.outline)
     }
 
     func testOutlineIndentsByDepthInTheOrderTheCanvasReads() {

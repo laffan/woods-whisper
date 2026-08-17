@@ -2542,9 +2542,25 @@ struct GraphDocumentView: View {
     /// Where the recording readout floats, in canvas-view points: the spot the hold began, so it
     /// can sit clear of the finger holding it.
     @State private var recordingAnchor: CGPoint?
+
+    // A recording can run on into a chain without the finger ever lifting: a ring is drawn around
+    // the node being spoken into, and leaving it files that clip and starts the next one.
+    /// The ring's centre, in view points — nil while a new node is still looking for its spot.
+    @State private var chainRingCenter: CGPoint?
+    /// The node following the finger until it settles, and where it currently sits (canvas points).
+    @State private var chainFollowingNodeID: UUID?
+    @State private var chainFollowPoint: CGPoint?
+    @State private var settleTask: Task<Void, Never>?
+    @State private var settleReference: CGPoint = .zero
+    @State private var settleSince: Date = .distantPast
     @State private var lastTap: (at: Date, point: CGPoint)?
     /// The canvas coasting to a stop after a flick.
     @State private var glideTask: Task<Void, Never>?
+
+    // Groups: the ring being dragged, and the one having its label edited.
+    @State private var draggingGroupID: UUID?
+    @State private var labelingGroupID: UUID?
+    @State private var groupLabelText = ""
 
     // Selecting: the box a held finger drags out, and what it caught.
     @State private var selectedNodeIDs: Set<UUID> = []
@@ -2611,6 +2627,7 @@ struct GraphDocumentView: View {
             cancelHold()
             stopGlide()
             if recordingNodeID != nil { finishHoldRecording() }
+            resetChain()
             phase = .idle
             gestureStart = nil
             marqueeOrigin = nil
@@ -2632,6 +2649,19 @@ struct GraphDocumentView: View {
         }
         .sheet(item: $documentFileShare) { item in
             ActivityView(activityItems: [item.url])
+        }
+        .alert("Group label", isPresented: Binding(get: { labelingGroupID != nil },
+                                                   set: { if !$0 { labelingGroupID = nil } })) {
+            TextField("Label", text: $groupLabelText)
+            Button("Save") {
+                if let id = labelingGroupID {
+                    model.documents.setGroupLabel(id, in: documentID, to: groupLabelText)
+                }
+            }
+            Button("Ungroup", role: .destructive) {
+                if let id = labelingGroupID { model.documents.removeGroup(id, in: documentID) }
+            }
+            Button("Cancel", role: .cancel) { }
         }
         .alert("Rename graph", isPresented: $showingRename) {
             TextField("Title", text: $renameText)
@@ -2676,6 +2706,7 @@ struct GraphDocumentView: View {
                         minimap(for: document)
                     }
                 }
+                .overlay { chainRing() }
                 .overlay { recordingReadout(in: geo.size) }
                 .overlay(alignment: .topLeading) { menuOverlay(for: document, in: geo.size) }
                 .overlay {
@@ -2705,6 +2736,13 @@ struct GraphDocumentView: View {
     private func content(for document: Document) -> some View {
         let lines = edges(of: document)
         ZStack(alignment: .topLeading) {
+            // Rings first, so they sit behind the cards they're drawn around.
+            ForEach(document.groups) { group in
+                if let frame = groupFrame(group, in: document) {
+                    groupView(group, frame: frame)
+                }
+            }
+
             GraphEdgeShape(edges: lines)
                 .stroke(WW.inkTertiary, style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
                 .allowsHitTesting(false)
@@ -2801,6 +2839,9 @@ struct GraphDocumentView: View {
                 WWInlineEditAction("Tidy Children", "rectangle.3.group",
                                    enabled: !document.children(of: node.id).isEmpty) {
                     tidyChildren(of: node)
+                }
+                WWInlineEditAction("Unlink", "scissors", enabled: isLinked(node, in: document)) {
+                    unlink(node)
                 }
             }
         } else {
@@ -2934,6 +2975,8 @@ struct GraphDocumentView: View {
     /// Where a node is: where it's stored — plus the live translation, if it's part of the branch
     /// currently under a finger.
     private func point(of id: UUID, in document: Document) -> CGPoint {
+        // A node still looking for its place in a chain is wherever the finger is.
+        if chainFollowingNodeID == id, let following = chainFollowPoint { return following }
         guard let node = document.node(with: id) else { return .zero }
         let base = CGPoint(x: node.position.x, y: node.position.y)
         guard draggingBranch.contains(id) else { return base }
@@ -2975,6 +3018,7 @@ struct GraphDocumentView: View {
                 case .recording:
                     // The readout follows the finger, so it stays in sight however the hand drifts.
                     recordingAnchor = value.location
+                    trackRecordingTouch(at: value.location)
                 case .selecting:
                     marqueeCurrent = canvasPoint(for: value.location)
                 case .idle, .pressing:
@@ -2988,6 +3032,7 @@ struct GraphDocumentView: View {
                 switch phase {
                 case .recording:
                     finishHoldRecording()
+                    resetChain()
                 case .selecting:
                     finishMarquee()
                 case .idle, .pressing:
@@ -3099,6 +3144,7 @@ struct GraphDocumentView: View {
         model.documents.addNode(node, to: documentID)
         recordingNodeID = node.id
         recordingAnchor = viewPoint
+        chainRingCenter = viewPoint
         phase = .recording
         haptic(strong: true)
     }
@@ -3171,6 +3217,96 @@ struct GraphDocumentView: View {
                                nodeID: nodeID, in: documentID)
     }
 
+    // MARK: Recording in a chain
+
+    /// A ring is drawn round the node being recorded into. Stay inside it and you're still talking
+    /// about that node; leave it and the clip is filed, a fresh one starts, and the node it makes
+    /// hangs off the one you just finished — so a whole line of thought can be spoken without the
+    /// finger ever leaving the glass.
+    private func trackRecordingTouch(at point: CGPoint) {
+        if chainFollowingNodeID != nil {
+            // The new node is still following the finger, waiting for it to stop somewhere.
+            chainFollowPoint = canvasPoint(for: point)
+            if hypot(point.x - settleReference.x, point.y - settleReference.y) > GraphCanvas.settleSlop {
+                settleReference = point
+                settleSince = Date()
+            }
+            return
+        }
+        guard let ring = chainRingCenter else { return }
+        if hypot(point.x - ring.x, point.y - ring.y) > GraphCanvas.chainRadius {
+            advanceChain(to: point)
+        }
+    }
+
+    /// The finger left the ring: file what's been said, and carry straight on into the next node.
+    private func advanceChain(to point: CGPoint) {
+        guard let previous = recordingNodeID else { return }
+        finishHoldRecording()
+        guard canRecord() else { return }
+
+        // A clip too short to keep takes its node with it, so check the last one is still there
+        // before hanging anything off it.
+        let parentID = document?.node(with: previous) != nil ? previous : nil
+        let spot = canvasPoint(for: point)
+        let node = GraphNode(parentID: parentID, position: GraphPoint(x: spot.x, y: spot.y))
+        do {
+            try recorder.start(to: model.documents.newAudioURL().url)
+        } catch {
+            model.setupError = error.localizedDescription
+            resetChain()
+            return
+        }
+        model.documents.addNode(node, to: documentID)
+        recordingNodeID = node.id
+        recordingAnchor = point
+        chainRingCenter = nil               // no ring until this one has somewhere to be
+        chainFollowingNodeID = node.id
+        chainFollowPoint = spot
+        settleReference = point
+        settleSince = Date()
+        watchForSettle()
+        haptic(strong: true)
+    }
+
+    /// Watch for the finger to stop. It has to be a clock rather than the gesture: a finger held
+    /// perfectly still sends no events at all, which is exactly the case being waited for.
+    private func watchForSettle() {
+        settleTask?.cancel()
+        settleTask = Task { @MainActor in
+            while !Task.isCancelled, chainFollowingNodeID != nil {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                guard !Task.isCancelled, chainFollowingNodeID != nil else { return }
+                if Date().timeIntervalSince(settleSince) >= GraphCanvas.settleDelay {
+                    settleChain()
+                    return
+                }
+            }
+        }
+    }
+
+    /// Settled: leave the node where the finger stopped, put the ring round it, and bring the canvas
+    /// across so it's centred — which is also what leaves room to strike out in any direction next.
+    private func settleChain() {
+        settleTask?.cancel()
+        settleTask = nil
+        guard let id = chainFollowingNodeID, let spot = chainFollowPoint else { return }
+        chainFollowingNodeID = nil
+        chainFollowPoint = nil
+        model.documents.moveNodes([id: GraphPoint(x: spot.x, y: spot.y)], in: documentID)
+        chainRingCenter = recordingAnchor
+        center(on: spot)
+        haptic()
+    }
+
+    private func resetChain() {
+        settleTask?.cancel()
+        settleTask = nil
+        chainRingCenter = nil
+        chainFollowingNodeID = nil
+        chainFollowPoint = nil
+    }
+
     /// A touch that came and went without moving. The second of a pair makes a node to type into —
     /// the same pair that *records* if you hold the second tap instead of letting it go — while a
     /// lone tap puts away whatever is open and drops the selection.
@@ -3196,6 +3332,19 @@ struct GraphDocumentView: View {
         let node = GraphNode(position: GraphPoint(x: spot.x, y: spot.y))
         model.documents.addNode(node, to: documentID)
         startEditing(node)
+    }
+
+    /// The ring around the node being recorded into: cross it and the next node begins.
+    @ViewBuilder
+    private func chainRing() -> some View {
+        if recordingNodeID != nil, let ring = chainRingCenter {
+            Circle()
+                .stroke(WW.ember.opacity(0.5), style: StrokeStyle(lineWidth: 1.5, dash: [5, 6]))
+                .frame(width: GraphCanvas.chainRadius * 2, height: GraphCanvas.chainRadius * 2)
+                .position(x: ring.x, y: ring.y)
+                .allowsHitTesting(false)
+                .transition(.opacity)
+        }
     }
 
     /// The elapsed counter, floating clear of the finger that's holding the canvas (or a "+") down.
@@ -3349,6 +3498,9 @@ struct GraphDocumentView: View {
 
                 if let latest = self.document {
                     commit(branch: branch, movedBy: translation, in: latest)
+                    if let settled = self.document {
+                        updateGroupMembership(after: branch, in: settled)
+                    }
                     if let target, model.documents.attachNode(node.id, to: target, in: documentID) {
                         let name = latest.node(with: target)?.trimmedText ?? ""
                         wwLog("Hung a graph branch under “\(name.isEmpty ? "a node" : name)”", .general)
@@ -3455,6 +3607,20 @@ struct GraphDocumentView: View {
         transformTargetID = id
     }
 
+    /// Whether this node is joined to anything — the test for whether unlinking would do something.
+    private func isLinked(_ node: GraphNode, in document: Document) -> Bool {
+        node.parentID != nil || !document.children(of: node.id).isEmpty
+    }
+
+    /// "Unlink": take the node out of the tree without taking its words with it. Its parent and its
+    /// children are joined to each other, so the branch survives, and the node floats free where it
+    /// stands.
+    private func unlink(_ node: GraphNode) {
+        model.documents.unlinkNode(node.id, in: documentID)
+        haptic()
+        wwLog("Unlinked a graph node", .general)
+    }
+
     /// "Tidy children": line this node's children up beside it, evenly spaced, each with its own
     /// branch in tow. The one bit of arrangement the canvas does for you, and only when asked.
     private func tidyChildren(of node: GraphNode) {
@@ -3504,6 +3670,13 @@ struct GraphDocumentView: View {
                 tidyChildren(of: node)
             }
             items.insert(tidy, at: 2)
+        }
+        if isLinked(node, in: document) {
+            let unlinkItem = NodeMenuItem(title: "Unlink", icon: "scissors") {
+                menuNodeID = nil
+                unlink(node)
+            }
+            items.insert(unlinkItem, at: items.count - 1)
         }
         return items
     }
@@ -3563,6 +3736,133 @@ struct GraphDocumentView: View {
         return CGPoint(x: min(max(margin, x), maxX), y: min(max(margin, y), maxY))
     }
 
+    // MARK: Groups
+
+    /// The ring round a group: the union of its members' cards, with air around it.
+    private func groupFrame(_ group: GraphGroup, in document: Document) -> CGRect? {
+        boundingBox(ofMembers: group.members, in: document)
+    }
+
+    private func boundingBox(ofMembers ids: Set<UUID>, in document: Document) -> CGRect? {
+        let boxes = ids.compactMap { id -> CGRect? in
+            document.node(with: id) == nil ? nil : rect(of: id, in: document)
+        }
+        guard var box = boxes.first else { return nil }
+        for other in boxes.dropFirst() { box = box.union(other) }
+        return box.insetBy(dx: -GraphCanvas.groupPadding, dy: -GraphCanvas.groupPadding)
+    }
+
+    /// A dashed ring with a label at its corner. Only the *edge* takes touches — four strips just
+    /// inside it — so everything within stays as reachable as it was before the ring was drawn.
+    @ViewBuilder
+    private func groupView(_ group: GraphGroup, frame: CGRect) -> some View {
+        let grab = GraphCanvas.groupBorderGrab
+        Color.clear
+            .frame(width: frame.width, height: frame.height)
+            // A `Color` takes touches across its whole area, which would put a dead zone over every
+            // node inside the ring. The body of the ring is deaf; the strips added after it aren't.
+            .allowsHitTesting(false)
+            .overlay {
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .stroke(WW.moss.opacity(draggingGroupID == group.id ? 0.9 : 0.5),
+                            style: StrokeStyle(lineWidth: 1.5, dash: [8, 6]))
+                    .allowsHitTesting(false)
+            }
+            .overlay(alignment: .top) { grabStrip(width: frame.width, height: grab) }
+            .overlay(alignment: .bottom) { grabStrip(width: frame.width, height: grab) }
+            .overlay(alignment: .leading) { grabStrip(width: grab, height: frame.height) }
+            .overlay(alignment: .trailing) { grabStrip(width: grab, height: frame.height) }
+            .overlay(alignment: .topLeading) {
+                groupLabel(group).offset(x: 12, y: -13)
+            }
+            .gesture(groupDrag(group))
+            .position(x: frame.midX + GraphCanvas.center, y: frame.midY + GraphCanvas.center)
+            .zIndex(0)
+    }
+
+    private func grabStrip(width: CGFloat, height: CGFloat) -> some View {
+        Color.clear
+            .frame(width: width, height: height)
+            .contentShape(Rectangle())
+    }
+
+    /// The name at the ring's top-left corner — tap it to write one, or to let the group go.
+    private func groupLabel(_ group: GraphGroup) -> some View {
+        Button {
+            groupLabelText = group.label
+            labelingGroupID = group.id
+        } label: {
+            Text(group.hasLabel ? group.trimmedLabel : "Label")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(group.hasLabel ? WW.ink : WW.inkTertiary)
+                .lineLimit(1)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(WW.surface, in: Capsule())
+                .overlay(Capsule().stroke(WW.hairline, lineWidth: 1))
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Dragging the ring moves what's inside it — the members themselves, which is exactly what the
+    /// ring is drawn around. Anything hanging off a member but outside the ring stays where it is.
+    private func groupDrag(_ group: GraphGroup) -> some Gesture {
+        DragGesture(minimumDistance: 4, coordinateSpace: .global)
+            .onChanged { value in
+                if draggingGroupID != group.id {
+                    finishEditing()
+                    menuNodeID = nil
+                    draggingGroupID = group.id
+                    draggingBranch = group.members
+                }
+                dragTranslation = CGSize(width: value.translation.width / scale,
+                                         height: value.translation.height / scale)
+            }
+            .onEnded { _ in
+                let members = draggingBranch
+                let translation = dragTranslation
+                draggingGroupID = nil
+                draggingBranch = []
+                dragTranslation = .zero
+                if let latest = self.document {
+                    commit(branch: members, movedBy: translation, in: latest)
+                }
+            }
+    }
+
+    /// Membership is a matter of where things are: a node dragged inside a ring joins it, one
+    /// dragged out leaves. The ring is measured from the members that *didn't* move, so a node
+    /// can't keep itself in by its own presence.
+    private func updateGroupMembership(after moved: Set<UUID>, in document: Document) {
+        for group in document.groups {
+            guard let frame = boundingBox(ofMembers: group.members.subtracting(moved), in: document)
+            else { continue }
+            var members = group.members
+            for id in moved {
+                guard document.node(with: id) != nil else { continue }
+                let box = rect(of: id, in: document)
+                if frame.contains(CGPoint(x: box.midX, y: box.midY)) {
+                    members.insert(id)
+                } else {
+                    members.remove(id)
+                }
+            }
+            guard members != group.members else { continue }
+            model.documents.setGroupMembers(group.id, in: documentID, to: members)
+        }
+    }
+
+    /// "Group" in the selection bar: ring the selection, then offer to name it straight away.
+    private func groupSelection() {
+        guard let group = model.documents.addGroup(members: selectedNodeIDs, in: documentID) else { return }
+        withAnimation(.snappy(duration: 0.2)) { selectedNodeIDs = [] }
+        haptic()
+        wwLog("Grouped \(group.memberIDs.count) graph nodes", .general)
+        groupLabelText = ""
+        labelingGroupID = group.id
+    }
+
     // MARK: Selection bar
 
     /// What a selection can do, in the app's usual batch-bar shape but floating over the canvas:
@@ -3580,6 +3880,18 @@ struct GraphDocumentView: View {
                         .foregroundStyle(WW.inkSecondary)
                 }
                 Spacer(minLength: 8)
+                if selectedNodeIDs.count >= GraphGroup.minimumMembers {
+                    Button { groupSelection() } label: {
+                        Label("Group", systemImage: "square.dashed")
+                            .labelStyle(.iconOnly)
+                            .font(.system(size: 17))
+                            .foregroundStyle(WW.moss)
+                            .frame(width: 40, height: 34)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Group")
+                }
                 Button { deleteSelection() } label: {
                     Label("Delete", systemImage: "trash")
                         .labelStyle(.iconOnly)
@@ -3842,7 +4154,7 @@ enum GraphCanvas {
 
     static let nodeWidth: CGFloat = 180
     /// A node that's open for editing, which has an action row to fit as well as its text.
-    static let editingNodeWidth: CGFloat = 240
+    static let editingNodeWidth: CGFloat = 280
     static let menuWidth: CGFloat = 210
     static let gridSpacing: CGFloat = 44
     static let minimapHeight: CGFloat = 76
@@ -3854,6 +4166,14 @@ enum GraphCanvas {
     static let holdDuration: TimeInterval = 0.4
     /// A clip shorter than this was a stray press, not something said.
     static let minimumClip: TimeInterval = 0.3
+    /// How far the finger may roam from the node it's recording into before the next one begins.
+    static let chainRadius: CGFloat = 96
+    /// How still the finger has to be, and for how long, to count as having settled somewhere.
+    static let settleSlop: CGFloat = 14
+    static let settleDelay: TimeInterval = 1.0
+    /// Air between a group's ring and the cards inside it, and how thick its draggable edge is.
+    static let groupPadding: CGFloat = 26
+    static let groupBorderGrab: CGFloat = 28
     /// How far a touch may drift and still count as a press rather than a pan.
     static let tapSlop: CGFloat = 12
     /// Below this release speed (points per second) a pan simply stops where it is.
