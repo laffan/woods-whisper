@@ -14,6 +14,7 @@ struct SettingsView: View {
     @State private var allowRotation = AppSettings.shared.allowRotation
     @State private var showingFolderPicker = false
     @State private var deviceName = AppSettings.shared.deviceDisplayName
+    @State private var graphAutoTransformID: UUID? = AppSettings.shared.graphAutoTransformPresetID
     @FocusState private var deviceNameFocused: Bool
 
     var body: some View {
@@ -24,6 +25,7 @@ struct SettingsView: View {
                 speechModelSection
                 languageModelSection
                 presetsSection
+                graphSection
                 backupSection
                 connectivitySection
                 aboutSection
@@ -239,6 +241,35 @@ struct SettingsView: View {
             }
         } header: {
             WWSectionHeader("Prompt Presets")
+        }
+        .listRowBackground(WW.surface)
+    }
+
+    // MARK: Graphs
+
+    /// "Auto transform graph nodes" — the graph's answer to the toggle the Inbox and documents carry
+    /// at the bottom of the screen. A graph's canvas runs all the way to the bottom edge, so the
+    /// choice lives here instead, and applies to every graph.
+    private var graphSection: some View {
+        Section {
+            Picker("Auto transform nodes", selection: $graphAutoTransformID) {
+                Text("Off").tag(UUID?.none)
+                ForEach(model.documents.presets) { preset in
+                    Text(preset.name).tag(UUID?.some(preset.id))
+                }
+            }
+            .onChange(of: graphAutoTransformID) { _, id in
+                AppSettings.shared.graphAutoTransformPresetID = id
+                let chosen = model.documents.presets.first { $0.id == id }
+                wwLog("Auto transform for graph nodes " +
+                      (chosen.map { "set to “\($0.name)”" } ?? "turned off"), .transform)
+            }
+        } header: {
+            WWSectionHeader("Graphs")
+        } footer: {
+            WWFooter("Runs over every graph node the moment it's first transcribed, so spoken nodes "
+                     + "arrive already cleaned up. Documents and the Inbox keep their own choice, at "
+                     + "the bottom of each screen.")
         }
         .listRowBackground(WW.surface)
     }

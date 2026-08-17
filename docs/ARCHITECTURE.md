@@ -157,7 +157,9 @@ path, taken once, the first time a hold finds permission undetermined.
 
 **Auto transform (iOS):** `AppModel.transcribe` notes whether the recording's `transcript` was nil
 *before* it ran — the test for "first transcription" — and on success calls `applyAutoTransform`,
-which looks up the document's `autoTransformPresetID` and runs it through the same
+which looks up the document's `autoTransformPresetID` — or, for a **graph**, the app-wide
+`AppSettings.graphAutoTransformPresetID`, since a graph has no bottom bar to hang a per-document
+toggle from — and runs it through the same
 `transformRecordingTranscript` path. Hanging it off `transcribe` (rather than off each capture site)
 is what makes it apply to every arrival — Watch clip, device capture, shared audio — with no branch
 of its own; anchoring it to the first transcription is what keeps **Retranscribe** and **Reset**

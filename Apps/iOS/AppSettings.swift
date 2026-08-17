@@ -19,6 +19,19 @@ final class AppSettings {
         static let preferredMicUID = "preferredMicUID"
         static let showLiveTranscription = "showLiveTranscription"
         static let allowRotation = "allowRotation"
+        static let graphAutoTransformPresetID = "graphAutoTransformPresetID"
+    }
+
+    /// The transform run automatically over each graph node as it's first transcribed, or nil for
+    /// none. App-wide rather than per-document: a graph has no bottom bar to hang a toggle from —
+    /// the canvas goes all the way down — and "how I like spoken nodes to come out" is a habit
+    /// rather than a property of one mind map. (Documents and the Inbox keep their own choice.)
+    var graphAutoTransformPresetID: UUID? {
+        get { defaults.string(forKey: Key.graphAutoTransformPresetID).flatMap(UUID.init(uuidString:)) }
+        set {
+            if let newValue { defaults.set(newValue.uuidString, forKey: Key.graphAutoTransformPresetID) }
+            else { defaults.removeObject(forKey: Key.graphAutoTransformPresetID) }
+        }
     }
 
     /// Whether the interface may rotate to landscape. On (default) allows all orientations; off

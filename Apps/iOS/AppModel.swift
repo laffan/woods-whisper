@@ -608,6 +608,17 @@ final class AppModel: ObservableObject {
         return documents.presets.first { $0.id == id }
     }
 
+    /// What to run over a clip that has just been transcribed: the document's own "Auto transform"
+    /// choice — or, in a **graph**, the app-wide "Auto transform graph nodes" setting, since a graph
+    /// has no bottom bar to carry a per-document toggle.
+    private func autoTransformPresetForCapture(in documentID: UUID) -> PromptPreset? {
+        guard documents.document(with: documentID)?.isGraph == true else {
+            return autoTransformPreset(for: documentID)
+        }
+        guard let id = AppSettings.shared.graphAutoTransformPresetID else { return nil }
+        return documents.presets.first { $0.id == id }
+    }
+
     /// Turn the document's "Auto transform" on (with `preset`) or off (nil).
     func setAutoTransform(_ preset: PromptPreset?, for documentID: UUID) {
         documents.setAutoTransform(preset?.id, for: documentID)
@@ -629,7 +640,7 @@ final class AppModel: ObservableObject {
     /// the clip keeps its plain transcription and the log says why. ("Number Paragraphs" needs no
     /// model, so it still runs.) A transform that runs and *fails* reports itself the usual way.
     private func applyAutoTransform(recordingID: UUID, in documentID: UUID) async {
-        guard let preset = autoTransformPreset(for: documentID) else { return }
+        guard let preset = autoTransformPresetForCapture(in: documentID) else { return }
         let transcript = documents.document(with: documentID)?
             .recordings.first(where: { $0.id == recordingID })?
             .transcript?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""

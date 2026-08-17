@@ -82,7 +82,9 @@ the rest of the app depends on.
   **document** it's a plain red dot, centered above the bottom bar — nothing behind it, the text
   scrolling past underneath — and it does what the mic did there before: a clip filed into the
   Inbox, or one added to the document (its transcript appended to the body).
-- **Auto transform.** A toggle at the bottom of the Inbox and of every document. Flip it on and a
+- **Auto transform.** A toggle at the bottom of the Inbox and of every document (a **graph** has no
+  bottom bar, so its equivalent — **Auto transform nodes** — lives in **Settings → Graphs** and
+  applies to every graph). Flip it on and a
   list of your transforms opens; pick one and it runs by itself on every new recording the moment
   that recording is first transcribed — so captures arrive already cleaned up, summarized, or
   whatever else you asked for. The bar then carries the transform's name (tap it to pick another,
@@ -97,18 +99,19 @@ the rest of the app depends on.
   canvas for a node you type instead. Nodes are the same edit blocks as everywhere else, shrunk to
   cards: **tap twice** to edit one in place, **long-press** for the actions a paragraph gets from a
   swipe (Edit, Add Child, Revise, Transform, Delete) as a dropdown. **Drag** a node and its children
-  come with it; **drop it on another node** and the whole branch hangs off that one. Nodes stay
+  come with it; **drop it on another node** and the whole branch hangs off that one — settling into
+  place beside its new parent, below the children already there and clear of anything else. Nodes stay
   exactly where you put them — nothing rearranges them behind your back, though **Tidy Children**
   (in a node's edit bar, and in its long-press menu) will line a node's children up beside it on
-  request, each with its own branch in tow. The **"+"** on a node's right edge adds a child and the
+  request, each with its own branch in tow. The **"+"** tucked inside a node's right edge adds a child and the
   one midway along a line drops a node between the two it joins — evenly, with the same room either
   side, pushing the branch below out of the way; **tap** either to type, or **hold** either to
   record into the new node the way the canvas does. Whenever a hold is recording, the elapsed
   counter floats above your finger, clear of the node it's filling. Pinch to zoom, drag while
   pinching to move around at the same time, and let go mid-drag for the canvas to coast to a stop.
-  There's no red record button along the bottom — the hold is the record button — but the **Auto
-  transform** toggle is the same one the Inbox and documents carry, and shapes each node as it's
-  transcribed.
+  There's no bottom bar at all — the hold is the record button, and a graph's auto transform is an
+  app-wide setting (**Settings → Graphs**) rather than a per-document toggle — so the canvas runs
+  all the way to the edge.
 - **Finding your way around a graph.** A **minimap** sits along the bottom: every node as a dot
   inside a box showing what's on screen — touch or drag it to go there. The **⋯** menu adds **List
   Nodes** (the graph as an indented list, in outline order; tap a line to fly to that node),

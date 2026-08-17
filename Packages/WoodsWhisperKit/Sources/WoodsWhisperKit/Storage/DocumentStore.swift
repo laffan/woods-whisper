@@ -483,6 +483,64 @@ public final class DocumentStore: ObservableObject {
         return true
     }
 
+    /// Hang a node — and everything under it — off a new parent, and put the branch where a child
+    /// of that parent belongs: out at the standard distance, below the siblings it's joining, and
+    /// clear of anything else that happens to be in the way.
+    ///
+    /// This is what a drop does. Re-parenting alone would leave the branch wherever the finger let
+    /// go of it, which is usually right on top of its new parent — the line would say one thing and
+    /// the layout another.
+    @discardableResult
+    public func attachNode(_ nodeID: UUID, to parentID: UUID, in documentID: UUID) -> Bool {
+        guard reparentNode(nodeID, to: parentID, in: documentID),
+              let docIdx = index(of: documentID),
+              let parent = documents[docIdx].node(with: parentID),
+              let node = documents[docIdx].node(with: nodeID)
+        else { return false }
+
+        let moving = Set(documents[docIdx].subtree(of: nodeID))
+        let siblings = documents[docIdx].children(of: parentID).filter { !moving.contains($0.id) }
+
+        // Below the branches already hanging there, or level with the parent if it had none.
+        var y = parent.position.y
+        if !siblings.isEmpty {
+            let bottom = siblings
+                .flatMap { documents[docIdx].subtree(of: $0.id) }
+                .compactMap { documents[docIdx].node(with: $0)?.position.y }
+                .max()
+            if let bottom { y = bottom + Self.tidyRowGap }
+        }
+
+        let dx = parent.position.x + Self.childColumnOffset - node.position.x
+        var dy = y - node.position.y
+        for _ in 0..<Self.placementAttempts {
+            guard collides(subtree: moving, movedByX: dx, y: dy, at: docIdx) else { break }
+            dy += Self.tidyRowGap
+        }
+        translate(subtreeOf: nodeID, byX: dx, y: dy, at: docIdx)
+        touch(docIdx)
+        return true
+    }
+
+    /// Whether a branch, moved by `(dx, dy)`, would come down on top of any node outside it.
+    private func collides(subtree moving: Set<UUID>, movedByX dx: Double, y dy: Double,
+                          at docIdx: Int) -> Bool {
+        let others = documents[docIdx].nodes.filter { !moving.contains($0.id) }
+        guard !others.isEmpty else { return false }
+        for id in moving {
+            guard let node = documents[docIdx].node(with: id) else { continue }
+            let x = node.position.x + dx
+            let y = node.position.y + dy
+            for other in others {
+                if abs(other.position.x - x) < Self.nodeFootprintWidth,
+                   abs(other.position.y - y) < Self.nodeFootprintHeight {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
     /// Delete one node. Its children are promoted to its own parent rather than deleted along with
     /// it — a branch is usually worth more than the node it happens to hang from, and deleting them
     /// one at a time is possible where un-deleting a subtree isn't.
@@ -516,8 +574,8 @@ public final class DocumentStore: ObservableObject {
         let siblings = documents[docIdx].children(of: parentID).count
         let node = GraphNode(text: text,
                              parentID: parentID,
-                             position: GraphPoint(x: parent.position.x + 190,
-                                                  y: parent.position.y + Double(siblings) * 80))
+                             position: GraphPoint(x: parent.position.x + Self.childColumnOffset,
+                                                  y: parent.position.y + Double(siblings) * 100))
         documents[docIdx].nodes.append(node)
         touch(docIdx)
         return node
@@ -589,7 +647,7 @@ public final class DocumentStore: ObservableObject {
         let bands = reaches.reduce(0.0) { $0 + $1.above + $1.below }
         let height = bands + Double(children.count - 1) * Self.tidyRowGap
         var cursor = parent.position.y - height / 2
-        let column = parent.position.x + Self.tidyColumnOffset
+        let column = parent.position.x + Self.childColumnOffset
 
         for (child, reach) in zip(children, reaches) {
             let y = cursor + reach.above
@@ -616,10 +674,21 @@ public final class DocumentStore: ObservableObject {
     /// How far the branch below is pushed out to make room for a node inserted above it — a card's
     /// width and a little air.
     private static let insertedNodeSpacing: Double = 200
-    /// Where "Tidy children" puts the column of children, and how much air it leaves between the
-    /// branches in it.
-    private static let tidyColumnOffset: Double = 220
-    private static let tidyRowGap: Double = 90
+
+    /// How far out a child is placed from its parent, centre to centre: a card's width plus 200
+    /// points of clear space between the two, which is what "give them room" comes to once the
+    /// cards themselves are accounted for. Used by "Tidy children", by a brand-new child, and by a
+    /// node dropped onto a new parent, so all three agree on what "beside its parent" means.
+    static let childColumnOffset: Double = 380
+    /// Air between one child's branch and the next one's.
+    private static let tidyRowGap: Double = 120
+
+    /// Roughly how much canvas a node card takes up, for keeping placed branches off each other.
+    /// The view draws them 180 points wide; the rest is the margin worth leaving.
+    private static let nodeFootprintWidth: Double = 210
+    private static let nodeFootprintHeight: Double = 96
+    /// How many slots down to try before giving up and dropping the branch where it lands.
+    private static let placementAttempts = 12
 
     // MARK: Sharing (Woods Whisper document files)
 

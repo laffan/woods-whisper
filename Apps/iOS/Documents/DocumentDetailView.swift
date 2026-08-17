@@ -963,10 +963,7 @@ struct CaptureBar: View {
     let presets: [PromptPreset]
     let selected: PromptPreset?
     let onSelect: (PromptPreset?) -> Void
-    /// What the red dot does — or nil in a **graph** document, which has no record button of its
-    /// own: recording there is a hold anywhere on the canvas, which places the node at the same
-    /// time. The Auto transform toggle below is the same in all three places.
-    let onRecord: (() -> Void)?
+    let onRecord: () -> Void
 
     /// Whether the toggle reads as on. Held locally as well as in the store because "on, but no
     /// transform picked yet" is a real state: it's what you see between flipping the switch and
@@ -979,10 +976,8 @@ struct CaptureBar: View {
             // No background behind the dot — the list's text passes underneath it. The padding is
             // lopsided on purpose: it lifts the dot clear of the bar without changing the height
             // this inset takes from the list.
-            if let onRecord {
-                WWRecordButton(action: onRecord)
-                    .padding(.bottom, 20)
-            }
+            WWRecordButton(action: onRecord)
+                .padding(.bottom, 20)
 
             // The strip runs the full width; what's written on it is held to the content column, so
             // an iPad doesn't put the label and its switch a hand-span apart.
@@ -2599,16 +2594,9 @@ struct GraphDocumentView: View {
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbarContent(for: document) }
-        // The same bottom strip as everywhere else, minus the red dot: on a graph, recording is the
-        // hold on the canvas, and it places the node at the same time.
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            if editingNodeID == nil {
-                CaptureBar(presets: model.documents.presets,
-                           selected: model.autoTransformPreset(for: documentID),
-                           onSelect: { model.setAutoTransform($0, for: documentID) },
-                           onRecord: nil)
-            }
-        }
+        // No bottom bar here. A graph has no record button — the hold on the canvas is it — and its
+        // Auto transform is an app-wide setting ("Auto transform nodes", in Settings → Graphs)
+        // rather than a per-document toggle, so the canvas runs all the way down to the edge.
         // Leaving commits the open editor, and closes off a hold that never got its finger back (a
         // gesture the system cancelled, a screen left mid-recording) — which would otherwise leave
         // the recorder running behind a node that says "Recording" for ever.
@@ -2747,14 +2735,14 @@ struct GraphDocumentView: View {
                 if !isEditing {
                     GraphPlusButton(onTap: { addChild(to: node) },
                                     onHold: {
-                                        holdRecord(at: CGPoint(x: center.x + GraphCanvas.nodeWidth / 2 + 6,
+                                        holdRecord(at: CGPoint(x: center.x + GraphCanvas.nodeWidth / 2 - 25,
                                                                y: center.y)) {
                                             model.documents.addChildNode(to: node.id, in: documentID)
                                         }
                                     },
                                     onRelease: { finishHoldRecording() })
                         .accessibilityLabel("Add child node")
-                        .offset(x: 27)     // half the padded frame, plus the overhang
+                        .offset(x: -4)     // tucked into the card's right-hand gutter
                 }
             }
 
@@ -2792,7 +2780,10 @@ struct GraphDocumentView: View {
             }
         } else {
             nodeLabel(node, in: document)
-                .padding(.horizontal, 12)
+                .padding(.leading, 12)
+                // Room down the right-hand side for the "+", which sits inside the card's border
+                // rather than hanging off it — so the text never runs underneath it.
+                .padding(.trailing, 36)
                 .padding(.vertical, 10)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(WW.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -2871,14 +2862,34 @@ struct GraphDocumentView: View {
 
     // MARK: Edges
 
+    /// The line between a parent and a child, drawn between the **edges** of the two cards rather
+    /// than their centres: each end is the midpoint of whichever side faces the other, so the line
+    /// meets a card square-on and stops at its border instead of disappearing under it.
     private func edges(of document: Document) -> [GraphEdgeLine] {
         document.nodes.compactMap { node in
             guard let parentID = node.parentID, document.node(with: parentID) != nil else { return nil }
+            let parentCenter = point(of: parentID, in: document)
+            let childCenter = point(of: node.id, in: document)
             return GraphEdgeLine(id: node.id,
                                  parentID: parentID,
-                                 from: point(of: parentID, in: document),
-                                 to: point(of: node.id, in: document))
+                                 from: anchor(of: parentID, facing: childCenter, in: document),
+                                 to: anchor(of: node.id, facing: parentCenter, in: document))
         }
+    }
+
+    /// The middle of the side of `id`'s card that faces `target` — the side a line between the two
+    /// would leave through, worked out by comparing the card's half-width and half-height against
+    /// the direction of travel.
+    private func anchor(of id: UUID, facing target: CGPoint, in document: Document) -> CGPoint {
+        let center = point(of: id, in: document)
+        let size = nodeSizes[id] ?? CGSize(width: GraphCanvas.nodeWidth, height: 56)
+        let dx: CGFloat = target.x - center.x
+        let dy: CGFloat = target.y - center.y
+        guard dx != 0 || dy != 0 else { return center }
+        if abs(dx) * size.height >= abs(dy) * size.width {
+            return CGPoint(x: center.x + (dx > 0 ? size.width / 2 : -size.width / 2), y: center.y)
+        }
+        return CGPoint(x: center.x, y: center.y + (dy > 0 ? size.height / 2 : -size.height / 2))
     }
 
     /// Where a node is: where it's stored — plus the live translation, if it's part of the branch
@@ -3216,7 +3227,7 @@ struct GraphDocumentView: View {
 
                 if let latest = self.document {
                     commit(branch: branch, movedBy: translation, in: latest)
-                    if let target, model.documents.reparentNode(node.id, to: target, in: documentID) {
+                    if let target, model.documents.attachNode(node.id, to: target, in: documentID) {
                         let name = latest.node(with: target)?.trimmedText ?? ""
                         wwLog("Hung a graph branch under “\(name.isEmpty ? "a node" : name)”", .general)
                         haptic()
