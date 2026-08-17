@@ -2894,28 +2894,41 @@ struct GraphDocumentView: View {
     private func edges(of document: Document) -> [GraphEdgeLine] {
         document.nodes.compactMap { node in
             guard let parentID = node.parentID, document.node(with: parentID) != nil else { return nil }
-            let parentCenter = point(of: parentID, in: document)
-            let childCenter = point(of: node.id, in: document)
             return GraphEdgeLine(id: node.id,
                                  parentID: parentID,
-                                 from: anchor(of: parentID, facing: childCenter, in: document),
-                                 to: anchor(of: node.id, facing: parentCenter, in: document))
+                                 from: anchor(of: parentID, facing: node.id, in: document),
+                                 to: anchor(of: node.id, facing: parentID, in: document))
         }
     }
 
-    /// The middle of the side of `id`'s card that faces `target` — the side a line between the two
-    /// would leave through, worked out by comparing the card's half-width and half-height against
-    /// the direction of travel.
-    private func anchor(of id: UUID, facing target: CGPoint, in document: Document) -> CGPoint {
-        let center = point(of: id, in: document)
-        let size = nodeSizes[id] ?? CGSize(width: GraphCanvas.nodeWidth, height: 56)
-        let dx: CGFloat = target.x - center.x
-        let dy: CGFloat = target.y - center.y
-        guard dx != 0 || dy != 0 else { return center }
-        if abs(dx) * size.height >= abs(dy) * size.width {
-            return CGPoint(x: center.x + (dx > 0 ? size.width / 2 : -size.width / 2), y: center.y)
-        }
-        return CGPoint(x: center.x, y: center.y + (dy > 0 ? size.height / 2 : -size.height / 2))
+    /// The middle of whichever side of `id`'s card is nearest the other card — each end of a line
+    /// decided on its own, by measuring, rather than inferred from the angle between the two
+    /// centres.
+    ///
+    /// The angle is the tempting test and it's wrong for cards this shape: a node card is three
+    /// times wider than it is tall, so the line out of its centre leaves through the *top* as soon
+    /// as the other node is more than about 18° above the horizontal — which is how a child sitting
+    /// out to the right and a little high ended up joined top-to-bottom. Measuring each side against
+    /// the other card's rectangle asks the question the eye is actually asking: which edge is
+    /// closest to that node?
+    private func anchor(of id: UUID, facing otherID: UUID, in document: Document) -> CGPoint {
+        let box = rect(of: id, in: document)
+        let target = rect(of: otherID, in: document)
+        let sides = [
+            CGPoint(x: box.maxX, y: box.midY),      // right
+            CGPoint(x: box.minX, y: box.midY),      // left
+            CGPoint(x: box.midX, y: box.minY),      // top
+            CGPoint(x: box.midX, y: box.maxY)       // bottom
+        ]
+        let nearest = sides.min { distance(from: $0, to: target) < distance(from: $1, to: target) }
+        return nearest ?? CGPoint(x: box.midX, y: box.midY)
+    }
+
+    /// How far a point is from the nearest part of a rectangle — zero inside it.
+    private func distance(from point: CGPoint, to box: CGRect) -> CGFloat {
+        let dx: CGFloat = max(box.minX - point.x, 0, point.x - box.maxX)
+        let dy: CGFloat = max(box.minY - point.y, 0, point.y - box.maxY)
+        return hypot(dx, dy)
     }
 
     /// Where a node is: where it's stored — plus the live translation, if it's part of the branch
@@ -3377,11 +3390,16 @@ struct GraphDocumentView: View {
         })?.id
     }
 
-    private func rect(of node: GraphNode, in document: Document) -> CGRect {
-        let center = point(of: node.id, in: document)
-        let size = nodeSizes[node.id] ?? CGSize(width: GraphCanvas.nodeWidth, height: 56)
+    /// A node's card in canvas points: where it is now, at the size it actually measured.
+    private func rect(of id: UUID, in document: Document) -> CGRect {
+        let center = point(of: id, in: document)
+        let size = nodeSizes[id] ?? CGSize(width: GraphCanvas.nodeWidth, height: 56)
         return CGRect(x: center.x - size.width / 2, y: center.y - size.height / 2,
                       width: size.width, height: size.height)
+    }
+
+    private func rect(of node: GraphNode, in document: Document) -> CGRect {
+        rect(of: node.id, in: document)
     }
 
     // MARK: Adding nodes from the "+" buttons

@@ -671,21 +671,26 @@ public final class DocumentStore: ObservableObject {
         }
     }
 
-    /// How far the branch below is pushed out to make room for a node inserted above it — a card's
-    /// width and a little air.
-    private static let insertedNodeSpacing: Double = 200
+    /// The clear space this canvas leaves between one node and the next — the one number the
+    /// arranging is built from, so a tidied child, a new child, an inserted node and a dropped
+    /// branch all sit the same distance apart.
+    public static let standardNodeGap: Double = 150
 
-    /// How far out a child is placed from its parent, centre to centre: a card's width plus 200
-    /// points of clear space between the two, which is what "give them room" comes to once the
-    /// cards themselves are accounted for. Used by "Tidy children", by a brand-new child, and by a
-    /// node dropped onto a new parent, so all three agree on what "beside its parent" means.
-    static let childColumnOffset: Double = 380
+    /// How wide the view draws a node card. Layout lives here rather than in the view because the
+    /// arranging does, and a gap between *cards* can't be worked out from centres alone.
+    private static let nodeCardWidth: Double = 180
+
+    /// Centre to centre, then: a card's width plus the gap.
+    static var childColumnOffset: Double { nodeCardWidth + standardNodeGap }
+    /// How far the branch below is pushed out to make room for a node inserted above it — the same
+    /// distance, so the two gaps either side of the new node come out standard.
+    private static var insertedNodeSpacing: Double { childColumnOffset }
     /// Air between one child's branch and the next one's.
-    private static let tidyRowGap: Double = 120
+    private static var tidyRowGap: Double { standardNodeGap }
 
-    /// Roughly how much canvas a node card takes up, for keeping placed branches off each other.
-    /// The view draws them 180 points wide; the rest is the margin worth leaving.
-    private static let nodeFootprintWidth: Double = 210
+    /// Roughly how much canvas a node card takes up, for keeping placed branches off each other:
+    /// the card, plus enough margin that "clear of it" means visibly clear.
+    private static var nodeFootprintWidth: Double { nodeCardWidth + 30 }
     private static let nodeFootprintHeight: Double = 96
     /// How many slots down to try before giving up and dropping the branch where it lands.
     private static let placementAttempts = 12

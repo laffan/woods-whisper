@@ -103,8 +103,13 @@ recorder, so the app target picks it up without an xcodegen regen) on that flag 
 in (a row, the widget's deep link) agrees. The
 canvas draws everything in *canvas coordinates* inside one big container and applies a single
 transform — `scaleEffect(anchor: .topLeading)` then `offset` — so a canvas point `c` lands at
-`c * scale + pan` and the inverse used by every gesture is one line. Four things are worth knowing:
+`c * scale + pan` and the inverse used by every gesture is one line. Five things are worth knowing:
 
+- **A line meets a card's nearest edge**, and each end decides for itself, by measuring its four
+  side midpoints against the other card's rectangle. The tempting test — which side the centre-to-
+  centre ray exits through — is wrong for cards this shape: a node is three times wider than it is
+  tall, so that ray leaves through the *top* as soon as the other node is about 18° above the
+  horizontal, and a child sitting out to the right and a little high gets joined top-to-bottom.
 - **Nodes sit where they're put.** There is no simulation: a node's `position` is the truth, a drag
   moves it (and its branch), and nothing else ever does. An earlier build relaxed the graph with a
   force-directed layout, which read well right up until you tried to drop one node onto another and
@@ -118,9 +123,13 @@ transform — `scaleEffect(anchor: .topLeading)` then `offset` — so a canvas p
   a `DragGesture` measures against the coordinate space of the view it's attached to, and a node
   drag *moves that view*, so a local-space translation comes back halved and oscillating — the card
   flickers between the finger and half way there, and never lands on the node you were aiming at.
-- **Arrangement happens only when asked.** `DocumentStore.tidyChildren(of:in:)` is the one thing
-  that moves nodes the user didn't drag: children into a column beside their parent, spaced by the
-  *height of the branch hanging off each* so a child with a family doesn't land on its sibling.
+- **Arrangement happens only when asked**, and from one number. `DocumentStore.standardNodeGap` is
+  the clear space this canvas leaves between two nodes; the child column, the push that makes room
+  for an inserted node, and the air between sibling branches are all derived from it, so a tidied
+  child, a new child and a dropped branch all land the same distance out.
+  `DocumentStore.tidyChildren(of:in:)` is the one thing that moves nodes the user didn't drag:
+  children into a column beside their parent, spaced by the *height of the branch hanging off each*
+  so a child with a family doesn't land on its sibling.
   Inserting a node on an edge is the same idea in miniature — the branch below slides out by a
   node's width and the new node takes the middle of the widened gap, so it has the room the "+" had.
   Both go through one rigid `translate(subtreeOf:)`, which is why nothing below ever gets scrambled.
