@@ -111,10 +111,19 @@ transform — `scaleEffect(anchor: .topLeading)` then `offset` — so a canvas p
   the target slid out of the way; it was removed in favour of this, and lives in the history if it's
   ever wanted back. Because positions are stable, the minimap is a real map — where a dot is, is
   where the node is.
-- **A drag is one edit.** The live translation stays in view state and is written to the nodes only
-  when the finger lifts, so dragging a branch doesn't rewrite the document (and its Markdown mirror)
-  once per frame. Like pinning, positions don't bump `updatedAt` — where a node sits is layout, not
-  an edit.
+- **A drag is one edit, measured in a space that isn't moving.** The live translation stays in view
+  state and is written to the nodes only when the finger lifts, so dragging a branch doesn't rewrite
+  the document (and its Markdown mirror) once per frame. Like pinning, positions don't bump
+  `updatedAt` — where a node sits is layout, not an edit. The gesture reads `.global`, deliberately:
+  a `DragGesture` measures against the coordinate space of the view it's attached to, and a node
+  drag *moves that view*, so a local-space translation comes back halved and oscillating — the card
+  flickers between the finger and half way there, and never lands on the node you were aiming at.
+- **Arrangement happens only when asked.** `DocumentStore.tidyChildren(of:in:)` is the one thing
+  that moves nodes the user didn't drag: children into a column beside their parent, spaced by the
+  *height of the branch hanging off each* so a child with a family doesn't land on its sibling.
+  Inserting a node on an edge is the same idea in miniature — the branch below slides out by a
+  node's width and the new node takes the middle of the widened gap, so it has the room the "+" had.
+  Both go through one rigid `translate(subtreeOf:)`, which is why nothing below ever gets scrambled.
 - **One press, read four ways.** A single `DragGesture(minimumDistance: 0)` decides between pan,
   hold-to-record, tap and double-tap, rather than stacking four recognisers that would fight over
   the same touch. The phase it's in is anchored to the gesture's `startLocation`: a gesture the
@@ -124,7 +133,10 @@ transform — `scaleEffect(anchor: .topLeading)` then `offset` — so a canvas p
 - **Pan and zoom compose.** Both gestures move `pan` *incrementally* — neither re-derives it from
   where it started — so the drag that keeps running through a pinch can pan while the pinch zooms,
   instead of one overwriting the other on every frame. The pinch also settles the ambiguity of the
-  touch it shares: a second finger means this was never a hold.
+  touch it shares: a second finger means this was never a hold. Releasing a pan hands its velocity
+  to a glide that steps `pan` down to a stop by hand rather than through `withAnimation`: an
+  animation would set the state to its destination at once and leave the next touch to start from
+  there, so grabbing the coasting canvas would jump it. Any finger down cancels the glide.
 
 **Graph capture (iOS).** Holding the canvas makes the node *first* (there has to be something on
 screen recording into) and files the clip on release via `AppModel.captureGraphNode`, which points

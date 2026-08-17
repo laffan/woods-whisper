@@ -2544,7 +2544,12 @@ struct GraphDocumentView: View {
     @State private var gestureStart: CGPoint?
     @State private var holdTask: Task<Void, Never>?
     @State private var recordingNodeID: UUID?
+    /// Where the recording readout floats, in canvas-view points: the spot the hold began, so it
+    /// can sit clear of the finger holding it.
+    @State private var recordingAnchor: CGPoint?
     @State private var lastTap: (at: Date, point: CGPoint)?
+    /// The canvas coasting to a stop after a flick.
+    @State private var glideTask: Task<Void, Never>?
 
     // Dragging a branch. The translation lives here until the finger lifts; only then is it written
     // to the nodes, so a drag is one edit rather than sixty.
@@ -2609,6 +2614,7 @@ struct GraphDocumentView: View {
         // the recorder running behind a node that says "Recording" for ever.
         .onDisappear {
             cancelHold()
+            stopGlide()
             if recordingNodeID != nil { finishHoldRecording() }
             phase = .idle
             gestureStart = nil
@@ -2668,6 +2674,7 @@ struct GraphDocumentView: View {
                 .gesture(canvasGesture())
                 .simultaneousGesture(zoomGesture())
                 .overlay(alignment: .bottom) { minimap(for: document) }
+                .overlay { recordingReadout(in: geo.size) }
                 .overlay(alignment: .topLeading) { menuOverlay(for: document, in: geo.size) }
                 .overlay {
                     if document.nodes.isEmpty {
@@ -2702,9 +2709,13 @@ struct GraphDocumentView: View {
 
             ForEach(lines) { edge in
                 GraphPlusButton(onTap: { insertNode(on: edge) },
-                                onHold: { holdRecord { model.documents.insertNode(between: edge.parentID,
-                                                                                 and: edge.id,
-                                                                                 in: documentID) } },
+                                onHold: {
+                                    holdRecord(at: edge.midpoint) {
+                                        model.documents.insertNode(between: edge.parentID,
+                                                                   and: edge.id,
+                                                                   in: documentID)
+                                    }
+                                },
                                 onRelease: { finishHoldRecording() })
                     .accessibilityLabel("Insert node between")
                     .position(x: edge.midpoint.x + GraphCanvas.center,
@@ -2735,8 +2746,12 @@ struct GraphDocumentView: View {
             .overlay(alignment: .trailing) {
                 if !isEditing {
                     GraphPlusButton(onTap: { addChild(to: node) },
-                                    onHold: { holdRecord { model.documents.addChildNode(to: node.id,
-                                                                                        in: documentID) } },
+                                    onHold: {
+                                        holdRecord(at: CGPoint(x: center.x + GraphCanvas.nodeWidth / 2 + 6,
+                                                               y: center.y)) {
+                                            model.documents.addChildNode(to: node.id, in: documentID)
+                                        }
+                                    },
                                     onRelease: { finishHoldRecording() })
                         .accessibilityLabel("Add child node")
                         .offset(x: 27)     // half the padded frame, plus the overhang
@@ -2769,6 +2784,10 @@ struct GraphDocumentView: View {
                 WWInlineEditAction("Revise", "mic.fill") { reviseEditingNode() }
                 WWInlineEditAction("Transform", "wand.and.stars", enabled: model.modelReady) {
                     transformEditingNode()
+                }
+                WWInlineEditAction("Tidy Children", "rectangle.3.group",
+                                   enabled: !document.children(of: node.id).isEmpty) {
+                    tidyChildren(of: node)
                 }
             }
         } else {
@@ -2883,6 +2902,8 @@ struct GraphDocumentView: View {
                 if gestureStart != value.startLocation {
                     // A new touch. Every one starts out ambiguous: it becomes a pan the moment it
                     // moves, a recording if it stays put long enough, and a tap if it does neither.
+                    // Whatever the canvas was still coasting through, a finger down stops it.
+                    stopGlide()
                     gestureStart = value.startLocation
                     phase = .pressing
                     lastPanTranslation = value.translation
@@ -2895,6 +2916,9 @@ struct GraphDocumentView: View {
                     // Incremental, so a pinch running alongside can move `pan` too.
                     pan.x += value.translation.width - lastPanTranslation.width
                     pan.y += value.translation.height - lastPanTranslation.height
+                } else if phase == .recording {
+                    // The readout follows the finger, so it stays in sight however the hand drifts.
+                    recordingAnchor = value.location
                 }
                 lastPanTranslation = value.translation
             }
@@ -2907,7 +2931,7 @@ struct GraphDocumentView: View {
                 case .idle, .pressing:
                     if moved <= GraphCanvas.tapSlop { registerTap(at: value.startLocation) }
                 case .panning:
-                    break
+                    startGlide(velocity: value.velocity)
                 }
                 phase = .idle
                 gestureStart = nil
@@ -2922,6 +2946,7 @@ struct GraphDocumentView: View {
         MagnifyGesture()
             .onChanged { value in
                 // A second finger means this touch was never a hold, and never a tap either.
+                stopGlide()
                 if phase == .pressing {
                     cancelHold()
                     phase = .panning
@@ -2992,13 +3017,14 @@ struct GraphDocumentView: View {
         }
         model.documents.addNode(node, to: documentID)
         recordingNodeID = node.id
+        recordingAnchor = viewPoint
         phase = .recording
         haptic(strong: true)
     }
 
     /// A "+" held rather than tapped: make the node it would have made, and record into it until
     /// the finger lifts — the canvas's hold, at a place in the graph that's already decided.
-    private func holdRecord(_ make: () -> GraphNode?) {
+    private func holdRecord(at spot: CGPoint, _ make: () -> GraphNode?) {
         guard canRecord() else { return }
         finishEditing()
         menuNodeID = nil
@@ -3011,7 +3037,14 @@ struct GraphDocumentView: View {
             return
         }
         recordingNodeID = node.id
+        // The "+" is where the finger is, so anchoring to the button anchors to the finger.
+        recordingAnchor = viewPoint(for: spot)
         haptic(strong: true)
+    }
+
+    /// A canvas point in view coordinates — the forward direction of `canvasPoint(for:)`.
+    private func viewPoint(for spot: CGPoint) -> CGPoint {
+        CGPoint(x: spot.x * scale + pan.x, y: spot.y * scale + pan.y)
     }
 
     /// Whether capture can start this instant.
@@ -3041,6 +3074,7 @@ struct GraphDocumentView: View {
     private func finishHoldRecording() {
         guard let nodeID = recordingNodeID else { return }
         recordingNodeID = nil
+        recordingAnchor = nil
         guard let result = recorder.stop() else {
             model.documents.deleteNode(nodeID, in: documentID)
             return
@@ -3082,6 +3116,65 @@ struct GraphDocumentView: View {
         startEditing(node)
     }
 
+    /// The elapsed counter, floating clear of the finger that's holding the canvas (or a "+") down.
+    ///
+    /// The node itself is under the fingertip while it records — which is right, it's where it
+    /// belongs — so the one thing you actually need to watch is put where you can see it, and kept
+    /// on screen if the hold wanders towards an edge.
+    @ViewBuilder
+    private func recordingReadout(in size: CGSize) -> some View {
+        if recordingNodeID != nil, let anchor = recordingAnchor {
+            let x: CGFloat = min(max(80, anchor.x), max(80, size.width - 80))
+            let y: CGFloat = max(34, anchor.y - 62)
+            HStack(spacing: 9) {
+                Circle()
+                    .fill(WW.ember)
+                    .frame(width: 10, height: 10)
+                Text(Recording.durationLabel(recorder.elapsed))
+                    .font(.system(size: 17, weight: .medium, design: .rounded).monospacedDigit())
+                    .foregroundStyle(WW.ink)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 9)
+            .background(WW.surface, in: Capsule())
+            .overlay(Capsule().stroke(WW.hairline, lineWidth: 1))
+            .shadow(color: .black.opacity(0.16), radius: 14, y: 4)
+            .position(x: x, y: y)
+            .allowsHitTesting(false)
+            .transition(.opacity)
+        }
+    }
+
+    // MARK: Momentum
+
+    /// Let go mid-pan and the canvas carries on for a moment, shedding speed — the flick you'd
+    /// expect from anything else that scrolls.
+    ///
+    /// Stepped by hand rather than handed to `withAnimation`, because an animation would move
+    /// `pan` to its destination immediately and leave the next touch to start from there: you'd
+    /// grab the canvas and it would jump. This way the value on screen is the value, and a finger
+    /// down simply stops it.
+    private func startGlide(velocity: CGSize) {
+        stopGlide()
+        var vx = velocity.width
+        var vy = velocity.height
+        guard hypot(vx, vy) > GraphCanvas.glideThreshold else { return }
+        glideTask = Task { @MainActor in
+            while !Task.isCancelled, hypot(vx, vy) > 24 {
+                pan.x += vx / 60
+                pan.y += vy / 60
+                vx *= GraphCanvas.glideDecay
+                vy *= GraphCanvas.glideDecay
+                try? await Task.sleep(nanoseconds: 16_000_000)
+            }
+        }
+    }
+
+    private func stopGlide() {
+        glideTask?.cancel()
+        glideTask = nil
+    }
+
     private func haptic(strong: Bool = false) {
         #if canImport(UIKit)
         UIImpactFeedbackGenerator(style: strong ? .medium : .light).impactOccurred()
@@ -3090,8 +3183,16 @@ struct GraphDocumentView: View {
 
     // MARK: Dragging a node (and its branch)
 
+    /// Dragging a node reads its translation in the **global** space, not the node's own.
+    ///
+    /// A `DragGesture` measures against the coordinate space of the view it's attached to — and
+    /// this one moves that view. Each frame the card would be redrawn under the finger, the next
+    /// event measured from the card's new home, and the translation come back halved: the node
+    /// flickered between the finger and half way there, and never quite arrived over the node you
+    /// were trying to drop it on. The global space doesn't move, so the translation is the honest
+    /// distance the finger has travelled; dividing by `scale` puts it in canvas points.
     private func nodeDrag(_ node: GraphNode, in document: Document) -> some Gesture {
-        DragGesture(minimumDistance: 6)
+        DragGesture(minimumDistance: 6, coordinateSpace: .global)
             .onChanged { value in
                 if draggingNodeID != node.id {
                     finishEditing()
@@ -3144,7 +3245,9 @@ struct GraphDocumentView: View {
         let excluded = draggingBranch
         return document.nodes.first(where: { other in
             guard !excluded.contains(other.id) else { return false }
-            return rect(of: other, in: document).contains(center)
+            // A little generous around the edges: you're aiming a card with your fingertip, and the
+            // card is what you can see — the centre landing *near* the target should count.
+            return rect(of: other, in: document).insetBy(dx: -14, dy: -14).contains(center)
         })?.id
     }
 
@@ -3208,6 +3311,14 @@ struct GraphDocumentView: View {
         transformTargetID = id
     }
 
+    /// "Tidy children": line this node's children up beside it, evenly spaced, each with its own
+    /// branch in tow. The one bit of arrangement the canvas does for you, and only when asked.
+    private func tidyChildren(of node: GraphNode) {
+        model.documents.tidyChildren(of: node.id, in: documentID)
+        haptic()
+        wwLog("Tidied the children of a graph node", .general)
+    }
+
     private func runTransform(_ preset: PromptPreset, nodeID: UUID) {
         transformingNodeIDs.insert(nodeID)
         Task {
@@ -3226,8 +3337,8 @@ struct GraphDocumentView: View {
 
     /// The actions a paragraph gets from a swipe, as a list under the node they apply to — there's
     /// no row to swipe on a canvas, so the long press opens them here instead.
-    private func menuItems(for node: GraphNode) -> [NodeMenuItem] {
-        [
+    private func menuItems(for node: GraphNode, in document: Document) -> [NodeMenuItem] {
+        var items: [NodeMenuItem] = [
             NodeMenuItem(title: "Edit", icon: "pencil") { startEditing(node) },
             NodeMenuItem(title: "Add Child", icon: "plus") { addChild(to: node) },
             NodeMenuItem(title: "Revise", icon: "mic.fill") {
@@ -3243,12 +3354,20 @@ struct GraphDocumentView: View {
                 model.documents.deleteNode(node.id, in: documentID)
             }
         ]
+        if !document.children(of: node.id).isEmpty {
+            let tidy = NodeMenuItem(title: "Tidy Children", icon: "rectangle.3.group") {
+                menuNodeID = nil
+                tidyChildren(of: node)
+            }
+            items.insert(tidy, at: 2)
+        }
+        return items
     }
 
     @ViewBuilder
     private func menuOverlay(for document: Document, in size: CGSize) -> some View {
         if let id = menuNodeID, let node = document.node(with: id) {
-            let items = menuItems(for: node)
+            let items = menuItems(for: node, in: document)
             let height = CGFloat(items.count) * 44 + 8
             let origin = menuOrigin(for: node, in: document, size: size, height: height)
             ZStack(alignment: .topLeading) {
@@ -3409,6 +3528,7 @@ struct GraphDocumentView: View {
     /// send you.
     private func center(on spot: CGPoint, animated: Bool = true) {
         guard canvasSize.width > 0 else { return }
+        stopGlide()
         let target = CGPoint(x: canvasSize.width / 2 - spot.x * scale,
                              y: canvasSize.height / 2 - spot.y * scale)
         if animated {
@@ -3420,6 +3540,7 @@ struct GraphDocumentView: View {
 
     private func recenter() {
         guard let document, canvasSize.width > 0 else { return }
+        stopGlide()
         withAnimation(.snappy(duration: 0.3)) {
             scale = 1
             pan = centeringPan(for: document, in: canvasSize)
@@ -3544,6 +3665,10 @@ enum GraphCanvas {
     static let minimumClip: TimeInterval = 0.3
     /// How far a touch may drift and still count as a press rather than a pan.
     static let tapSlop: CGFloat = 12
+    /// Below this release speed (points per second) a pan simply stops where it is.
+    static let glideThreshold: CGFloat = 150
+    /// What's left of the speed after each frame of coasting — a flick runs on for about a second.
+    static let glideDecay: CGFloat = 0.94
     static let doubleTapWindow: TimeInterval = 0.35
 }
 

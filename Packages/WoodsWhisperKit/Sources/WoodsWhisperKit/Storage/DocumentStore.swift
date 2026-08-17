@@ -524,11 +524,13 @@ public final class DocumentStore: ObservableObject {
     }
 
     /// Add a node *between* an existing parent and child — the "+" halfway along the line joining
-    /// them. It lands at the midpoint and adopts the child, so the branch below stays intact.
+    /// them — and hand the child (with its branch) to it.
     ///
-    /// The branch below also slides further from the parent, along the line the two already make,
-    /// to leave the new node somewhere to be: nothing moves nodes around on the canvas by itself,
-    /// so if room isn't made here the new card simply lands on top of the two it went between.
+    /// The gap widens to make room, and the new node takes the middle of the widened gap, so it
+    /// ends up with as much space on either side as the "+" had: the branch below slides out by a
+    /// node's worth, the new node by half that. Nothing on this canvas moves by itself, so room
+    /// that isn't made here is never made at all — the new card would simply land on top of the two
+    /// it went between.
     @discardableResult
     public func insertNode(between parentID: UUID, and childID: UUID, in documentID: UUID) -> GraphNode? {
         guard let docIdx = index(of: documentID),
@@ -537,9 +539,9 @@ public final class DocumentStore: ObservableObject {
               documents[docIdx].nodes[childIdx].parentID == parentID
         else { return nil }
         let child = documents[docIdx].nodes[childIdx]
-        let node = GraphNode(parentID: parentID,
-                             position: GraphPoint(x: (parent.position.x + child.position.x) / 2,
-                                                  y: (parent.position.y + child.position.y) / 2))
+
+        var midX = (parent.position.x + child.position.x) / 2
+        var midY = (parent.position.y + child.position.y) / 2
 
         let dx = child.position.x - parent.position.x
         let dy = child.position.y - parent.position.y
@@ -547,22 +549,77 @@ public final class DocumentStore: ObservableObject {
         if distance > 0.01 {
             let pushX = dx / distance * Self.insertedNodeSpacing
             let pushY = dy / distance * Self.insertedNodeSpacing
-            for id in documents[docIdx].subtree(of: childID) {
-                guard let idx = documents[docIdx].nodes.firstIndex(where: { $0.id == id }) else { continue }
-                documents[docIdx].nodes[idx].position.x += pushX
-                documents[docIdx].nodes[idx].position.y += pushY
-            }
+            translate(subtreeOf: childID, byX: pushX, y: pushY, at: docIdx)
+            // Half of what the branch moved: the midpoint of the gap as it now stands.
+            midX += pushX / 2
+            midY += pushY / 2
         }
 
+        let node = GraphNode(parentID: parentID, position: GraphPoint(x: midX, y: midY))
         documents[docIdx].nodes[childIdx].parentID = node.id
         documents[docIdx].nodes.append(node)
         touch(docIdx)
         return node
     }
 
+    /// "Tidy children": line a node's children up in a column beside it — all the same distance
+    /// out, evenly spaced down the page, centred on the parent — and bring each one's branch along
+    /// unchanged.
+    ///
+    /// Siblings are spaced by the *height of the branch hanging off them* rather than by a flat
+    /// gap, so a child with a family of its own doesn't land on top of the next one. Their order is
+    /// the order they already read in, top to bottom, so tidying rearranges the spacing and not the
+    /// meaning.
+    public func tidyChildren(of parentID: UUID, in documentID: UUID) {
+        guard let docIdx = index(of: documentID),
+              let parent = documents[docIdx].node(with: parentID) else { return }
+        let children = documents[docIdx].children(of: parentID)
+        guard !children.isEmpty else { return }
+
+        // How far each child's branch reaches above and below the child itself.
+        let reaches = children.map { child -> (above: Double, below: Double) in
+            let ys = documents[docIdx].subtree(of: child.id).compactMap { id in
+                documents[docIdx].node(with: id)?.position.y
+            }
+            let top = ys.min() ?? child.position.y
+            let bottom = ys.max() ?? child.position.y
+            return (child.position.y - top, bottom - child.position.y)
+        }
+
+        let bands = reaches.reduce(0.0) { $0 + $1.above + $1.below }
+        let height = bands + Double(children.count - 1) * Self.tidyRowGap
+        var cursor = parent.position.y - height / 2
+        let column = parent.position.x + Self.tidyColumnOffset
+
+        for (child, reach) in zip(children, reaches) {
+            let y = cursor + reach.above
+            translate(subtreeOf: child.id,
+                      byX: column - child.position.x,
+                      y: y - child.position.y,
+                      at: docIdx)
+            cursor = y + reach.below + Self.tidyRowGap
+        }
+        touch(docIdx)
+    }
+
+    /// Move a node and everything hanging off it, rigidly — the one way this store ever moves a
+    /// branch, so a tidy or an insert never scrambles what's below.
+    private func translate(subtreeOf nodeID: UUID, byX dx: Double, y dy: Double, at docIdx: Int) {
+        guard dx != 0 || dy != 0 else { return }
+        for id in documents[docIdx].subtree(of: nodeID) {
+            guard let idx = documents[docIdx].nodes.firstIndex(where: { $0.id == id }) else { continue }
+            documents[docIdx].nodes[idx].position.x += dx
+            documents[docIdx].nodes[idx].position.y += dy
+        }
+    }
+
     /// How far the branch below is pushed out to make room for a node inserted above it — a card's
     /// width and a little air.
     private static let insertedNodeSpacing: Double = 200
+    /// Where "Tidy children" puts the column of children, and how much air it leaves between the
+    /// branches in it.
+    private static let tidyColumnOffset: Double = 220
+    private static let tidyRowGap: Double = 90
 
     // MARK: Sharing (Woods Whisper document files)
 
