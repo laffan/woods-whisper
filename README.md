@@ -93,12 +93,11 @@ the rest of the app depends on.
   words back.
 - **Graph documents (experimental).** The **✎** button now asks what you're making: a **Document** or
   a **Graph**. A graph is a mind map on a pannable, zoomable canvas over a very light grid — endless
-  in every direction, so there's always more room a drag away. **Tap the canvas, then tap and
-  hold**, and a node appears under your finger and starts recording; lift and it stops, transcribes,
-  and the words drop into that node — one gesture for "make a node and say what's in it". Let that
-  second tap go instead of holding it — an ordinary **double-tap** — and you get a node to type
-  into. **Holding on its own** drags out a selection box: everything it touches is selected, any one
-  of them drags the whole lot, and a bar along the bottom groups them, deletes them, or lets them go.
+  in every direction, so there's always more room a drag away. **Hold anywhere on the canvas** and a
+  node appears under your finger and starts recording; lift and it stops, transcribes, and the words
+  drop into that node — one gesture for "make a node and say what's in it". It's the same every
+  time, wherever you hold: a new root node, right there. **Double-tap** instead and you get a node
+  to type into.
 - **Speak a whole chain without lifting your finger.** While a hold is recording, a thin ring is
   drawn around the node you're speaking into. Slide out of the ring and that clip is filed there and
   then, a fresh one starts, and the node it makes hangs off the one you just finished — so a train
@@ -121,6 +120,16 @@ the rest of the app depends on.
   There's no bottom bar at all — the hold is the record button, and a graph's auto transform is an
   app-wide setting (**Settings → Graphs**) rather than a per-document toggle — so the canvas runs
   all the way to the edge.
+- **Picking several nodes out.** The hold belongs to recording, so selecting is asked for: **⋯ →
+  Select Nodes**. In that mode a drag on the canvas draws a selection box — everything it touches is
+  selected — and a tap on a card takes it in or out. Any one of the selected nodes drags the whole
+  lot, and a bar along the bottom carries what you can do with them; **Done** leaves the mode.
+- **Lining a selection up.** That bar's second row has **Align Left**, **Align Top**, **Distribute
+  Horizontal** and **Distribute Vertical**. Aligning puts every selected card's left (or top) edge
+  on the leftmost (or topmost) one; distributing holds the two on the ends where they are and evens
+  out the gaps between the rest — gaps between the *cards*, so a tall one doesn't crowd its
+  neighbours. Only the selected nodes move; their children stay where they are. Distributing needs
+  three cards to mean anything, so with two it's greyed.
 - **Groups.** Select a few nodes and tap **Group**: a dashed ring is drawn round them, and it
   follows them wherever they go. Tap the corner to name it (or to ungroup), drag the ring's **edge**
   to move everything inside, and drag a node **in or out** of the ring to change what's in the
@@ -140,6 +149,11 @@ the rest of the app depends on.
   Inbox). The chosen target's name shows on the record screen, and clips captured there are filed into
   that document on the iPhone/iPad instead of the Inbox. (Targets sync over the paired-iPhone path; the
   direct-to-iPad transports still file into the Inbox.)
+- **Record into a document from the list.** Every row in **Documents** carries a **"+"** just left
+  of its open arrow — the graph canvas's button, on a list row. **Hold** it and recording starts
+  where you are; let go and it stops, transcribes itself, and lands in that document: one more
+  paragraph at the end of an ordinary document, or a new root node in a graph. The row shows the
+  counter while you hold. (**Tap** it rather than holding and it simply opens the document.)
 - **Pin documents.** Swipe a document and tap **Pin** to hold it at the top of the list.
 - **Bulk actions on documents.** **Long-press** a document to enter selection mode, then tap the
   others you want (or **Select All**). The bar along the bottom applies **Delete**, **Copy**,

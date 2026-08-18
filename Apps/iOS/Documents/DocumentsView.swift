@@ -1,4 +1,5 @@
 import SwiftUI
+import AVFoundation
 import WoodsWhisperKit
 #if canImport(UIKit)
 import UIKit
@@ -17,6 +18,11 @@ struct DocumentsView: View {
     @State private var newDocumentKind: Document.Kind = .document
     @State private var showingRecorder = false
     @State private var shareItem: ShareItem?
+
+    // Hold-to-record from a row's "+": the recorder behind it, and which document is being spoken
+    // into right now. One at a time — it's one finger on one button.
+    @StateObject private var recorder = AudioRecorder()
+    @State private var recordingDocumentID: UUID?
     @State private var editingDoc: Document?
     @State private var editingText = ""
 
@@ -163,6 +169,9 @@ struct DocumentsView: View {
             // id waits in the launcher until then).
             .onChange(of: opener.pendingDocumentID) { openPendingDocument() }
             .onAppear { openPendingDocument() }
+            // A hold whose finger never came back — a tab switched away mid-recording — is filed
+            // rather than left running behind the list.
+            .onDisappear { finishHoldRecording() }
         }
     }
 
@@ -200,34 +209,45 @@ struct DocumentsView: View {
 
     /// One document row with its swipe actions, shared by the Pinned and Documents sections.
     ///
-    /// Tap opens the document — or toggles it while selecting — and a long press anywhere on the row
-    /// enters selection mode. The two gestures sit on nested views (tap inside, long press outside)
-    /// the way the Inbox rows do, so neither swallows the other. Swipe actions stand down while
-    /// selecting: they act on one document, which reads as a mistake mid-selection.
+    /// Tap the row to open the document — or to toggle it while selecting — and long-press it to
+    /// enter selection mode. Both live on the row's *text*, not the whole line, so the "+" beside
+    /// the open arrow keeps its own press: holding it records, and neither of the row's gestures has
+    /// any claim on that touch. Swipe actions stand down while selecting: they act on one document,
+    /// which reads as a mistake mid-selection.
     @ViewBuilder
     private func documentRow(_ doc: Document) -> some View {
         HStack(spacing: 12) {
-            if selectionMode {
-                Image(systemName: selected.contains(doc.id) ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 20, weight: .light))
-                    .foregroundStyle(selected.contains(doc.id) ? WW.moss : WW.inkTertiary)
+            HStack(spacing: 12) {
+                if selectionMode {
+                    Image(systemName: selected.contains(doc.id) ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 20, weight: .light))
+                        .foregroundStyle(selected.contains(doc.id) ? WW.moss : WW.inkTertiary)
+                }
+                DocumentRow(document: doc, recordingElapsed: recordingElapsed(for: doc))
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-            DocumentRow(document: doc)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if selectionMode { toggle(doc.id) } else { open(doc.id) }
+            }
+            .onLongPressGesture { enterSelection(with: doc.id) }
+
             if !selectionMode {
+                // The graph canvas's "+", on a list row: hold it and you're recording into this
+                // document without opening it; let go and the words are on their way.
+                HoldablePlusButton(onTap: { open(doc.id) },
+                                   onHold: { beginHoldRecording(into: doc) },
+                                   onRelease: { finishHoldRecording() })
+                    .accessibilityLabel("Record into \(doc.title)")
                 // Stands in for the disclosure indicator a NavigationLink would have drawn.
                 Image(systemName: "chevron.right")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(WW.inkTertiary)
+                    .contentShape(Rectangle())
+                    .onTapGesture { open(doc.id) }
             }
         }
-        .contentShape(Rectangle())
-        .onTapGesture {
-            if selectionMode { toggle(doc.id) } else { path.append(.document(doc.id)) }
-        }
         .padding(.vertical, 2)
-        .contentShape(Rectangle())
-        .onLongPressGesture { enterSelection(with: doc.id) }
         .wwRow()
         .listRowInsets(EdgeInsets(top: 12, leading: 20, bottom: 12, trailing: 20))
         .swipeActions(edge: .trailing) {
@@ -252,6 +272,89 @@ struct DocumentsView: View {
                 }
             }
         }
+    }
+
+    /// Push a document onto the stack, unless it's already the top of it. The row, the "+" and the
+    /// open arrow all lead to the same place, so two taps in quick succession shouldn't be able to
+    /// stack a document on itself.
+    private func open(_ id: UUID) {
+        guard path.last != .document(id) else { return }
+        path.append(.document(id))
+    }
+
+    // MARK: Holding a row's "+" to record
+
+    /// Whether this row is the one being spoken into, and for how long so far — the row carries the
+    /// counter where its subtitle usually goes, since the button itself is under a fingertip.
+    private func recordingElapsed(for doc: Document) -> TimeInterval? {
+        recordingDocumentID == doc.id ? recorder.elapsed : nil
+    }
+
+    /// The "+" has been held: start capturing. Nothing is written down yet — a document doesn't get
+    /// an empty item because a finger rested on a button — the clip is filed when the finger lifts.
+    private func beginHoldRecording(into doc: Document) {
+        guard canRecord() else { return }
+        do {
+            try recorder.start(to: model.documents.newAudioURL().url)
+        } catch {
+            model.setupError = error.localizedDescription
+            return
+        }
+        recordingDocumentID = doc.id
+        haptic()
+    }
+
+    /// The finger lifted: file the clip against the document it was spoken into, and let
+    /// transcription run on its own — appended to the body of an ordinary document, or dropped into
+    /// a fresh root node of a graph, which is that document's version of one more item.
+    private func finishHoldRecording() {
+        guard let documentID = recordingDocumentID else { return }
+        recordingDocumentID = nil
+        guard let result = recorder.stop() else { return }
+        // A press let go the instant it's recognised isn't a recording — and a document deleted
+        // out from under the hold has nowhere to put one.
+        guard result.duration >= GraphCanvas.minimumClip,
+              let doc = model.documents.document(with: documentID) else {
+            try? FileManager.default.removeItem(at: result.url)
+            return
+        }
+        if doc.isGraph {
+            guard let node = model.documents.addRootNode(in: documentID) else {
+                try? FileManager.default.removeItem(at: result.url)
+                return
+            }
+            model.captureGraphNode(audioURL: result.url, duration: result.duration,
+                                   nodeID: node.id, in: documentID)
+        } else {
+            model.addDeviceRecording(audioURL: result.url, duration: result.duration,
+                                     toDocument: documentID, body: .append)
+        }
+        haptic()
+        wwLog("Recorded into “\(doc.title)” from the documents list", .general)
+    }
+
+    /// Whether capture can start this instant.
+    ///
+    /// Permission is *checked*, never awaited: by the time a hold is recognised the finger is
+    /// already down, so an await here would be a beat of silence at the head of every clip. Asking
+    /// is a separate path, taken once, on the first hold of the app's life.
+    private func canRecord() -> Bool {
+        guard AVAudioApplication.shared.recordPermission == .granted else {
+            Task { @MainActor in
+                let granted = await recorder.requestPermission()
+                if !granted {
+                    model.setupError = "Microphone permission is required to record."
+                }
+            }
+            return false
+        }
+        return true
+    }
+
+    private func haptic() {
+        #if canImport(UIKit)
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        #endif
     }
 
     // MARK: Selection mode
@@ -404,6 +507,9 @@ private struct NewDocumentSheet: View {
 
 private struct DocumentRow: View {
     let document: Document
+    /// How long the hold on this row's "+" has been running, if it's the one recording.
+    var recordingElapsed: TimeInterval?
+
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 6) {
@@ -422,9 +528,23 @@ private struct DocumentRow: View {
                     .font(WW.rowTitle)
                     .foregroundStyle(WW.ink)
             }
-            Text(subtitle)
-                .font(.caption)
-                .foregroundStyle(WW.inkSecondary)
+            // While the "+" is held, the counter takes the subtitle's place: the button is under a
+            // fingertip, so the one thing worth watching is put where it can be seen.
+            if let recordingElapsed {
+                HStack(spacing: 6) {
+                    Circle().fill(WW.ember).frame(width: 8, height: 8)
+                    Text(Recording.durationLabel(recordingElapsed))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(WW.ink)
+                    Text("Recording")
+                        .font(.caption)
+                        .foregroundStyle(WW.inkSecondary)
+                }
+            } else {
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(WW.inkSecondary)
+            }
         }
     }
     private var subtitle: String {

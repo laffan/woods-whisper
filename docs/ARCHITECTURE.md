@@ -150,11 +150,14 @@ transform — `scaleEffect(anchor: .topLeading)` then `offset` — so a canvas p
   Both go through one rigid `translate(subtreeOf:)`, which is why nothing below ever gets scrambled.
 - **One press, read five ways.** A single `DragGesture(minimumDistance: 0)` decides between pan,
   selection box, hold-to-record, tap and double-tap, rather than stacking recognisers that would
-  fight over the same touch. What a *held* finger becomes turns on whether it follows a tap: on its
-  own it drags out a selection box, and as the second of a pair it records. That pairing is
-  therefore recognised on the way **down**, not on release — by the time a finger lifts, the
-  decision has already been needed, because holding the second tap has to start recording while
-  it's still held. The phase is anchored to the gesture's `startLocation`: a gesture the system
+  fight over the same touch. A *held* finger is always a recording — a root node under the finger,
+  wherever it lands — which is the one gesture the canvas can't afford to make conditional, since
+  it's the record button. Selecting is a **mode** instead (`isSelecting`, entered from ⋯ → Select
+  Nodes), where a drag draws the box and a tap picks a card out; the "+" buttons stand down while
+  it's on, so a stray fingertip can't add a node in the middle of choosing them. A tap that follows
+  a tap is still recognised on the way **down** rather than on release, because it decides what
+  letting go means (a node to type into, versus putting things away).
+  The phase is anchored to the gesture's `startLocation`: a gesture the system
   cancels never sends `onEnded`, so rather than trusting leftover state, the next touch to begin
   somewhere else takes over. A touch that lands on a node never reaches the canvas at all, because
   SwiftUI gives a child's gesture priority over its ancestors'.
@@ -166,9 +169,21 @@ transform — `scaleEffect(anchor: .topLeading)` then `offset` — so a canvas p
   animation would set the state to its destination at once and leave the next touch to start from
   there, so grabbing the coasting canvas would jump it. Any finger down cancels the glide.
 
+**Lining a selection up.** `GraphArrange` (in the kit) does the arithmetic behind Align Left, Align
+Top and the two Distributes, over `GraphNodeBox` values the view builds from its *measured* card
+sizes — alignment is about edges, and a node's stored position is its centre, so the store can't
+answer it alone. Distributing evens the gaps between cards rather than the distance between centres,
+which is the difference between a tidy column and a tall card crowding its neighbours. The result is
+a `[UUID: GraphPoint]` written back through the same `moveNodes` a drag ends with: one edit, no
+`updatedAt` bump, and only the nodes that actually move are in it.
+
 **Graph capture (iOS).** Holding the canvas makes the node *first* (there has to be something on
 screen recording into) and files the clip on release via `AppModel.captureGraphNode`, which points
-the node at the recording before adding it. Everything after that is the ordinary transcription
+the node at the recording before adding it. The Documents list's row "+" is the same hold on a row
+that has no canvas: it starts the recorder on hold and, on release, appends the clip to an ordinary
+document's body (`addDeviceRecording(body: .append)`) or gives a graph a fresh root node
+(`DocumentStore.addRootNode`, placed below everything already drawn) to record into. The node is
+made on release rather than on the hold there, because nothing on the list would show it. Everything after that is the ordinary transcription
 path: `transcribe` runs, the document's Auto transform has its say, and only then does
 `fillGraphNodes` copy the words into any node that's still empty and pointed at that clip. Hanging
 it off `transcribe` is what makes it work for arrivals that know nothing about graphs —
@@ -178,7 +193,8 @@ hook. Filling only *empty* nodes is what keeps a Retranscribe from overwriting w
 typed; "Revise" empties the node deliberately, which is exactly how it replaces it.
 
 Microphone permission is *checked* (`AVAudioApplication.shared.recordPermission`), never awaited, on
-every path that starts capture from a hold — the canvas's and both "+" buttons'. By the time a hold
+every path that starts capture from a hold — the canvas's, both "+" buttons' and the Documents
+list's. By the time a hold
 is recognised the user is already holding, so an `await` there is a beat of silence at the head of
 every clip and a promise that has to come back before anything happens at all. Asking is a separate
 path, taken once, the first time a hold finds permission undetermined.

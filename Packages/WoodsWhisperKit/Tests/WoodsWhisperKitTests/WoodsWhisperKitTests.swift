@@ -499,6 +499,76 @@ final class WoodsWhisperKitTests: XCTestCase {
         XCTAssertEqual(doc.outline, "- Camp\n  - Firewood\n- Weather")
     }
 
+    // MARK: Lining a selection up
+
+    /// A card the size the canvas draws them, centred where it's told.
+    private func box(_ x: Double, _ y: Double, width: Double = 180, height: Double = 60) -> GraphNodeBox {
+        GraphNodeBox(id: UUID(), center: GraphPoint(x: x, y: y), width: width, height: height)
+    }
+
+    func testAlignLeftPutsEveryLeftEdgeOnTheLeftmostOne() {
+        let boxes = [box(400, 0), box(100, 90), box(260, 180)]
+        let moved = GraphArrange.alignLeft(boxes)
+
+        // The leftmost card is already where it belongs, so it isn't moved at all.
+        XCTAssertNil(moved[boxes[1].id])
+        XCTAssertEqual(moved[boxes[0].id]?.x, 100)
+        XCTAssertEqual(moved[boxes[2].id]?.x, 100)
+        // Aligning one edge leaves the other axis alone.
+        XCTAssertEqual(moved[boxes[0].id]?.y, 0)
+        XCTAssertEqual(moved[boxes[2].id]?.y, 180)
+    }
+
+    /// Cards differ in height, so aligning tops is about edges rather than centres.
+    func testAlignTopMeasuresFromEachCardsOwnTopEdge() {
+        let short = box(0, 100, height: 40)      // top edge at 80
+        let tall = box(300, 200, height: 120)    // top edge at 140
+        let moved = GraphArrange.alignTop([short, tall])
+
+        XCTAssertNil(moved[short.id])
+        XCTAssertEqual(moved[tall.id]?.y, 140)   // 80 + 120/2
+        XCTAssertEqual(moved[tall.id]?.x, 300)
+    }
+
+    func testDistributeHorizontallyEvensTheGapsAndLeavesTheEndsWhereTheyAre() {
+        let left = box(0, 0)
+        let middle = box(100, 0)
+        let right = box(900, 0)
+        let moved = GraphArrange.distributeHorizontally([middle, right, left])
+
+        XCTAssertNil(moved[left.id])
+        XCTAssertNil(moved[right.id])
+        // Three 180-wide cards spanning -90…990: 1080 of span, 540 of card, 270 of gap either side.
+        XCTAssertEqual(moved[middle.id]?.x ?? 0, 450, accuracy: 0.001)
+    }
+
+    /// Down the page the gaps are between *edges*, so a tall card doesn't crowd its neighbours.
+    func testDistributeVerticallyEvensTheGapsBetweenEdges() {
+        let top = box(0, 0, height: 40)          // top edge at -20
+        let middle = box(0, 100, height: 200)    // the tall one
+        let bottom = box(0, 500, height: 40)     // bottom edge at 520
+        let moved = GraphArrange.distributeVertically([top, middle, bottom])
+
+        XCTAssertNil(moved[top.id])
+        XCTAssertNil(moved[bottom.id])
+        // Span -20…520 is 540; 280 of card leaves 260 of air, so 130 above and below the middle.
+        XCTAssertEqual(moved[middle.id]?.y ?? 0, 250, accuracy: 0.001)
+    }
+
+    func testDistributingNeedsThreeAndAligningNeedsTwo() {
+        XCTAssertTrue(GraphArrange.distributeHorizontally([box(0, 0), box(400, 0)]).isEmpty)
+        XCTAssertTrue(GraphArrange.distributeVertically([box(0, 0), box(0, 400)]).isEmpty)
+        XCTAssertTrue(GraphArrange.alignLeft([box(0, 0)]).isEmpty)
+        XCTAssertTrue(GraphArrange.alignTop([box(0, 0)]).isEmpty)
+    }
+
+    /// Nothing to do is nothing done — a no-op arrangement doesn't move (or re-save) a single card.
+    func testArrangingWhatIsAlreadyArrangedMovesNothing() {
+        let column = [box(0, 0), box(0, 200), box(0, 400)]
+        XCTAssertTrue(GraphArrange.alignLeft(column).isEmpty)
+        XCTAssertTrue(GraphArrange.distributeVertically(column).isEmpty)
+    }
+
     // MARK: Pairing / subnet math
 
     func testIPv4RoundTrips() {

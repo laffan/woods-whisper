@@ -423,6 +423,30 @@ public final class DocumentStore: ObservableObject {
         touch(idx)
     }
 
+    /// Add a loose root node to a graph, without a canvas to put it on — what the "+" beside a graph
+    /// in the Documents list records into.
+    ///
+    /// The canvas decides where a node goes by where the finger was; a list row has no such answer,
+    /// so the node is filed below everything already drawn, at the left of it, where it can't land
+    /// on top of a graph you can't see from there.
+    @discardableResult
+    public func addRootNode(in documentID: UUID, text: String = "") -> GraphNode? {
+        guard let docIdx = index(of: documentID), documents[docIdx].isGraph else { return nil }
+        let node = GraphNode(text: text, position: looseNodeSpot(at: docIdx))
+        documents[docIdx].nodes.append(node)
+        touch(docIdx)
+        return node
+    }
+
+    /// Where that node lands: the origin on an empty canvas, otherwise a standard gap below the
+    /// lowest node and lined up with the leftmost one.
+    private func looseNodeSpot(at docIdx: Int) -> GraphPoint {
+        let nodes = documents[docIdx].nodes
+        guard let left = nodes.map(\.position.x).min(),
+              let bottom = nodes.map(\.position.y).max() else { return .zero }
+        return GraphPoint(x: left, y: bottom + Self.standardNodeGap)
+    }
+
     /// Write a node's text back (the in-place editor's Done, a transform's result, a transcript
     /// arriving). Stored trimmed, so "has this node anything to say?" is the same question
     /// everywhere.

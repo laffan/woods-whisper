@@ -2562,11 +2562,16 @@ struct GraphDocumentView: View {
     @State private var labelingGroupID: UUID?
     @State private var groupLabelText = ""
 
-    // Selecting: the box a held finger drags out, and what it caught.
+    // Selecting: the mode that turns a drag into a selection box, the box itself, and what it
+    // caught. Selecting is a mode now rather than a gesture: the hold belongs to recording, which
+    // needs it everywhere on the canvas, so picking several nodes out is asked for (⋯ → Select
+    // Nodes) rather than discovered by holding still.
+    @State private var isSelecting = false
     @State private var selectedNodeIDs: Set<UUID> = []
     @State private var marqueeOrigin: CGPoint?
     @State private var marqueeCurrent: CGPoint?
-    /// Whether the touch in progress is the second of a pair — the one that records if it's held.
+    /// Whether the touch in progress is the second of a pair — the one that makes a node to type
+    /// into, if it's let go rather than held (holding records, wherever the finger is).
     @State private var isSecondTouch = false
 
     // Dragging a branch. The translation lives here until the finger lifts; only then is it written
@@ -2630,6 +2635,7 @@ struct GraphDocumentView: View {
             resetChain()
             phase = .idle
             gestureStart = nil
+            isSelecting = false
             marqueeOrigin = nil
             marqueeCurrent = nil
             finishEditing()
@@ -2713,7 +2719,7 @@ struct GraphDocumentView: View {
                     if document.nodes.isEmpty {
                         WWEmptyState(title: "An empty canvas",
                                      systemImage: "point.3.connected.trianglepath.dotted",
-                                     message: "Tap, then tap and hold, to record a node — it appears under your finger and stops when you lift it. Double-tap to type one instead. Holding on its own drags out a selection box.")
+                                     message: "Hold anywhere to record a node — it appears under your finger and stops when you lift it. Double-tap to type one instead.")
                     }
                 }
                 .onAppear {
@@ -2747,19 +2753,21 @@ struct GraphDocumentView: View {
                 .stroke(WW.inkTertiary, style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
                 .allowsHitTesting(false)
 
-            ForEach(lines) { edge in
-                GraphPlusButton(onTap: { insertNode(on: edge) },
-                                onHold: {
-                                    holdRecord(at: edge.midpoint) {
-                                        model.documents.insertNode(between: edge.parentID,
-                                                                   and: edge.id,
-                                                                   in: documentID)
-                                    }
-                                },
-                                onRelease: { finishHoldRecording() })
-                    .accessibilityLabel("Insert node between")
-                    .position(x: edge.midpoint.x + GraphCanvas.center,
-                              y: edge.midpoint.y + GraphCanvas.center)
+            if !isSelecting {
+                ForEach(lines) { edge in
+                    HoldablePlusButton(onTap: { insertNode(on: edge) },
+                                       onHold: {
+                                           holdRecord(at: edge.midpoint) {
+                                               model.documents.insertNode(between: edge.parentID,
+                                                                          and: edge.id,
+                                                                          in: documentID)
+                                           }
+                                       },
+                                       onRelease: { finishHoldRecording() })
+                        .accessibilityLabel("Insert node between")
+                        .position(x: edge.midpoint.x + GraphCanvas.center,
+                                  y: edge.midpoint.y + GraphCanvas.center)
+                }
             }
 
             ForEach(document.nodes) { node in
@@ -2795,15 +2803,17 @@ struct GraphDocumentView: View {
                    alignment: .leading)
             .background { sizeReader(for: node.id) }
             .overlay(alignment: .trailing) {
-                if !isEditing {
-                    GraphPlusButton(onTap: { addChild(to: node) },
-                                    onHold: {
-                                        holdRecord(at: CGPoint(x: center.x + GraphCanvas.nodeWidth / 2 - 25,
-                                                               y: center.y)) {
-                                            model.documents.addChildNode(to: node.id, in: documentID)
-                                        }
-                                    },
-                                    onRelease: { finishHoldRecording() })
+                // Nothing on the canvas adds nodes while selecting — the "+" would be one stray
+                // fingertip away from a card nobody asked for, in the middle of picking cards out.
+                if !isEditing, !isSelecting {
+                    HoldablePlusButton(onTap: { addChild(to: node) },
+                                       onHold: {
+                                           holdRecord(at: CGPoint(x: center.x + GraphCanvas.nodeWidth / 2 - 25,
+                                                                  y: center.y)) {
+                                               model.documents.addChildNode(to: node.id, in: documentID)
+                                           }
+                                       },
+                                       onRelease: { finishHoldRecording() })
                         .accessibilityLabel("Add child node")
                         .offset(x: -4)     // tucked into the card's right-hand gutter
                 }
@@ -2814,6 +2824,12 @@ struct GraphDocumentView: View {
                 // The open editor keeps every gesture to itself: a double tap selects a word, a long
                 // press raises the selection handles, a drag moves the caret.
                 card
+            } else if isSelecting {
+                // While selecting, a card is something to pick rather than something to open: one
+                // tap takes it in or out of the selection. Dragging still moves the lot.
+                card
+                    .onTapGesture { toggleSelection(of: node) }
+                    .gesture(nodeDrag(node, in: document))
             } else {
                 card
                     .onTapGesture(count: 2) { startEditing(node) }
@@ -2994,9 +3010,9 @@ struct GraphDocumentView: View {
                 let moved: CGFloat = hypot(value.translation.width, value.translation.height)
                 if gestureStart != value.startLocation {
                     // A new touch. Every one starts out ambiguous: it becomes a pan the moment it
-                    // moves, and if it stays put, either a selection box or — when it's the second
-                    // tap of a pair — a recording. Whatever the canvas was still coasting through,
-                    // a finger down stops it.
+                    // moves, and if it stays put it's a recording — a node under the finger, filling
+                    // as you speak. Whatever the canvas was still coasting through, a finger down
+                    // stops it.
                     stopGlide()
                     // A box left over from a gesture the system cancelled goes with the new touch.
                     marqueeOrigin = nil
@@ -3005,10 +3021,16 @@ struct GraphDocumentView: View {
                     isSecondTouch = isFollowUpTouch(at: value.startLocation)
                     phase = .pressing
                     lastPanTranslation = value.translation
-                    armHold(at: value.startLocation, records: isSecondTouch)
+                    if !isSelecting { armHold(at: value.startLocation) }
                 } else if phase == .pressing, moved > GraphCanvas.tapSlop {
                     cancelHold()
-                    phase = .panning
+                    // While selecting, a drag is the selection box — that's what the mode is for;
+                    // the rest of the time it's a pan.
+                    if isSelecting {
+                        beginMarquee(at: value.startLocation)
+                    } else {
+                        phase = .panning
+                    }
                 }
                 switch phase {
                 case .panning:
@@ -3095,24 +3117,24 @@ struct GraphDocumentView: View {
 
     // MARK: Hold to record
 
-    /// Hold a finger still on the canvas and one of two things happens, depending on whether this
-    /// touch follows a tap: on its own it drags out a **selection box**; as the second of a pair —
-    /// tap, then tap and hold — it makes a node and **records** into it.
-    private func armHold(at viewPoint: CGPoint, records: Bool) {
+    /// Hold a finger still anywhere on the canvas and a node appears under it and starts recording —
+    /// every time, not only for the first node of a graph and no longer needing a tap in front of it.
+    /// The hold *is* the record button here, so it answers the same way wherever it lands.
+    private func armHold(at viewPoint: CGPoint) {
         holdTask?.cancel()
         holdTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: UInt64(GraphCanvas.holdDuration * 1_000_000_000))
             guard !Task.isCancelled, phase == .pressing else { return }
-            if records {
-                beginHoldRecording(at: viewPoint)
-            } else {
-                beginMarquee(at: viewPoint)
-            }
+            beginHoldRecording(at: viewPoint)
         }
     }
 
     /// Whether this touch is the second of a pair: soon enough after the last tap, and close enough
     /// to it. Consumed on the way past, so three taps in a row don't all count as seconds.
+    ///
+    /// Still recognised on the way *down* even though holding no longer depends on it, because the
+    /// answer decides what letting go means: a lone tap puts things away, the second of a pair makes
+    /// a node to type into.
     private func isFollowUpTouch(at viewPoint: CGPoint) -> Bool {
         guard let last = lastTap,
               Date().timeIntervalSince(last.at) < GraphCanvas.doubleTapWindow,
@@ -3307,15 +3329,14 @@ struct GraphDocumentView: View {
         chainFollowPoint = nil
     }
 
-    /// A touch that came and went without moving. The second of a pair makes a node to type into —
-    /// the same pair that *records* if you hold the second tap instead of letting it go — while a
-    /// lone tap puts away whatever is open and drops the selection.
+    /// A touch that came and went without moving. The second of a pair — an ordinary double tap —
+    /// makes a node to type into, while a lone tap puts away whatever is open and drops the
+    /// selection. (Holding rather than tapping is the other thing entirely: a node that records.)
     ///
-    /// Pairs are recognised on the way *down* (`isFollowUpTouch`) rather than here, because by the
-    /// time a finger lifts the decision has already been needed: holding the second tap has to
-    /// start recording while it's still held.
+    /// While selecting, neither tap makes anything: a tap on bare canvas there is "none of these",
+    /// which is the one thing a box drawn round the wrong nodes needs.
     private func registerTap(at viewPoint: CGPoint) {
-        if isSecondTouch {
+        if isSecondTouch, !isSelecting {
             addTypedNode(at: viewPoint)
             return
         }
@@ -3408,7 +3429,7 @@ struct GraphDocumentView: View {
 
     // MARK: Selecting
 
-    /// A held finger on bare canvas drags out a selection box.
+    /// A drag on bare canvas while selecting: out comes the box.
     private func beginMarquee(at viewPoint: CGPoint) {
         finishEditing()
         menuNodeID = nil
@@ -3437,6 +3458,73 @@ struct GraphDocumentView: View {
         let caught = document.nodes.filter { box.intersects(rect(of: $0, in: document)) }
         withAnimation(.snappy(duration: 0.2)) { selectedNodeIDs = Set(caught.map(\.id)) }
         if !caught.isEmpty { haptic() }
+    }
+
+    /// "Select Nodes", from the ⋯ menu: the mode where a drag draws a box and a tap picks a card
+    /// out. It exists because the hold doesn't do this any more — the hold makes a node and records
+    /// into it, everywhere — so choosing several nodes is something you ask for.
+    private func beginSelecting() {
+        finishEditing()
+        cancelHold()
+        withAnimation(.snappy(duration: 0.2)) {
+            menuNodeID = nil
+            isSelecting = true
+        }
+    }
+
+    /// "Done": out of the mode, and nothing held.
+    private func endSelecting() {
+        marqueeOrigin = nil
+        marqueeCurrent = nil
+        withAnimation(.snappy(duration: 0.2)) {
+            isSelecting = false
+            selectedNodeIDs = []
+        }
+    }
+
+    /// A tap on a card while selecting: in, or out.
+    private func toggleSelection(of node: GraphNode) {
+        withAnimation(.snappy(duration: 0.2)) {
+            if selectedNodeIDs.contains(node.id) {
+                selectedNodeIDs.remove(node.id)
+            } else {
+                selectedNodeIDs.insert(node.id)
+            }
+        }
+        haptic()
+    }
+
+    // MARK: Lining a selection up
+
+    /// The selected cards as they're actually drawn. Alignment is about *edges*, and a node's
+    /// stored position is its centre, so it takes the measured sizes to say where a card's left
+    /// side is — which is why the arithmetic is handed boxes rather than nodes.
+    private func selectionBoxes(in document: Document) -> [GraphNodeBox] {
+        selectedNodeIDs.compactMap { id -> GraphNodeBox? in
+            guard document.node(with: id) != nil else { return nil }
+            let box = rect(of: id, in: document)
+            return GraphNodeBox(id: id,
+                                center: GraphPoint(x: Double(box.midX), y: Double(box.midY)),
+                                width: Double(box.width), height: Double(box.height))
+        }
+    }
+
+    /// Run one of the four arrangements over the selection and write the result back — one edit,
+    /// the way a drag is one edit. Only the selected nodes move: a branch travels whole when you
+    /// drag it, but lining cards up is about the cards you picked out.
+    private func arrangeSelection(_ what: String,
+                                  _ arrange: ([GraphNodeBox]) -> [UUID: GraphPoint]) {
+        guard let document else { return }
+        let positions = arrange(selectionBoxes(in: document))
+        guard !positions.isEmpty else { return }
+        withAnimation(.snappy(duration: 0.25)) {
+            model.documents.moveNodes(positions, in: documentID)
+        }
+        if let settled = self.document {
+            updateGroupMembership(after: Set(positions.keys), in: settled)
+        }
+        haptic()
+        wwLog("\(what): moved \(positions.count) graph node\(positions.count == 1 ? "" : "s")", .general)
     }
 
     /// The nodes a drag should carry: the whole selection when the node under the finger is part of
@@ -3866,49 +3954,63 @@ struct GraphDocumentView: View {
     // MARK: Selection bar
 
     /// What a selection can do, in the app's usual batch-bar shape but floating over the canvas:
-    /// how many are held, a reminder that they move together, and the one action that isn't a drag.
+    /// how many are held, what to do with them, and — along the bottom — the four ways to line them
+    /// up. It stands up for the whole of selection mode, empty selection included, so the mode is
+    /// never on without something on screen saying so.
     @ViewBuilder
     private func selectionBar() -> some View {
-        if !selectedNodeIDs.isEmpty {
-            HStack(spacing: 14) {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("\(selectedNodeIDs.count) selected")
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(WW.ink)
-                    Text("Drag any of them to move the lot")
-                        .font(.caption2)
-                        .foregroundStyle(WW.inkSecondary)
-                }
-                Spacer(minLength: 8)
-                if selectedNodeIDs.count >= GraphGroup.minimumMembers {
-                    Button { groupSelection() } label: {
-                        Label("Group", systemImage: "square.dashed")
-                            .labelStyle(.iconOnly)
-                            .font(.system(size: 17))
+        if isSelecting || !selectedNodeIDs.isEmpty {
+            VStack(spacing: 10) {
+                HStack(spacing: 14) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(selectedNodeIDs.isEmpty ? "Select nodes"
+                                                     : "\(selectedNodeIDs.count) selected")
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(WW.ink)
+                        Text(selectedNodeIDs.isEmpty ? "Drag a box round them, or tap them one by one"
+                                                     : "Drag any of them to move the lot")
+                            .font(.caption2)
+                            .foregroundStyle(WW.inkSecondary)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 8)
+                    if selectedNodeIDs.count >= GraphGroup.minimumMembers {
+                        Button { groupSelection() } label: {
+                            Label("Group", systemImage: "square.dashed")
+                                .labelStyle(.iconOnly)
+                                .font(.system(size: 17))
+                                .foregroundStyle(WW.moss)
+                                .frame(width: 40, height: 34)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Group")
+                    }
+                    if !selectedNodeIDs.isEmpty {
+                        Button { deleteSelection() } label: {
+                            Label("Delete", systemImage: "trash")
+                                .labelStyle(.iconOnly)
+                                .font(.system(size: 17))
+                                .foregroundStyle(WW.ember)
+                                .frame(width: 40, height: 34)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    Button {
+                        if isSelecting {
+                            endSelecting()
+                        } else {
+                            withAnimation(.snappy(duration: 0.2)) { selectedNodeIDs = [] }
+                        }
+                    } label: {
+                        Text("Done")
+                            .font(.system(size: 15, weight: .semibold))
                             .foregroundStyle(WW.moss)
-                            .frame(width: 40, height: 34)
-                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("Group")
                 }
-                Button { deleteSelection() } label: {
-                    Label("Delete", systemImage: "trash")
-                        .labelStyle(.iconOnly)
-                        .font(.system(size: 17))
-                        .foregroundStyle(WW.ember)
-                        .frame(width: 40, height: 34)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                Button {
-                    withAnimation(.snappy(duration: 0.2)) { selectedNodeIDs = [] }
-                } label: {
-                    Text("Done")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(WW.moss)
-                }
-                .buttonStyle(.plain)
+                if selectedNodeIDs.count >= GraphArrange.minimumToAlign { arrangeRow() }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
@@ -3920,6 +4022,52 @@ struct GraphDocumentView: View {
             .padding(.horizontal, 12)
             .transition(.move(edge: .bottom).combined(with: .opacity))
         }
+    }
+
+    /// The four arrangements, as a row of their own under a rule: align the selection's left or top
+    /// edges, or even out the gaps across or down. Distributing needs three cards to say anything —
+    /// the two on the ends are what it holds still — so with two it's there but greyed.
+    @ViewBuilder
+    private func arrangeRow() -> some View {
+        VStack(spacing: 8) {
+            WWHairline()
+            HStack(spacing: 0) {
+                arrangeButton("Align Left", "align.horizontal.left") {
+                    arrangeSelection("Align Left", GraphArrange.alignLeft)
+                }
+                arrangeButton("Align Top", "align.vertical.top") {
+                    arrangeSelection("Align Top", GraphArrange.alignTop)
+                }
+                arrangeButton("Distribute Horizontal", "distribute.horizontal.center",
+                              enabled: canDistribute) {
+                    arrangeSelection("Distribute Horizontal", GraphArrange.distributeHorizontally)
+                }
+                arrangeButton("Distribute Vertical", "distribute.vertical.center",
+                              enabled: canDistribute) {
+                    arrangeSelection("Distribute Vertical", GraphArrange.distributeVertically)
+                }
+            }
+        }
+    }
+
+    private var canDistribute: Bool {
+        selectedNodeIDs.count >= GraphArrange.minimumToDistribute
+    }
+
+    private func arrangeButton(_ title: String, _ icon: String, enabled: Bool = true,
+                               action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 17))
+                .foregroundStyle(WW.moss)
+                .frame(maxWidth: .infinity)
+                .frame(height: 30)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.35)
+        .accessibilityLabel(title)
     }
 
     // MARK: Minimap
@@ -4080,6 +4228,13 @@ struct GraphDocumentView: View {
                         Label("Share as Woods Whisper File", systemImage: "arrow.up.doc")
                     }
                     Divider()
+                    Button {
+                        if isSelecting { endSelecting() } else { beginSelecting() }
+                    } label: {
+                        Label(isSelecting ? "Stop Selecting" : "Select Nodes",
+                              systemImage: isSelecting ? "xmark.circle" : "checkmark.circle")
+                    }
+                    .disabled(document.nodes.isEmpty)
                     Button { showingNodeList = true } label: {
                         Label("List Nodes", systemImage: "list.bullet.indent")
                     }
@@ -4250,13 +4405,15 @@ private struct GraphGrid: View {
 
 // MARK: - The "+" button
 
-/// The small "+" that hangs off a node's right edge (add a child) and sits midway along each line
-/// (insert a node between the two it joins).
+/// The small "+" that adds something where it sits — and, held rather than tapped, records into
+/// whatever it adds.
 ///
-/// **Tap** it and the node it makes opens for typing; **hold** it and the node it makes starts
-/// recording instead, until you let go — the canvas's own hold, at a place in the graph that's
-/// already decided. It turns into a red dot while it's recording, the way the record button does.
-private struct GraphPlusButton: View {
+/// **Tap** it and what it makes opens for typing (or, from a list row, opens the document it would
+/// write into); **hold** it and what it makes starts recording instead, until you let go. It turns
+/// into a red dot while it's recording, the way the record button does. Three places use it now —
+/// a node's right edge (add a child), the midpoint of a line (insert a node between the two it
+/// joins), and a row of the Documents list — so it knows about none of them.
+struct HoldablePlusButton: View {
     var diameter: CGFloat = 22
     let onTap: () -> Void
     let onHold: () -> Void
@@ -4267,6 +4424,9 @@ private struct GraphPlusButton: View {
     @State private var gestureStart: CGPoint?
     @State private var holding = false
     @State private var holdTask: Task<Void, Never>?
+    /// Whether the finger wandered off before the hold armed — a swipe that happened to start here
+    /// (a list row's swipe actions, say) rather than a press meant for this button.
+    @State private var strayed = false
 
     var body: some View {
         Image(systemName: holding ? "circle.fill" : "plus")
@@ -4284,15 +4444,25 @@ private struct GraphPlusButton: View {
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { value in
-                        guard gestureStart != value.startLocation else { return }
-                        gestureStart = value.startLocation
-                        holdTask?.cancel()
-                        holdTask = Task { @MainActor in
-                            try? await Task.sleep(nanoseconds: UInt64(GraphCanvas.holdDuration * 1_000_000_000))
-                            guard !Task.isCancelled, gestureStart != nil else { return }
-                            holding = true
-                            onHold()
+                        if gestureStart != value.startLocation {
+                            gestureStart = value.startLocation
+                            strayed = false
+                            holdTask?.cancel()
+                            holdTask = Task { @MainActor in
+                                try? await Task.sleep(nanoseconds: UInt64(GraphCanvas.holdDuration * 1_000_000_000))
+                                guard !Task.isCancelled, gestureStart != nil else { return }
+                                holding = true
+                                onHold()
+                            }
+                            return
                         }
+                        // Once it's recording the finger may drift where it likes — that's the hold.
+                        // Before that, travelling means this touch was on its way somewhere else.
+                        guard !holding, !strayed,
+                              hypot(value.translation.width, value.translation.height) > GraphCanvas.tapSlop
+                        else { return }
+                        strayed = true
+                        holdTask?.cancel()
                     }
                     .onEnded { _ in
                         holdTask?.cancel()
@@ -4301,9 +4471,10 @@ private struct GraphPlusButton: View {
                         if holding {
                             holding = false
                             onRelease()
-                        } else {
+                        } else if !strayed {
                             onTap()
                         }
+                        strayed = false
                     }
             )
     }
