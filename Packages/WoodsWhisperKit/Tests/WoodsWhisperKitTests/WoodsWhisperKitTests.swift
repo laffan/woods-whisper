@@ -137,6 +137,93 @@ final class WoodsWhisperKitTests: XCTestCase {
         XCTAssertEqual(LanguageModelChoice.lfm2_5_1_2B.shortName, "LFM2.5 1.2B")
     }
 
+    // MARK: Streaming filters (reasoning never reaches the text)
+
+    /// Feed a whole response through the splitter the way the model streams it — in pieces, split
+    /// wherever the caller says, including through the middle of a tag.
+    private func split(_ chunks: [String], enabled: Bool = true,
+                       startsInside: Bool = false) -> (reasoning: String, answer: String) {
+        var splitter = ThinkSplitter(enabled: enabled, startsInside: startsInside)
+        var reasoning = ""
+        var answer = ""
+        for chunk in chunks {
+            let parts = splitter.consume(chunk)
+            reasoning += parts.reasoning
+            answer += parts.answer
+        }
+        let last = splitter.flush()
+        return (reasoning + last.reasoning, answer + last.answer)
+    }
+
+    /// The one guarantee the reasoning models rest on: what gets saved is the answer, and not a
+    /// character of the thinking — nor either tag.
+    func testReasoningNeverReachesTheAnswer() {
+        let out = split(["<think>The user wants this tidied up.</think>", "Elk by the creek."])
+        XCTAssertEqual(out.answer, "Elk by the creek.")
+        XCTAssertEqual(out.reasoning, "The user wants this tidied up.")
+        XCTAssertFalse(out.answer.contains("think"))
+        XCTAssertFalse(out.answer.contains("<"))
+    }
+
+    /// Tags arrive split across chunks — a token boundary lands mid-tag sooner or later — and the
+    /// halves must not leak into the answer while the splitter waits for the rest.
+    func testTagsSplitAcrossChunksStillSeparateCleanly() {
+        let out = split(["<th", "ink>weigh", "ing it up</thi", "nk>", "Elk ", "by the creek."])
+        XCTAssertEqual(out.answer, "Elk by the creek.")
+        XCTAssertEqual(out.reasoning, "weighing it up")
+    }
+
+    /// LFM2.5-2.6B: the chat template opens the block, so the stream starts inside it and only the
+    /// closing tag ever arrives. Everything before it is thinking, whatever it looks like.
+    func testATemplateOpenedBlockIsReasoningFromTheFirstToken() {
+        let out = split(["Let me think about this.", "</think>", "Elk by the creek."],
+                        startsInside: true)
+        XCTAssertEqual(out.answer, "Elk by the creek.")
+        XCTAssertEqual(out.reasoning, "Let me think about this.")
+    }
+
+    /// A block that never closes — the model was still thinking when it hit the token cap — is
+    /// reasoning to the last character, whoever opened it. There is simply no answer, which is the
+    /// safe outcome: a transform with nothing to say leaves your text alone rather than replacing it
+    /// with half a thought.
+    func testAnUnterminatedBlockIsAllReasoningAndLeavesNoAnswer() {
+        let templateOpened = split(["Let me weigh this up", " and up"], startsInside: true)
+        XCTAssertTrue(templateOpened.answer.isEmpty)
+        XCTAssertEqual(templateOpened.reasoning, "Let me weigh this up and up")
+
+        let modelOpened = split(["<think>still going"])
+        XCTAssertTrue(modelOpened.answer.isEmpty)
+        XCTAssertEqual(modelOpened.reasoning, "still going")
+    }
+
+    func testANonThinkingModelPassesEverythingThroughAsTheAnswer() {
+        let out = split(["Elk ", "by the creek."], enabled: false)
+        XCTAssertEqual(out.answer, "Elk by the creek.")
+        XCTAssertTrue(out.reasoning.isEmpty)
+    }
+
+    /// The turn-end marker halts the stream and never appears in the text — including when it
+    /// arrives a character at a time.
+    func testStopSequenceHaltsTheStreamAndIsNotEmitted() {
+        var filter = StopSequenceFilter(stops: ["<|im_end|>"])
+        var out = ""
+        for chunk in ["Elk by the creek.", "<|im", "_end|>", "and more"] {
+            out += filter.consume(chunk)
+        }
+        out += filter.flush()
+        XCTAssertEqual(out, "Elk by the creek.")
+        XCTAssertTrue(filter.isStopped)
+    }
+
+    /// A partial marker that turns out to be ordinary text is emitted, not swallowed.
+    func testHeldBackTextIsEmittedWhenItIsNotAStopSequence() {
+        var filter = StopSequenceFilter(stops: ["<|im_end|>"])
+        var out = filter.consume("2 < 3 and 4 <")
+        out += filter.flush()
+        XCTAssertEqual(out, "2 < 3 and 4 <")
+        XCTAssertFalse(filter.isStopped)
+    }
+
     // MARK: Markdown backup mirror
 
     /// The Inbox container's title, as a plain constant so these tests don't have to hop to the

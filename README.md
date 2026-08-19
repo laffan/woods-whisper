@@ -304,7 +304,11 @@ transcript wants; **LFM2.5 2.6B** (~1.5 GB) is the bigger one. Change it in **Se
 Model**. Each downloads once while online and is reloaded automatically from cache on subsequent
 launches (no need to re-tap Download). The **2.6B** is a "thinking" model — it reasons before it
 answers, and that reasoning is shown in a collapsible **Reasoning** section above each result and
-kept out of the saved output.
+**never reaches your text**: the block is split off as it streams, and what's saved is the answer
+alone. While that first stretch is running, the placeholder where the words will go says
+**Thinking…** rather than "Transforming…", so a slow start reads as a stage rather than a stall. And
+if a run spends its whole budget thinking and never gets to an answer, nothing is written — the text
+you asked it to rewrite is left exactly as it was.
 
 **Online models (optional).** When you have a cell signal, you can instead pick **Claude Sonnet
 4.6** or **Claude Haiku 4.5** from the same picker. These stream from Anthropic's API rather than

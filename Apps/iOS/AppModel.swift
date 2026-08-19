@@ -869,6 +869,59 @@ final class AppModel: ObservableObject {
 
     // MARK: Transform
 
+    /// Transforms whose model is still **thinking**: reasoning has started arriving and not a word
+    /// of the answer has. Keyed by whatever the screen is showing a placeholder for — a recording,
+    /// a paragraph, a node, a whole document — so that placeholder can say "Thinking…" rather than
+    /// "Transforming…" through a stretch that would otherwise read as a stall.
+    ///
+    /// Only a reasoning model ever lands in here (LFM2.5 2.6B thinks before every answer); the rest
+    /// go straight to the words.
+    @Published private(set) var reasoningIDs: Set<UUID> = []
+
+    func isThinking(_ id: UUID) -> Bool { reasoningIDs.contains(id) }
+
+    /// Wrap a transform's token stream so `reasoningIDs` follows it: in on the first reasoning
+    /// token, out on the first token of the answer. The phase is latched beside the stream, so the
+    /// ordinary token — the one that changes nothing — costs a comparison rather than a hop back to
+    /// this actor.
+    private func trackingThinking(_ id: UUID,
+                                  _ onToken: (@Sendable (TransformToken) -> Void)?)
+        -> (@Sendable (TransformToken) -> Void) {
+        let latch = ThinkingLatch()
+        return { [weak self] token in
+            onToken?(token)
+            switch token {
+            case .reasoning where !latch.isThinking:
+                latch.isThinking = true
+                Task { @MainActor in self?.reasoningIDs.insert(id) }
+            case .answer where latch.isThinking:
+                latch.isThinking = false
+                Task { @MainActor in self?.reasoningIDs.remove(id) }
+            default:
+                break
+            }
+        }
+    }
+
+    /// One bit, shared between the streaming callback (wherever generation runs) and this actor.
+    /// Written only by the stream, which is serial for a given transform.
+    private final class ThinkingLatch: @unchecked Sendable {
+        var isThinking = false
+    }
+
+    /// What a finished transform is allowed to write back.
+    ///
+    /// An empty answer means the model never got to one — a reasoning model that spent its whole
+    /// token budget thinking is the way this happens — and writing that back would delete the very
+    /// text the transform was asked to rewrite. So nothing is written, and the user is told.
+    private func usableAnswer(_ result: TransformResult, preset: PromptPreset) -> String? {
+        let answer = result.answer.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard answer.isEmpty else { return answer }
+        setupError = "“\(preset.name)” came back with nothing — the model spent its budget thinking. Your text is untouched; try again, or pick a smaller transform."
+        wwLog("Transform “\(preset.name)” produced no answer — text left as it was", .transform)
+        return nil
+    }
+
     /// Run a preset against the document's whole body, replacing it with the transformed text
     /// (split back into paragraphs) rather than appending a new block.
     func transformDocument(_ preset: PromptPreset,
@@ -888,11 +941,14 @@ final class AppModel: ObservableObject {
         }
         wwLog("Transforming “\(document.title)” with “\(preset.name)”…", .transform)
         let start = Date()
+        defer { reasoningIDs.remove(document.id) }
         do {
-            let result = try await transform.transform(transcript: source, with: preset, onToken: onToken)
-            documents.setParagraphs(Document.paragraphs(from: result.answer), in: document.id)
+            let result = try await transform.transform(transcript: source, with: preset,
+                                                       onToken: trackingThinking(document.id, onToken))
+            guard let answer = usableAnswer(result, preset: preset) else { return }
+            documents.setParagraphs(Document.paragraphs(from: answer), in: document.id)
             wwLog(String(format: "Preset “%@” finished in %.1fs (%d chars)", preset.name,
-                         Date().timeIntervalSince(start), result.answer.count), .transform)
+                         Date().timeIntervalSince(start), answer.count), .transform)
         } catch {
             setupError = error.localizedDescription
             wwLog("Transform failed: \(error.localizedDescription)", .error)
@@ -919,12 +975,15 @@ final class AppModel: ObservableObject {
             return
         }
         wwLog("Transforming transcript of “\(recording.name)” with “\(preset.name)”…", .transform)
+        defer { reasoningIDs.remove(recordingID) }
         do {
-            let result = try await transform.transform(transcript: source, with: preset, onToken: nil)
-            recording.transcript = result.answer
+            let result = try await transform.transform(transcript: source, with: preset,
+                                                       onToken: trackingThinking(recordingID, nil))
+            guard let answer = usableAnswer(result, preset: preset) else { return }
+            recording.transcript = answer
             documents.updateRecording(recording, inDocument: documentID)
             wwLog(String(format: "Transcript transform “%@” finished (%d chars)", preset.name,
-                         result.answer.count), .transform)
+                         answer.count), .transform)
         } catch {
             setupError = error.localizedDescription
             wwLog("Transform failed: \(error.localizedDescription)", .error)
@@ -943,11 +1002,14 @@ final class AppModel: ObservableObject {
             return
         }
         wwLog("Transforming a graph node with “\(preset.name)”…", .transform)
+        defer { reasoningIDs.remove(nodeID) }
         do {
-            let result = try await transform.transform(transcript: source, with: preset, onToken: nil)
-            documents.setNodeText(nodeID, in: documentID, to: result.answer)
+            let result = try await transform.transform(transcript: source, with: preset,
+                                                       onToken: trackingThinking(nodeID, nil))
+            guard let answer = usableAnswer(result, preset: preset) else { return }
+            documents.setNodeText(nodeID, in: documentID, to: answer)
             wwLog(String(format: "Node transform “%@” finished (%d chars)", preset.name,
-                         result.answer.count), .transform)
+                         answer.count), .transform)
         } catch {
             setupError = error.localizedDescription
             wwLog("Transform failed: \(error.localizedDescription)", .error)
@@ -969,11 +1031,14 @@ final class AppModel: ObservableObject {
             return
         }
         wwLog("Transforming a paragraph with “\(preset.name)”…", .transform)
+        defer { reasoningIDs.remove(paragraphID) }
         do {
-            let result = try await transform.transform(transcript: source, with: preset, onToken: onToken)
-            documents.replaceParagraph(paragraphID, in: documentID, withTextSplitInto: result.answer)
+            let result = try await transform.transform(transcript: source, with: preset,
+                                                       onToken: trackingThinking(paragraphID, onToken))
+            guard let answer = usableAnswer(result, preset: preset) else { return }
+            documents.replaceParagraph(paragraphID, in: documentID, withTextSplitInto: answer)
             wwLog(String(format: "Paragraph transform “%@” finished (%d chars)", preset.name,
-                         result.answer.count), .transform)
+                         answer.count), .transform)
         } catch {
             setupError = error.localizedDescription
             wwLog("Transform failed: \(error.localizedDescription)", .error)

@@ -166,7 +166,11 @@ struct DocumentDetailView: View {
         }
         .overlay(alignment: .top) {
             if isTransformingDoc {
-                BusyBanner(message: "Transforming document…").padding(.top, 8)
+                // A reasoning model spends its first stretch thinking, with no answer text yet —
+                // saying "Transforming…" through all of it reads as a stall.
+                BusyBanner(message: model.isThinking(documentID) ? "Thinking…"
+                                                                 : "Transforming document…")
+                    .padding(.top, 8)
             }
         }
         .overlay {
@@ -288,7 +292,8 @@ struct DocumentDetailView: View {
         } else if transformingParagraphID == para.id {
             HStack(spacing: 8) {
                 ProgressView()
-                Text("Transforming…").foregroundStyle(WW.inkSecondary)
+                Text(model.isThinking(para.id) ? "Thinking…" : "Transforming…")
+                    .foregroundStyle(WW.inkSecondary)
             }
         } else {
             Text(para.text)
@@ -2057,6 +2062,7 @@ struct InboxView: View {
             // Auto transform running itself over a clip that has just been transcribed.
             isTransforming: transformingIDs.contains(recording.id)
                 || model.autoTransformingIDs.contains(recording.id),
+            isThinking: model.isThinking(recording.id),
             isEditing: isEditing,
             isExpanded: expandedIDs.contains(recording.id),
             onTapLabel: {
@@ -2424,6 +2430,8 @@ private struct InboxRecordingRow<Editor: View>: View {
     let selectionMode: Bool
     let isSelected: Bool
     let isTransforming: Bool
+    /// Whether that transform is still in its reasoning stage rather than writing the answer.
+    let isThinking: Bool
     let isEditing: Bool
     /// Whether this entry is showing all of its transcript rather than the first few lines.
     let isExpanded: Bool
@@ -2453,7 +2461,9 @@ private struct InboxRecordingRow<Editor: View>: View {
                 } else if isTransforming {
                     HStack(spacing: 6) {
                         ProgressView().controlSize(.mini)
-                        Text("Transforming…").font(.subheadline).foregroundStyle(WW.inkSecondary)
+                        Text(isThinking ? "Thinking…" : "Transforming…")
+                            .font(.subheadline)
+                            .foregroundStyle(WW.inkSecondary)
                     }
                 } else {
                     RecordingLabel(recording: recording, lineLimit: isExpanded ? nil : 8)
@@ -2936,6 +2946,7 @@ struct GraphDocumentView: View {
     /// What a node says while it isn't being edited: its words, or why it hasn't any yet.
     @ViewBuilder
     private func nodeLabel(_ node: GraphNode, in document: Document) -> some View {
+        let transform = transformState(of: node)
         if recordingNodeID == node.id {
             HStack(spacing: 8) {
                 Circle().fill(WW.ember).frame(width: 10, height: 10)
@@ -2946,10 +2957,12 @@ struct GraphDocumentView: View {
                     .font(.caption)
                     .foregroundStyle(WW.inkSecondary)
             }
-        } else if transformingNodeIDs.contains(node.id) {
+        } else if transform.running {
             HStack(spacing: 6) {
                 ProgressView().controlSize(.mini)
-                Text("Transforming…").font(.caption).foregroundStyle(WW.inkSecondary)
+                Text(transform.thinking ? "Thinking…" : "Transforming…")
+                    .font(.caption)
+                    .foregroundStyle(WW.inkSecondary)
             }
         } else if node.hasText {
             Text(node.trimmedText)
@@ -2974,6 +2987,20 @@ struct GraphDocumentView: View {
                     .foregroundStyle(WW.inkTertiary)
             }
         }
+    }
+
+    /// Whether this node's words are being rewritten right now, and whether that rewrite is still
+    /// in its thinking stage. Two ways in: the node's own **Transform**, and the graph's app-wide
+    /// **Auto transform** running over the clip the node was spoken into — which used to leave the
+    /// card reading "Empty — tap twice to write" for the length of it.
+    private func transformState(of node: GraphNode) -> (running: Bool, thinking: Bool) {
+        if transformingNodeIDs.contains(node.id) {
+            return (true, model.isThinking(node.id))
+        }
+        if let recordingID = node.recordingID, model.autoTransformingIDs.contains(recordingID) {
+            return (true, model.isThinking(recordingID))
+        }
+        return (false, false)
     }
 
     private func nodeBorder(_ node: GraphNode) -> Color {

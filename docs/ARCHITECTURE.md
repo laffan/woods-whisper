@@ -117,6 +117,23 @@ paragraph) / `transformGraphNode` (one node) / `transformRecordingTranscript` (o
 transcript) → `TextTransformService.transform` → the result **replaces** the text in place rather
 than appending a new block.
 
+**A model's reasoning never becomes your words.** The two filters a streamed response passes through
+— `StopSequenceFilter` (drops the turn-end marker and everything after it) and `ThinkSplitter`
+(separates a `<think>…</think>` block from the answer) — live in the kit, in `StreamFilters.swift`,
+precisely because that's the guarantee the reasoning models rest on: they're pure value types with no
+MLX dependency, and the tests pin the invariant down, tags split across chunks included. Only
+`answer` is ever written back. A block that never closes is reasoning to the last character, so such
+a run yields *no* answer — and `AppModel.usableAnswer` refuses to write an empty one, because
+replacing a paragraph with half a thought (or with nothing) is worse than leaving it alone and
+saying so.
+
+**Which stage a transform is at.** A reasoning model spends its first stretch producing tokens that
+aren't the answer, which from the outside looks like a stall. `AppModel.reasoningIDs` follows the
+token stream — in on the first `.reasoning`, out on the first `.answer` — keyed by whatever the
+screen is showing a placeholder for (recording, paragraph, node, document), so those placeholders
+read **Thinking…** until the answer starts and **Transforming…** after. The phase is latched beside
+the stream, so an ordinary token costs a comparison rather than a hop back to the main actor.
+
 **Graph documents (iOS).** A graph is a `Document` with `kind == .graph`; `DocumentsView` routes to
 `GraphDocumentView` (at the bottom of `DocumentDetailView.swift`, alongside the Inbox and the
 recorder, so the app target picks it up without an xcodegen regen) on that flag alone, so every way
