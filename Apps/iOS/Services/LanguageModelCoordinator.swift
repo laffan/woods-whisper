@@ -2,8 +2,8 @@ import Foundation
 import WoodsWhisperKit
 
 /// Routes text transformation to the right backend for the user-selected `LanguageModelChoice`, so
-/// the rest of the app keeps depending only on `TextTransformService`. On-device models (Gemma /
-/// Qwen / Llama, via MLX) run through `GemmaTransformService`; the online Claude models run through
+/// the rest of the app keeps depending only on `TextTransformService`. On-device models (LFM2.5,
+/// via MLX) run through `GemmaTransformService`; the online Claude models run through
 /// `AnthropicTransformService`. This mirrors `SpeechTranscriptionCoordinator` on the speech side.
 ///
 /// The coordinator owns `activeModel` and forwards `prepare` / `isReady` / `transform` to whichever

@@ -12,6 +12,12 @@ struct WoodsWhisperApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     #endif
 
+    /// The text size chosen in Settings → Display, read here and handed to the whole app as an
+    /// environment value: every screen that draws transcription text — and every editor those
+    /// blocks turn into — reads it from there, so changing it redraws all of them at once.
+    @AppStorage(AppSettings.transcriptTextSizeKey)
+    private var transcriptTextSize = AppSettings.defaultTranscriptTextSize
+
     init() {
         WW.configureAppearance()
     }
@@ -20,6 +26,7 @@ struct WoodsWhisperApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(model)
+                .environment(\.transcriptTextSize, transcriptTextSize)
                 .tint(WW.moss)
                 .task {
                     WoodsWhisperShortcuts.updateAppShortcutParameters()
@@ -312,6 +319,25 @@ extension View {
                 .stroke(WW.hairline, lineWidth: 1))
             .shadow(color: .black.opacity(0.10), radius: 24, y: 8)
             .frame(maxWidth: WW.contentMaxWidth)
+    }
+}
+
+// MARK: - Transcription text size
+
+/// How big transcription text is set, in points — document paragraphs, Inbox transcripts, graph
+/// nodes, and the in-place editors each of those becomes.
+///
+/// An environment value rather than a global read, so a change in Settings → Display invalidates
+/// every view that draws such text instead of quietly taking effect on the next redraw. The app root
+/// seeds it from `AppSettings.transcriptTextSize`; nothing else writes it.
+private struct TranscriptTextSizeKey: EnvironmentKey {
+    static let defaultValue: Double = AppSettings.defaultTranscriptTextSize
+}
+
+extension EnvironmentValues {
+    var transcriptTextSize: Double {
+        get { self[TranscriptTextSizeKey.self] }
+        set { self[TranscriptTextSizeKey.self] = newValue }
     }
 }
 

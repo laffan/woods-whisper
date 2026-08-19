@@ -28,9 +28,10 @@ On the phone/iPad, open **Settings**. There are two model sections, each with it
 - **Speech Model** — Parakeet TDT v3 (~600 MB) via FluidAudio by default, or pick a smaller
   **Whisper** variant (tiny ~75 MB / base ~145 MB / small ~480 MB) via WhisperKit in the same
   section first, then tap Download. Switching model requires downloading it.
-- **Language Model** — Gemma 3 4B (default; ~3.5 GB quantized) via MLX. Pick a different model in
-  the same section first if you want Qwen3 4B (shows its reasoning), Llama 3.2 3B, or Gemma 3 1B
-  (smaller/faster), then tap Download. Switching model requires downloading that model.
+- **Language Model** — LFM2.5 1.2B Instruct (default; ~0.7 GB quantized) via MLX. Pick LFM2.5 2.6B
+  (~1.5 GB; thinks before it answers, and shows that reasoning separately) in the same section
+  first if you'd rather have the bigger one, then tap Download. Switching model requires
+  downloading that model.
 
 Both load from local cache after this — no further network use, and they reload automatically on
 later launches (no need to tap Download again).

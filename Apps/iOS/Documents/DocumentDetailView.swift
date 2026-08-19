@@ -17,6 +17,8 @@ import UIKit
 /// • "Transform" rewrites the whole body in place.
 struct DocumentDetailView: View {
     @EnvironmentObject private var model: AppModel
+    /// The size transcription text is set in (Settings → Display) — the body's paragraphs here.
+    @Environment(\.transcriptTextSize) private var transcriptTextSize: Double
     let documentID: UUID
 
     // Body & recordings reorder (long-press → drag to rearrange)
@@ -290,7 +292,7 @@ struct DocumentDetailView: View {
             }
         } else {
             Text(para.text)
-                .font(WW.bodyText)
+                .font(InlineTextStyle.documentBody.font(transcriptTextSize))
                 .lineSpacing(5)
                 .foregroundStyle(WW.ink)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1097,12 +1099,15 @@ struct InlineTextEditor: View {
     @Binding var selection: NSRange
     /// The type this text is drawn in when it *isn't* being edited.
     let style: InlineTextStyle
+    /// The size that text is set in (Settings → Display), so the editor opens at exactly the size
+    /// the block was being read at.
+    @Environment(\.transcriptTextSize) private var points: Double
 
     var body: some View {
         #if canImport(UIKit)
-        InlineUITextEditor(text: $text, selection: $selection, style: style)
+        InlineUITextEditor(text: $text, selection: $selection, style: style, points: points)
         #else
-        TextEditor(text: $text).font(style.font).frame(minHeight: 120)
+        TextEditor(text: $text).font(style.font(points)).frame(minHeight: 120)
         #endif
     }
 }
@@ -1110,32 +1115,39 @@ struct InlineTextEditor: View {
 /// Where a piece of in-line editable text lives, and so how it's set. Each case pairs the SwiftUI
 /// type the row draws with the UIKit type the editor uses, which is the whole point: they have to
 /// match, or the text jumps size the moment you tap it.
+///
+/// The size itself is the user's (Settings → Display), handed in as points; each case says how it
+/// reads that number and what line spacing goes with it.
 enum InlineTextStyle {
-    /// A paragraph of a document body: `WW.bodyText` at `.lineSpacing(5)`.
+    /// A paragraph of a document body: the chosen size, at `.lineSpacing(5)`.
     case documentBody
-    /// An Inbox entry's transcript: the `.subheadline` its preview is set in.
+    /// An Inbox entry's transcript: the compact size its preview is set in.
     case inboxTranscript
     /// A node on a graph canvas — the same compact type an Inbox entry is set in, since a node card
     /// is the same small block of text.
     case graphNode
 
-    /// What the row uses to draw the text.
-    var font: Font {
+    /// The size this style comes out at, given the text size chosen in Settings → Display. A
+    /// paragraph is set at the chosen size itself; the compact blocks — an Inbox transcript, a node
+    /// card — sit two points under it, the same step they've always been below body text.
+    func pointSize(_ points: Double) -> CGFloat {
         switch self {
-        case .documentBody:                 return WW.bodyText
-        case .inboxTranscript, .graphNode:  return .subheadline
+        case .documentBody:                 return CGFloat(points)
+        case .inboxTranscript, .graphNode:  return CGFloat(max(points - 2, 9))
         }
     }
 
+    /// What the row uses to draw the text.
+    func font(_ points: Double) -> Font {
+        .system(size: pointSize(points))
+    }
+
     #if canImport(UIKit)
-    /// The same type, as UIKit sees it. `.systemFont(ofSize: 17)` rather than the preferred `.body`
-    /// font, because `WW.bodyText` is a fixed 17 — the preferred one is 17 only at the default Text
-    /// Size setting, and grows past it everywhere else.
-    var uiFont: UIFont {
-        switch self {
-        case .documentBody:                 return .systemFont(ofSize: 17)
-        case .inboxTranscript, .graphNode:  return .preferredFont(forTextStyle: .subheadline)
-        }
+    /// The same type, as UIKit sees it — a fixed point size rather than a preferred text style,
+    /// because the size is the user's own choice here (Settings → Display) rather than the system's,
+    /// and the editor has to match the row it opened out of exactly.
+    func uiFont(_ points: Double) -> UIFont {
+        .systemFont(ofSize: pointSize(points))
     }
 
     var lineSpacing: CGFloat {
@@ -1155,6 +1167,9 @@ struct InlineUITextEditor: UIViewRepresentable {
     @Binding var text: String
     @Binding var selection: NSRange
     let style: InlineTextStyle
+    /// The chosen transcription text size, in points — passed in rather than read here so it's part
+    /// of the value SwiftUI compares when deciding to update the view.
+    var points: Double = AppSettings.defaultTranscriptTextSize
 
     func makeUIView(context: Context) -> UITextView {
         let view = UITextView()
@@ -1169,7 +1184,7 @@ struct InlineUITextEditor: UIViewRepresentable {
         // different moments: `font`/`textColor` for an empty editor (an attributed string with no
         // characters carries no attributes), the attributed text for what's already there, and the
         // typing attributes — set last, since assigning text rewrites them — for what's typed next.
-        view.font = style.uiFont
+        view.font = style.uiFont(points)
         view.textColor = UIColor(WW.ink)
         view.attributedText = NSAttributedString(string: text, attributes: attributes)
         view.typingAttributes = attributes
@@ -1180,7 +1195,10 @@ struct InlineUITextEditor: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: UITextView, context: Context) {
-        if uiView.text != text {
+        // The size can change under an open editor (Settings → Display, on another screen), so the
+        // font is re-applied whenever it no longer matches rather than only at make-time.
+        if uiView.text != text || uiView.font != style.uiFont(points) {
+            uiView.font = style.uiFont(points)
             uiView.attributedText = NSAttributedString(string: text, attributes: attributes)
             uiView.typingAttributes = attributes           // replacing the text clears these
         }
@@ -1192,7 +1210,7 @@ struct InlineUITextEditor: UIViewRepresentable {
     private var attributes: [NSAttributedString.Key: Any] {
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineSpacing = style.lineSpacing
-        return [.font: style.uiFont,
+        return [.font: style.uiFont(points),
                 .paragraphStyle: paragraph,
                 .foregroundColor: UIColor(WW.ink)]
     }
@@ -1327,11 +1345,13 @@ final class FindReplaceController: ObservableObject {
 struct FindReplaceTextView: UIViewRepresentable {
     @Binding var text: String
     let controller: FindReplaceController
+    /// The document's own text size, so the whole-document editor reads like the page it came from.
+    @Environment(\.transcriptTextSize) private var transcriptTextSize: Double
 
     func makeUIView(context: Context) -> UITextView {
         let view = UITextView()
         view.delegate = context.coordinator
-        view.font = UIFont.preferredFont(forTextStyle: .body)
+        view.font = InlineTextStyle.documentBody.uiFont(transcriptTextSize)
         view.backgroundColor = .clear
         view.textContainerInset = UIEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
         view.text = text
@@ -1341,6 +1361,8 @@ struct FindReplaceTextView: UIViewRepresentable {
 
     func updateUIView(_ uiView: UITextView, context: Context) {
         if uiView.text != text { uiView.text = text }
+        let font = InlineTextStyle.documentBody.uiFont(transcriptTextSize)
+        if uiView.font != font { uiView.font = font }
         controller.textView = uiView
     }
 
@@ -1490,13 +1512,15 @@ struct PlayControl: View {
 /// document list, more for the Inbox preview), or a status placeholder while not yet done.
 private struct RecordingLabel: View {
     let recording: Recording
-    var lineLimit: Int = 1
+    /// How many lines of transcript to show — nil for all of them (an Inbox entry tapped open).
+    var lineLimit: Int? = 1
+    @Environment(\.transcriptTextSize) private var transcriptTextSize: Double
 
     var body: some View {
         switch recording.status {
         case .done:
             Text(text)
-                .font(.subheadline)
+                .font(InlineTextStyle.inboxTranscript.font(transcriptTextSize))
                 .foregroundStyle(WW.ink)
                 .lineLimit(lineLimit)
         case .transcribing:
@@ -1878,6 +1902,11 @@ struct InboxView: View {
     @State private var selectionMode = false
     @State private var selected: Set<UUID> = []
 
+    // Entries showing every line of their transcript rather than the first few — a single tap
+    // opens one up, another closes it again. Editing is the *double* tap, so reading a long capture
+    // no longer means opening an editor over it.
+    @State private var expandedIDs: Set<UUID> = []
+
     // Move-to-document pane: the recordings being moved (one, from a swipe; or many, from batch).
     @State private var movingIDs: Set<UUID>?
 
@@ -2029,7 +2058,11 @@ struct InboxView: View {
             isTransforming: transformingIDs.contains(recording.id)
                 || model.autoTransformingIDs.contains(recording.id),
             isEditing: isEditing,
+            isExpanded: expandedIDs.contains(recording.id),
             onTapLabel: {
+                if selectionMode { toggle(recording.id) } else { toggleExpanded(recording.id) }
+            },
+            onDoubleTapLabel: {
                 if selectionMode { toggle(recording.id) } else { startEditing(recording) }
             },
             onLongPress: { enterSelection(with: recording.id) },
@@ -2105,6 +2138,14 @@ struct InboxView: View {
 
     /// An entry that came in as text has no audio to share and no original transcription to reset to.
     private var editingIsTextOnly: Bool { editingRecording?.isTextOnly ?? false }
+
+    /// A single tap on an entry: show all of its transcript, or fold it back to a few lines. The
+    /// row grows in place — nothing opens over it — so a long capture can simply be read.
+    private func toggleExpanded(_ id: UUID) {
+        withAnimation(.snappy(duration: 0.22)) {
+            if expandedIDs.contains(id) { expandedIDs.remove(id) } else { expandedIDs.insert(id) }
+        }
+    }
 
     /// Open an entry for editing, committing whatever was open before it. The caret starts at the
     /// end of the text.
@@ -2384,7 +2425,10 @@ private struct InboxRecordingRow<Editor: View>: View {
     let isSelected: Bool
     let isTransforming: Bool
     let isEditing: Bool
+    /// Whether this entry is showing all of its transcript rather than the first few lines.
+    let isExpanded: Bool
     let onTapLabel: () -> Void
+    let onDoubleTapLabel: () -> Void
     let onLongPress: () -> Void
     let onCopy: () -> Void
     let onRetranscribe: () -> Void
@@ -2400,8 +2444,9 @@ private struct InboxRecordingRow<Editor: View>: View {
                     .foregroundStyle(isSelected ? WW.moss : WW.inkTertiary)
             }
 
-            // Up to an 8-line preview over the capture date/time; tap to edit the transcript (or
-            // toggle the row when selecting). While editing, the editor takes the preview's place.
+            // A few lines of the transcript over the capture date/time — **tap** to see the rest of
+            // it, **double-tap** to edit it (or either, to toggle the row, when selecting). While
+            // editing, the editor takes the preview's place.
             VStack(alignment: .leading, spacing: 4) {
                 if isEditing {
                     editor
@@ -2411,7 +2456,7 @@ private struct InboxRecordingRow<Editor: View>: View {
                         Text("Transforming…").font(.subheadline).foregroundStyle(WW.inkSecondary)
                     }
                 } else {
-                    RecordingLabel(recording: recording, lineLimit: 8)
+                    RecordingLabel(recording: recording, lineLimit: isExpanded ? nil : 8)
                 }
                 Text(recording.createdAt.formatted(date: .abbreviated, time: .shortened))
                     .font(.caption2)
@@ -2419,7 +2464,7 @@ private struct InboxRecordingRow<Editor: View>: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
-            .modifier(TapUnless(disabled: isEditing, action: onTapLabel))
+            .modifier(TapsUnless(disabled: isEditing, tap: onTapLabel, doubleTap: onDoubleTapLabel))
 
             if !selectionMode && !isEditing {
                 Menu {
@@ -2451,19 +2496,30 @@ private struct InboxRecordingRow<Editor: View>: View {
     }
 }
 
-/// Attaches a tap gesture only when `disabled` is false — an open editor needs its taps for the
-/// caret, so the gesture has to be absent rather than merely ignored.
-private struct TapUnless: ViewModifier {
+/// Attaches the row's two taps — one to reveal the whole transcript, two to edit it — and only
+/// when `disabled` is false: an open editor needs its taps for the caret, so the gestures have to be
+/// absent rather than merely ignored.
+///
+/// The double tap is attached *first*. SwiftUI hands a touch to the last gesture that can take it,
+/// so with the single tap on the outside a second tap would never be waited for.
+private struct TapsUnless: ViewModifier {
     let disabled: Bool
-    let action: () -> Void
+    let tap: () -> Void
+    let doubleTap: () -> Void
 
     @ViewBuilder
     func body(content: Content) -> some View {
-        if disabled { content } else { content.onTapGesture(perform: action) }
+        if disabled {
+            content
+        } else {
+            content
+                .onTapGesture(count: 2, perform: doubleTap)
+                .onTapGesture(perform: tap)
+        }
     }
 }
 
-/// The long-press counterpart of `TapUnless`: an open editor keeps its long press for the text
+/// The long-press counterpart of `TapsUnless`: an open editor keeps its long press for the text
 /// view's selection handles rather than entering batch selection.
 private struct LongPressUnless: ViewModifier {
     let disabled: Bool
@@ -2513,6 +2569,8 @@ private struct ShareTarget: Identifiable {
 /// way (see `AppModel.captureGraphNode`).
 struct GraphDocumentView: View {
     @EnvironmentObject private var model: AppModel
+    /// The size transcription text is set in (Settings → Display) — a node's words here.
+    @Environment(\.transcriptTextSize) private var transcriptTextSize: Double
     let documentID: UUID
 
     /// The recorder behind hold-to-record. (Revise uses the ordinary `RecordingSheet` instead —
@@ -2895,7 +2953,7 @@ struct GraphDocumentView: View {
             }
         } else if node.hasText {
             Text(node.trimmedText)
-                .font(.subheadline)
+                .font(InlineTextStyle.graphNode.font(transcriptTextSize))
                 .foregroundStyle(WW.ink)
                 .lineLimit(6)
                 .multilineTextAlignment(.leading)

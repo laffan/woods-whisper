@@ -20,6 +20,41 @@ final class AppSettings {
         static let showLiveTranscription = "showLiveTranscription"
         static let allowRotation = "allowRotation"
         static let graphAutoTransformPresetID = "graphAutoTransformPresetID"
+        static let transcriptTextSize = "transcriptTextSize"
+        static let didPruneRetiredModels = "didPruneRetiredModels"
+    }
+
+    /// Whether the weights of models that have since left the picker have been cleared off this
+    /// device. A one-shot: the lineup changed, the old downloads are gigabytes, and nothing in the
+    /// UI can reach them any more.
+    var didPruneRetiredModels: Bool {
+        get { defaults.bool(forKey: Key.didPruneRetiredModels) }
+        set { defaults.set(newValue, forKey: Key.didPruneRetiredModels) }
+    }
+
+    // MARK: Transcription text size
+
+    /// The key `@AppStorage` reads this by, so a SwiftUI view can bind to the same number the rest
+    /// of the app reads here (Settings → Display writes it; the app root hands it down as an
+    /// environment value).
+    static let transcriptTextSizeKey = Key.transcriptTextSize
+
+    /// Points. The default is 17 — what a document paragraph has always been set in.
+    static let defaultTranscriptTextSize: Double = 17
+    /// Small enough to fit a lot on screen, large enough to read at arm's length.
+    static let transcriptTextSizeRange: ClosedRange<Double> = 12...30
+
+    /// How big transcription text is drawn: document paragraphs, Inbox transcripts and graph nodes,
+    /// and — the point of it — the in-place editors those become, which set themselves from the same
+    /// number so nothing changes size the moment you tap it.
+    var transcriptTextSize: Double {
+        get {
+            let stored = defaults.double(forKey: Key.transcriptTextSize)
+            guard stored > 0 else { return Self.defaultTranscriptTextSize }
+            return min(max(stored, Self.transcriptTextSizeRange.lowerBound),
+                       Self.transcriptTextSizeRange.upperBound)
+        }
+        set { defaults.set(newValue, forKey: Key.transcriptTextSize) }
     }
 
     /// The transform run automatically over each graph node as it's first transcribed, or nil for

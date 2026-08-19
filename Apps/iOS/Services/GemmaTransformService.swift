@@ -12,7 +12,7 @@ import Tokenizers      // AutoTokenizer, referenced by the tokenizer-loader macr
 
 /// Streaming guard that suppresses everything from the first occurrence of any stop sequence
 /// onward, and holds back a trailing fragment that could be the *start* of one — so a chat model's
-/// turn-end marker (e.g. `<end_of_turn>`, `<|im_end|>`, `<|eot_id|>`) halts generation cleanly
+/// turn-end marker (LFM2.5's `<|im_end|>`, say) halts generation cleanly
 /// instead of being echoed and repeated. Pure value type, unit-testable, no MLX dependency.
 struct StopSequenceFilter {
     let stops: [String]
@@ -72,22 +72,32 @@ struct StopSequenceFilter {
 }
 
 /// Incrementally separates a `<think>…</think>` reasoning block from the answer in a streamed
-/// response. "Thinking" models (Qwen3) emit their reasoning first, wrapped in those tags, then the
-/// answer; we want the reasoning shown separately and kept out of the saved output. Tags may be
-/// split across streamed chunks, so each `consume` holds back a trailing fragment that could be the
-/// start of a tag (like `StopSequenceFilter`). When `enabled` is false everything is the answer.
+/// response. "Thinking" models emit their reasoning first, wrapped in those tags, then the answer;
+/// we want the reasoning shown separately and kept out of the saved output. Tags may be split across
+/// streamed chunks, so each `consume` holds back a trailing fragment that could be the start of a
+/// tag (like `StopSequenceFilter`). When `enabled` is false everything is the answer.
+///
+/// Some models are handed the opening tag by their own chat template (LFM2.5-2.6B: the prompt ends
+/// with `<think>`, since the model is expected to think rather than announce that it will), so
+/// generation starts *inside* the block and only the closing tag ever arrives. `startsInside` says
+/// so, and the splitter begins in the reasoning phase.
 struct ThinkSplitter {
     private static let open = "<think>"
     private static let close = "</think>"
 
     private enum Phase { case beforeThink, inThink, afterThink }
     private let enabled: Bool
+    /// Whether the block was opened by the template rather than by the model — which is also the
+    /// case where an unterminated block means the model simply answered without thinking.
+    private let startedInside: Bool
     private var phase: Phase
     private var buffer = ""
 
-    init(enabled: Bool) {
+    init(enabled: Bool, startsInside: Bool = false) {
         self.enabled = enabled
-        self.phase = enabled ? .beforeThink : .afterThink   // disabled ⇒ straight to "all answer"
+        self.startedInside = enabled && startsInside
+        // Disabled ⇒ straight to "all answer"; started inside ⇒ straight into the reasoning.
+        self.phase = enabled ? (startsInside ? .inThink : .beforeThink) : .afterThink
     }
 
     /// Append streamed text; return the deltas to add to the reasoning and the answer.
@@ -128,12 +138,16 @@ struct ThinkSplitter {
         return (reasoning, answer)
     }
 
-    /// Emit whatever is still buffered once the stream ends (an unterminated `<think>` counts as
-    /// reasoning; anything else is answer).
+    /// Emit whatever is still buffered once the stream ends.
+    ///
+    /// An unterminated `<think>` the model opened itself counts as reasoning — it said it was
+    /// thinking and never stopped. One the *template* opened is the other way round: no closing tag
+    /// means the model answered without thinking, and handing the answer back as reasoning would
+    /// lose it, so it's returned as the answer.
     mutating func flush() -> (reasoning: String, answer: String) {
         defer { buffer = "" }
         switch phase {
-        case .inThink:                  return (buffer, "")
+        case .inThink:                  return startedInside ? ("", buffer) : (buffer, "")
         case .beforeThink, .afterThink: return ("", buffer)
         }
     }
@@ -149,7 +163,7 @@ struct ThinkSplitter {
     }
 }
 
-/// On-device text transformation via MLX Swift (Qwen3 / Llama 3.2 / Gemma 3). iOS/iPadOS only.
+/// On-device text transformation via MLX Swift (Liquid AI's LFM2.5 models). iOS/iPadOS only.
 ///
 /// Loads the model with `LLMModelFactory.shared.loadContainer`, supplying our own
 /// `URLSessionHubDownloader` for the HF download (the stock hub downloader hung on-device), and
@@ -209,6 +223,18 @@ public final class GemmaTransformService: TextTransformService {
     public func unload() {
         #if canImport(MLXLLM)
         container = nil
+        #endif
+    }
+
+    /// Delete the weights of a model that is no longer in the picker at all — a lineup that has
+    /// moved on leaves gigabytes behind that nothing else can reach.
+    public static func removeDownload(repo: String) {
+        #if canImport(MLXLLM)
+        // Say so only when there were real weights there: this runs over every retired model on one
+        // launch, and most devices will have downloaded none of them.
+        let had = URLSessionHubDownloader.hasUsableSnapshot(for: repo)
+        URLSessionHubDownloader.removeSnapshot(for: repo)
+        if had { wwLog("Deleted downloaded weights for a retired model (\(repo))", .model) }
         #endif
     }
 
@@ -288,9 +314,10 @@ public final class GemmaTransformService: TextTransformService {
         // `<end_of_turn>`) keep emitting the marker after the real answer and run away until the
         // token cap — or the app — gives out. The filter also strips the marker from the output.
         var filter = StopSequenceFilter(stops: activeModel.stopSequences)
-        // Split a `<think>…</think>` reasoning block (Qwen3) out of the answer, incrementally so it
-        // streams. Disabled models pass everything through as the answer.
-        var splitter = ThinkSplitter(enabled: activeModel.usesThinkTags)
+        // Split a `<think>…</think>` reasoning block (LFM2.5 2.6B) out of the answer, incrementally
+        // so it streams. Disabled models pass everything through as the answer.
+        var splitter = ThinkSplitter(enabled: activeModel.usesThinkTags,
+                                     startsInside: activeModel.opensThinkBlockInTemplate)
         var answer = ""
         var reasoning = ""
 

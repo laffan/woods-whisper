@@ -38,7 +38,7 @@ public enum NetworkProbe {
     }
 
     /// Probe the two endpoints a HuggingFace download touches for `repo` (e.g.
-    /// "mlx-community/gemma-3-1b-it-4bit"): the model-info API and the CDN resolve URL for a small
+    /// "LiquidAI/LFM2.5-2.6B-MLX-4bit"): the model-info API and the CDN resolve URL for a small
     /// file. Logs each result so a stalled download can be diagnosed from the session log.
     public static func logHuggingFaceReachability(repo: String, file: String = "config.json") async {
         if let api = URL(string: "https://huggingface.co/api/models/\(repo)") {

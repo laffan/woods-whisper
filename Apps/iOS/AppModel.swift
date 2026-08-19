@@ -832,6 +832,18 @@ final class AppModel: ObservableObject {
         llmPrepareTask?.cancel()
     }
 
+    /// Clear out the weights of language models that used to be in the picker — once, on the first
+    /// launch after the lineup changed. Each is a couple of gigabytes, and with the model gone from
+    /// Settings there's no "Remove Download" left to reach them with.
+    private func pruneRetiredModelDownloads() {
+        guard !AppSettings.shared.didPruneRetiredModels else { return }
+        AppSettings.shared.didPruneRetiredModels = true
+        for repo in LanguageModelChoice.retiredRepos {
+            GemmaTransformService.removeDownload(repo: repo)
+            AppSettings.shared.unmarkModelDownloaded(repo)
+        }
+    }
+
     func refreshReadiness() async {
         transcriptionReady = await transcription.isReady
         modelReady = await transform.isReady
@@ -843,6 +855,7 @@ final class AppModel: ObservableObject {
     /// loads them back automatically (with the busy banner) so the user doesn't re-tap Download.
     /// Called once at startup.
     func loadDownloadedModelsAtStartup() async {
+        pruneRetiredModelDownloads()
         await refreshReadiness()
         // Speech first, so transcription (and Retranscribe) work immediately; both are loads from
         // cache when previously downloaded.

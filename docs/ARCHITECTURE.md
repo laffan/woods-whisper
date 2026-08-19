@@ -33,7 +33,7 @@ implementations and the FluidAudio/WhisperKit/MLX packages are attached to the i
 | Protocol               | iOS implementation              | Purpose                                |
 |------------------------|---------------------------------|----------------------------------------|
 | `TranscriptionService` | `SpeechTranscriptionCoordinator` → `ParakeetTranscriptionService` (FluidAudio) / `WhisperTranscriptionService` (WhisperKit) | audio file → text; coordinator routes to the engine for the selected `SpeechModel` |
-| `TextTransformService` | `GemmaTransformService`         | transcript + preset → text (Gemma/MLX) |
+| `TextTransformService` | `GemmaTransformService`         | transcript + preset → text (LFM2.5/MLX) |
 | `RecordingSender`      | `PhoneSessionTransport`, `LocalNetworkClient`, `BluetoothRecordingClient` | send a recording to a host |
 | `RecordingReceiver`    | `PhoneSessionTransport`, `LocalNetworkServer`, `BluetoothRecordingServer` | receive recordings on a host |
 
@@ -222,6 +222,16 @@ of its own; anchoring it to the first transcription is what keeps **Retranscribe
 returning the original words. `fillDocumentBody` and `fillGraphNodes` both run *after* the
 transform, so what lands in a paragraph or a node is the shaped text rather than a flash of the raw
 transcription.
+
+**Transcription text size (iOS).** How big transcription text is set — a document's paragraphs, an
+Inbox entry, a graph node — is one number, chosen in Settings → Display and stored in
+`AppSettings.transcriptTextSize`. The app root reads it with `@AppStorage` and hands it down the
+whole hierarchy as the `transcriptTextSize` environment value, so changing it invalidates every view
+that draws such text rather than taking effect on whatever redraws next. `InlineTextStyle` turns that
+number into both halves of a style — the SwiftUI `Font` a row is drawn with and the `UIFont` the
+in-place `UITextView` editor uses — which is what keeps text from resizing the instant you tap it.
+The compact blocks (an Inbox transcript, a node card) sit two points under the chosen size, the step
+they've always been below body text.
 
 ## Persistence
 

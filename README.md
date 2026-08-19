@@ -4,7 +4,7 @@ Offline voice capture, transcription, and text transformation for **iOS / iPadOS
 
 Record audio on your Apple Watch or your iPhone/iPad, transcribe it to text **entirely
 on-device** with NVIDIA **Parakeet TDT v3** (via CoreML/ANE), then reshape that text with a
-lightweight on-device **Gemma 3** model driven by reusable prompt presets.
+lightweight on-device **LFM2.5** model (Liquid AI) driven by reusable prompt presets.
 
 > **No internet required after first-run setup.** The only time the network is used is to
 > download the two models once. Everything after that — recording, transfer, transcription,
@@ -37,7 +37,7 @@ the rest of the app depends on.
 ## The two hard requirements, and how they're met
 
 1. **Fully offline.** Parakeet runs via [FluidAudio](https://github.com/FluidInference/FluidAudio)
-   (CoreML/ANE); Gemma 3 runs via [MLX Swift LM](https://github.com/ml-explore/mlx-swift-lm).
+   (CoreML/ANE); LFM2.5 runs via [MLX Swift LM](https://github.com/ml-explore/mlx-swift-lm).
    Both download once during setup and load from local cache forever after. No telemetry, no
    cloud calls in the recording/transcription/transformation paths.
 
@@ -67,11 +67,13 @@ the rest of the app depends on.
   now the first top-level section (ahead of Documents) rather than a row inside the documents list.
   It reads as a capture feed — **newest first**, each entry showing its transcript preview over the
   capture date and time. There's no play control on the rows; the text runs the full width.
-- **Inbox gestures.** **Tap** an entry to edit its transcript — **in place**, where it sits (see
-  *Editing in place* below). **Swipe left** for **Move** (into a document) and **Delete**; **swipe
-  right** for **Copy** and **Transform**. Long-press still enters batch selection.
-- **Editing in place.** Editing never opens a sheet over what you're reading. Tap an Inbox entry (or
-  double-tap a paragraph in a document, or swipe it right → **Edit**) and *that block* becomes the
+- **Inbox gestures.** **Tap** an entry to read the whole thing: the row opens out to every line of
+  the transcript, and tapping again folds it back to a few. **Double-tap** to edit it — **in place**,
+  where it sits (see *Editing in place* below). **Swipe left** for **Move** (into a document) and
+  **Delete**; **swipe right** for **Copy** and **Transform**. Long-press still enters batch
+  selection.
+- **Editing in place.** Editing never opens a sheet over what you're reading. Double-tap an Inbox
+  entry (or a paragraph in a document, or swipe it right → **Edit**) and *that block* becomes the
   editor: an outlined box that grows with the text, in the type it was already set in, everything
   around it left where it was. The actions sit along the bottom of that same box, inside the
   outline — a compressed row of icons at the **left**, **Done** at the **right**. For an Inbox entry
@@ -181,6 +183,10 @@ the rest of the app depends on.
   text quietly drop the actions that need audio: no play control, no Retranscribe, no Reset.)
 - **Number Paragraphs.** A built-in transform that numbers the paragraphs (applied locally, so it needs
   no language model).
+- **Text size.** **Settings → Display → Text Size** sets how big transcriptions are drawn —
+  a document's paragraphs, an Inbox entry, a graph node — with a sample line under the slider so you
+  can see what you're choosing. The in-place editors read the same number, so text never changes
+  size the moment you tap it.
 - **Local backup folder.** Pick a folder in **Settings → Local Backup** and Woods Whisper keeps a
   plain-Markdown copy of everything you write there — see below.
 - **Recording controls on the Lock Screen.** Start a recording and it follows you out of the app: a
@@ -284,19 +290,21 @@ how the pieces fit together.
 |---------------|-------------------------------|------------|--------------------|
 | Speech → text | Parakeet TDT 0.6b **v3** (default) | FluidAudio | iPhone / iPad (ANE)|
 |               | Whisper tiny / base / small (selectable) | WhisperKit | iPhone / iPad |
-| Text rewrite  | **Gemma 3 4B** (default)      | MLX Swift  | iPhone / iPad      |
-|               | Qwen3 4B / Llama 3.2 3B / Gemma 3 1B (selectable) | |            |
+| Text rewrite  | **LFM2.5 1.2B Instruct** (default) | MLX Swift  | iPhone / iPad      |
+|               | LFM2.5 2.6B (selectable, reasoning) | MLX Swift |            |
 |               | Claude Sonnet 4.6 / Haiku 4.5 (online, selectable) | Anthropic API | cloud (needs signal) |
 
 **Speech model.** Parakeet TDT v3 is the default — most accurate and multilingual. The smaller
 **Whisper** variants (tiny/base/small) are lighter, faster downloads; pick one in
 **Settings → Speech Model** if you prefer Whisper or want a smaller footprint.
 
-**Language model.** The default is **Gemma 3 4B**; **Qwen3 4B**, **Llama 3.2 3B**, and **Gemma 3
-1B** are selectable alternatives, all 4-bit quantized via MLX. Change it in **Settings → Language
+**Language model.** Both on-device options are Liquid AI's **LFM2.5** models, 4-bit quantized via
+MLX. The default is **LFM2.5 1.2B Instruct** (~0.7 GB) — small and quick, which is what tidying a
+transcript wants; **LFM2.5 2.6B** (~1.5 GB) is the bigger one. Change it in **Settings → Language
 Model**. Each downloads once while online and is reloaded automatically from cache on subsequent
-launches (no need to re-tap Download). **Qwen3 4B** is a "thinking" model — its reasoning is shown
-in a collapsible **Reasoning** section above each result and kept out of the saved output.
+launches (no need to re-tap Download). The **2.6B** is a "thinking" model — it reasons before it
+answers, and that reasoning is shown in a collapsible **Reasoning** section above each result and
+kept out of the saved output.
 
 **Online models (optional).** When you have a cell signal, you can instead pick **Claude Sonnet
 4.6** or **Claude Haiku 4.5** from the same picker. These stream from Anthropic's API rather than

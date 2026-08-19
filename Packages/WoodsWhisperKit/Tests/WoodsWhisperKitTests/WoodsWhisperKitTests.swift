@@ -81,36 +81,50 @@ final class WoodsWhisperKitTests: XCTestCase {
         XCTAssertFalse(decoded.isRevision)
     }
 
-    func testLanguageModelDefaultIsGemma3_4B() {
-        XCTAssertEqual(LanguageModelChoice.default, .gemma3_4B)
+    func testLanguageModelDefaultIsTheSmallLFM() {
+        XCTAssertEqual(LanguageModelChoice.default, .lfm2_5_1_2B)
+        XCTAssertFalse(LanguageModelChoice.default.isOnline)
     }
 
-    func testLanguageModelLineupDropsGemma12B() {
-        let ids = LanguageModelChoice.allCases.map(\.rawValue)
-        XCTAssertTrue(ids.contains("mlx-community/Qwen3-4B-4bit"))
-        XCTAssertTrue(ids.contains("mlx-community/Llama-3.2-3B-Instruct-4bit"))
-        XCTAssertFalse(ids.contains { $0.contains("12b") })
+    /// The on-device half of the lineup is the two LFM2.5 models, by their MLX repos — the ids the
+    /// download actually asks HuggingFace for.
+    func testOnDeviceLineupIsTheTwoLFMModels() {
+        let local = LanguageModelChoice.allCases.filter { !$0.isOnline }
+        XCTAssertEqual(local, [.lfm2_5_1_2B, .lfm2_5_2_6B])
+        XCTAssertTrue(local.allSatisfy { $0.rawValue.contains("LFM2.5") })
+        XCTAssertTrue(local.allSatisfy { $0.rawValue.contains("MLX-4bit") })
+    }
+
+    /// The models that used to be here are listed by repo so their weights can be deleted — none of
+    /// them may still be in the picker, or the cleanup would delete a model you can select.
+    func testRetiredReposAreNoLongerSelectable() {
+        let ids = Set(LanguageModelChoice.allCases.map(\.rawValue))
+        XCTAssertFalse(LanguageModelChoice.retiredRepos.isEmpty)
+        XCTAssertTrue(LanguageModelChoice.retiredRepos.allSatisfy { !ids.contains($0) })
     }
 
     func testEveryOnDeviceModelHasStopSequences() {
         // Local models need explicit turn-end markers; online ones let the API signal end-of-turn.
         let local = LanguageModelChoice.allCases.filter { !$0.isOnline }
-        XCTAssertTrue(local.allSatisfy { !$0.stopSequences.isEmpty })
+        XCTAssertTrue(local.allSatisfy { $0.stopSequences.contains("<|im_end|>") })
         XCTAssertTrue(LanguageModelChoice.claudeSonnet.stopSequences.isEmpty)
     }
 
-    func testOnlyQwen3UsesThinkTags() {
-        XCTAssertTrue(LanguageModelChoice.qwen3_4B.usesThinkTags)
-        XCTAssertFalse(LanguageModelChoice.gemma3_4B.usesThinkTags)
-        XCTAssertFalse(LanguageModelChoice.llama3_2_3B.usesThinkTags)
+    /// Only the 2.6B thinks — and its thinking is opened by the chat template, so the splitter has
+    /// to start inside the block rather than wait for a `<think>` that never comes.
+    func testOnlyTheLargerLFMThinks() {
+        XCTAssertTrue(LanguageModelChoice.lfm2_5_2_6B.usesThinkTags)
+        XCTAssertTrue(LanguageModelChoice.lfm2_5_2_6B.opensThinkBlockInTemplate)
+        XCTAssertFalse(LanguageModelChoice.lfm2_5_1_2B.usesThinkTags)
+        XCTAssertFalse(LanguageModelChoice.lfm2_5_1_2B.opensThinkBlockInTemplate)
         XCTAssertFalse(LanguageModelChoice.claudeSonnet.usesThinkTags)
     }
 
     func testOnlyClaudeModelsAreOnline() {
         XCTAssertTrue(LanguageModelChoice.claudeSonnet.isOnline)
         XCTAssertTrue(LanguageModelChoice.claudeHaiku.isOnline)
-        XCTAssertFalse(LanguageModelChoice.gemma3_4B.isOnline)
-        XCTAssertFalse(LanguageModelChoice.qwen3_4B.isOnline)
+        XCTAssertFalse(LanguageModelChoice.lfm2_5_1_2B.isOnline)
+        XCTAssertFalse(LanguageModelChoice.lfm2_5_2_6B.isOnline)
     }
 
     func testOnlineModelsUseApiModelIDAsRawValue() {
@@ -120,7 +134,7 @@ final class WoodsWhisperKitTests: XCTestCase {
 
     func testShortNamesAreConcise() {
         XCTAssertEqual(LanguageModelChoice.claudeHaiku.shortName, "Haiku 4.5")
-        XCTAssertEqual(LanguageModelChoice.gemma3_4B.shortName, "Gemma 3 4B")
+        XCTAssertEqual(LanguageModelChoice.lfm2_5_1_2B.shortName, "LFM2.5 1.2B")
     }
 
     // MARK: Markdown backup mirror

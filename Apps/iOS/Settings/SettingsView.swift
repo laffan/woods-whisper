@@ -12,6 +12,10 @@ struct SettingsView: View {
     @State private var showingAuthSheet = false
     @State private var showLiveTranscription = AppSettings.shared.showLiveTranscription
     @State private var allowRotation = AppSettings.shared.allowRotation
+    /// Bound straight to the stored value the app root hands down as an environment value, so the
+    /// slider moves and every screen showing transcription text redraws at the new size.
+    @AppStorage(AppSettings.transcriptTextSizeKey)
+    private var transcriptTextSize = AppSettings.defaultTranscriptTextSize
     @State private var showingFolderPicker = false
     @State private var deviceName = AppSettings.shared.deviceDisplayName
     @State private var graphAutoTransformID: UUID? = AppSettings.shared.graphAutoTransformPresetID
@@ -76,12 +80,45 @@ struct SettingsView: View {
                     AppDelegate.applyOrientationLock()
                     #endif
                 }
+            textSizeRow
         } header: {
             WWSectionHeader("Display")
         } footer: {
-            WWFooter("When on, the screen rotates to landscape. Turn it off to lock the app to portrait.")
+            WWFooter("When on, the screen rotates to landscape. Turn it off to lock the app to portrait. "
+                     + "Text Size sets how big transcriptions are drawn — a document's paragraphs, "
+                     + "an Inbox entry, a graph node — and the editor each of those becomes when you "
+                     + "open it, so nothing changes size under your finger.")
         }
         .listRowBackground(WW.surface)
+    }
+
+    /// The transcription text size: a slider between the two ends of the range, the number itself,
+    /// and a line of sample text set at whatever is currently chosen — the only honest preview.
+    private var textSizeRow: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Text Size")
+                Spacer(minLength: 12)
+                Text("\(Int(transcriptTextSize.rounded())) pt")
+                    .font(.subheadline.monospacedDigit())
+                    .foregroundStyle(WW.inkSecondary)
+            }
+            HStack(spacing: 12) {
+                Text("A").font(.system(size: 13)).foregroundStyle(WW.inkTertiary)
+                Slider(value: $transcriptTextSize,
+                       in: AppSettings.transcriptTextSizeRange,
+                       step: 1)
+                    .accessibilityLabel("Text Size")
+                    .accessibilityValue("\(Int(transcriptTextSize.rounded())) points")
+                Text("A").font(.system(size: 22)).foregroundStyle(WW.inkTertiary)
+            }
+            Text("The quick brown fox jumps over the lazy dog.")
+                .font(.system(size: transcriptTextSize))
+                .lineSpacing(5)
+                .foregroundStyle(WW.ink)
+                .padding(.top, 2)
+        }
+        .padding(.vertical, 4)
     }
 
     // MARK: Speech model
@@ -186,11 +223,13 @@ struct SettingsView: View {
         } header: {
             WWSectionHeader("Language Model")
         } footer: {
-            WWFooter("Rewrites transcripts. The on-device models (Qwen3, Llama 3.2, Gemma 3) download "
-                     + "once while online and then work offline; a downloaded model reloads "
+            WWFooter("Rewrites transcripts. The on-device models (Liquid AI's LFM2.5 1.2B and 2.6B) "
+                     + "download once while online and then work offline; a downloaded model reloads "
                      + "automatically when you pick it (tap Remove Download to free its space). The "
-                     + "online Claude models stream from Anthropic — pick one when you have a cell "
-                     + "signal and tap Authenticate to add your API key (no download).")
+                     + "1.2B is the quick one; the 2.6B thinks before it answers, and shows its "
+                     + "reasoning separately. The online Claude models stream from Anthropic — pick "
+                     + "one when you have a cell signal and tap Authenticate to add your API key "
+                     + "(no download).")
         }
         .listRowBackground(WW.surface)
         .sheet(isPresented: $showingAuthSheet) {
