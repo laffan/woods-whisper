@@ -93,6 +93,18 @@ storage, and connectivity code without the model dependencies.
 WhisperKit by file path) → sets the recording's `transcript`. "Re-transcribe" then appends that
 text to the document body as a paragraph.
 
+**Where a capture's words land is carried by the clip, not by whoever recorded it.** A recording
+made *into* a document — the record button, the Documents list's "+", an "insert here", a
+"Revise" — is saved with a `Recording.bodyDestination` (`.append` / `.at(index)` /
+`.replacing(paragraphID)`), and `AppModel.fillDocumentBody`, at the end of every transcription,
+is the single place that files the text. That matters because the words may be a long way off: a
+clip captured while the speech model is still downloading is left `.pending`, picked up by
+`transcribePending` when the model becomes ready — this launch or a later one, since the
+destination is persisted with the recording — and lands in the body then, with no one having to go
+back and finish it by hand. The destination is cleared as soon as a transcription completes, so a
+Retranscribe can't post the same paragraph twice. It's the same shape as `fillGraphNodes`, which
+does the graph's half of the job, and for the same reason.
+
 **Import text (iOS):** `AppModel.importText` — from the clipboard or a picked `.txt`/`.md` — joins
 the same pipelines one step in, rather than getting a path of its own. Into a document it's split by
 `Document.paragraphs(from:)` and appended to the body, so it lands exactly where a transcript would;
@@ -207,8 +219,9 @@ toggle from — and runs it through the same
 `transformRecordingTranscript` path. Hanging it off `transcribe` (rather than off each capture site)
 is what makes it apply to every arrival — Watch clip, device capture, shared audio — with no branch
 of its own; anchoring it to the first transcription is what keeps **Retranscribe** and **Reset**
-returning the original words. In a document the body text is read back *after* `transcribe` returns,
-so the transformed text is what lands in the body.
+returning the original words. `fillDocumentBody` and `fillGraphNodes` both run *after* the
+transform, so what lands in a paragraph or a node is the shaped text rather than a flash of the raw
+transcription.
 
 ## Persistence
 

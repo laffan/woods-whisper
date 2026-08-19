@@ -56,6 +56,31 @@ final class WoodsWhisperKitTests: XCTestCase {
         XCTAssertEqual(decoded.pairingSecret, "s")
     }
 
+    /// Where a clip's words are owed rides on the clip itself, so a capture made while the speech
+    /// model is still downloading still knows where to land once it's transcribed — days and a
+    /// relaunch later, if that's how it goes.
+    func testBodyDestinationRoundTrips() throws {
+        for destination in [Recording.BodyDestination.append, .at(3)] {
+            let rec = Recording(audioFileName: "x.m4a", origin: .phone, bodyDestination: destination)
+            let decoded = try JSONDecoder.iso.decode(Recording.self,
+                                                     from: JSONEncoder.iso.encode(rec))
+            XCTAssertEqual(decoded.bodyDestination, destination)
+        }
+    }
+
+    /// A clip with no body to reach — an Inbox capture, a graph node's, anything saved by a build
+    /// from before the key existed — decodes as owing nothing.
+    func testRecordingWithoutABodyDestinationOwesNothing() throws {
+        XCTAssertNil(Recording(audioFileName: "x.m4a", origin: .watch).bodyDestination)
+        let json = """
+        {"id":"\(UUID().uuidString)","name":"Clip","createdAt":"2026-07-31T14:30:05Z",\
+        "duration":3,"audioFileName":"x.m4a","sampleRate":16000,"origin":"watch","status":"pending"}
+        """
+        let decoded = try JSONDecoder.iso.decode(Recording.self, from: Data(json.utf8))
+        XCTAssertNil(decoded.bodyDestination)
+        XCTAssertFalse(decoded.isRevision)
+    }
+
     func testLanguageModelDefaultIsGemma3_4B() {
         XCTAssertEqual(LanguageModelChoice.default, .gemma3_4B)
     }

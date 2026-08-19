@@ -224,34 +224,30 @@ final class AppModel: ObservableObject {
 
     /// Register a clip just recorded on this device (audio already written to `audioURL`) into
     /// `documentID`'s Recordings section, auto-transcribe it, and place the transcript into the
-    /// document body per `body` (`.append` for the in-document "Add Recording", `.at` for the
-    /// inter-paragraph "+", `.none` for the Inbox where there is no body).
+    /// document body per `body` (`.append` for the in-document "Add Recording" and the Documents
+    /// list's "+", `.at` for the inter-paragraph "+", `.none` for the Inbox where there is no body).
+    ///
+    /// Where the transcript belongs is written onto the clip (`Recording.bodyDestination`) rather
+    /// than held here, so the words reach the body whenever they arrive — including when the speech
+    /// model isn't loaded yet and the clip has to wait for `transcribePending`, or for the next
+    /// launch. `fillDocumentBody`, at the end of every transcription, is the one place that files
+    /// them.
     func addDeviceRecording(audioURL: URL, duration: TimeInterval, toDocument documentID: UUID,
                             body: BodyInsertion = .none) {
         let name = Recording.defaultName(for: Date(), duration: duration,
                                          byteCount: Recording.fileSize(at: audioURL))
         let recording = Recording(name: name, duration: duration,
-                                  audioFileName: audioURL.lastPathComponent, origin: deviceOrigin())
+                                  audioFileName: audioURL.lastPathComponent, origin: deviceOrigin(),
+                                  bodyDestination: body.destination)
         documents.addRecording(recording, toDocument: documentID)
         wwLog("Captured “\(recording.name)” on device", .general)
         guard transcriptionReady else {
             if body != .none {
-                setupError = "Speech model isn't ready yet — the recording was saved; transcribe it once setup finishes."
+                setupError = "Speech model isn't ready yet — the recording was saved, and its text will be added to the document as soon as setup finishes."
             }
             return   // left pending; picked up by transcribePending after setup
         }
-        Task {
-            await transcribe(recordingID: recording.id, inDocument: documentID)
-            guard body != .none,
-                  let text = documents.document(with: documentID)?
-                    .recordings.first(where: { $0.id == recording.id })?.transcript,
-                  !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-            switch body {
-            case .none:           break
-            case .append:         documents.appendParagraph(text, to: documentID)
-            case .at(let position): documents.insertParagraph(text, at: position, in: documentID)
-            }
-        }
+        Task { await transcribe(recordingID: recording.id, inDocument: documentID) }
     }
 
     /// Where a freshly captured recording's transcript should land in the document body.
@@ -259,6 +255,15 @@ final class AppModel: ObservableObject {
         case none          // Inbox: no body
         case append        // add to the end of the body
         case at(Int)       // insert at a specific paragraph index
+
+        /// The same thing as the clip itself carries it, so the intention outlives the capture.
+        var destination: Recording.BodyDestination? {
+            switch self {
+            case .none:             return nil
+            case .append:           return .append
+            case .at(let position): return .at(position)
+            }
+        }
     }
 
     /// Capture a clip (into the Recordings section), transcribe it, and replace the text of an
@@ -271,20 +276,16 @@ final class AppModel: ObservableObject {
                                          byteCount: Recording.fileSize(at: audioURL))
         let recording = Recording(name: name, duration: duration,
                                   audioFileName: audioURL.lastPathComponent, origin: deviceOrigin(),
-                                  isRevision: true)
+                                  isRevision: true,
+                                  bodyDestination: .replacing(paragraphID))
         documents.addRecording(recording, toDocument: documentID)
         guard transcriptionReady else {
-            setupError = "Speech model isn't ready yet — the recording was saved; transcribe it once setup finishes."
+            setupError = "Speech model isn't ready yet — the recording was saved, and it will replace the paragraph as soon as setup finishes."
             return
         }
-        Task {
-            await transcribe(recordingID: recording.id, inDocument: documentID)
-            if let text = documents.document(with: documentID)?
-                .recordings.first(where: { $0.id == recording.id })?.transcript,
-               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                documents.replaceParagraph(paragraphID, in: documentID, withTextSplitInto: text)
-            }
-        }
+        // The replacement itself is `fillDocumentBody`'s, at the end of the transcription — the same
+        // path a clip captured before the model was ready takes when it's finally picked up.
+        Task { await transcribe(recordingID: recording.id, inDocument: documentID) }
     }
 
     /// "Re-record": replace a recording's audio with a freshly captured clip and re-transcribe it
@@ -319,7 +320,13 @@ final class AppModel: ObservableObject {
     /// "Re-transcribe": re-run speech-to-text on a recording, then append the resulting transcript
     /// as a new paragraph at the bottom of the document body.
     func retranscribeIntoBody(recordingID: UUID, in documentID: UUID) async {
+        // A clip captured for the body that never got its words (the model wasn't ready, the
+        // transcription failed) still carries its destination, and `transcribe` files it on the way
+        // through — so appending here as well would post the paragraph twice.
+        let owedTheBody = documents.document(with: documentID)?
+            .recordings.first(where: { $0.id == recordingID })?.bodyDestination != nil
         await transcribe(recordingID: recordingID, inDocument: documentID)
+        guard !owedTheBody else { return }
         guard let text = documents.document(with: documentID)?
             .recordings.first(where: { $0.id == recordingID })?.transcript,
               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
@@ -366,7 +373,7 @@ final class AppModel: ObservableObject {
         documents.addRecording(recording, toDocument: documentID)
         wwLog("Captured “\(recording.name)” into a graph node", .general)
         guard transcriptionReady else {
-            setupError = "Speech model isn't ready yet — the recording was saved; transcribe it once setup finishes."
+            setupError = "Speech model isn't ready yet — the recording was saved, and its words will fill the node as soon as setup finishes."
             return
         }
         Task { await transcribe(recordingID: recording.id, inDocument: documentID) }
@@ -385,6 +392,38 @@ final class AppModel: ObservableObject {
         for node in document.nodes where node.recordingID == recordingID && !node.hasText {
             documents.setNodeText(node.id, in: documentID, to: text)
         }
+    }
+
+    /// Put a clip's words where they were captured to go: the paragraph a recording made *for the
+    /// body* was always meant to become — appended, inserted at a spot, or in place of the paragraph
+    /// it was recorded to revise.
+    ///
+    /// This is the one place a capture's transcript reaches the body, so it doesn't matter how long
+    /// the words took. A clip recorded while the speech model is still downloading is left pending,
+    /// picked up by `transcribePending` when the model is ready (or on the next launch), and lands
+    /// here on its way through with the destination it was captured with still on it.
+    ///
+    /// The destination is cleared as soon as the transcription completes — even when there turns out
+    /// to be nothing to file — so a Retranscribe later on can't post the same paragraph twice.
+    private func fillDocumentBody(forRecording recordingID: UUID, in documentID: UUID) {
+        guard var recording = documents.document(with: documentID)?
+            .recordings.first(where: { $0.id == recordingID }),
+              let destination = recording.bodyDestination else { return }
+        recording.bodyDestination = nil
+        documents.updateRecording(recording, inDocument: documentID)
+
+        let text = recording.transcript?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        // A graph has no body to write into — its nodes are filled by `fillGraphNodes` — which only
+        // comes up for a clip moved into one while it was still waiting to be transcribed.
+        guard !text.isEmpty, documents.document(with: documentID)?.isGraph == false else { return }
+        switch destination {
+        case .append:           documents.appendParagraph(text, to: documentID)
+        case .at(let position): documents.insertParagraph(text, at: position, in: documentID)
+        case .replacing(let paragraphID):
+            documents.replaceParagraph(paragraphID, in: documentID, withTextSplitInto: text)
+        }
+        let title = documents.document(with: documentID)?.title ?? "a document"
+        wwLog("Filed a new transcript into the body of “\(title)”", .general)
     }
 
     private func deviceOrigin() -> Recording.Origin {
@@ -585,8 +624,10 @@ final class AppModel: ObservableObject {
             }
             // In a graph, the node this clip was spoken into is still empty and waiting for it —
             // after the Auto transform, so the canvas shows the shaped text rather than flashing
-            // the raw transcription first.
+            // the raw transcription first. In a document, the body paragraph the clip was captured
+            // for is filed at the same point, for the same reason.
             fillGraphNodes(forRecording: recordingID, in: documentID)
+            fillDocumentBody(forRecording: recordingID, in: documentID)
         } catch {
             recording.status = .failed
             documents.updateRecording(recording, inDocument: documentID)

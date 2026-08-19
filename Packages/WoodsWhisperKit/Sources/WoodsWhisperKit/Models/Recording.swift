@@ -47,6 +47,28 @@ public struct Recording: Identifiable, Codable, Hashable, Sendable {
     /// it falls back to the Inbox.
     public var targetDocumentID: UUID?
 
+    /// Where this clip's words are still owed to its document's **body**, if anywhere.
+    ///
+    /// A clip captured *into* a document — the record button, a row's "+", an "insert here", a
+    /// "Revise" — is meant to become a paragraph (or to replace one), but the words can't arrive
+    /// until the speech model has loaded, which may be minutes away — or a relaunch away — at the
+    /// moment of capture. So the destination is written down here, on the clip, rather than kept in
+    /// memory by whoever recorded it: the transcription that eventually happens knows what to do
+    /// with the result. Cleared once the words have been filed, so re-transcribing later can't post
+    /// the paragraph a second time.
+    /// Nil for a clip with no body to reach — an Inbox capture, a graph node's, a Watch arrival.
+    public var bodyDestination: BodyDestination?
+
+    /// Where a clip's transcript belongs in the body it was captured into.
+    public enum BodyDestination: Codable, Hashable, Sendable {
+        /// At the end of the body — the document's record button, and the Documents list's "+".
+        case append
+        /// At a particular paragraph index — one of the body's "insert here" rules.
+        case at(Int)
+        /// In place of a paragraph that's already there — "Revise".
+        case replacing(UUID)
+    }
+
     public enum Origin: String, Codable, Sendable {
         case watch
         case phone
@@ -72,7 +94,8 @@ public struct Recording: Identifiable, Codable, Hashable, Sendable {
         transcript: String? = nil,
         status: Status = .pending,
         isRevision: Bool = false,
-        targetDocumentID: UUID? = nil
+        targetDocumentID: UUID? = nil,
+        bodyDestination: BodyDestination? = nil
     ) {
         self.id = id
         self.name = name ?? Recording.defaultName(for: createdAt, duration: duration, byteCount: nil)
@@ -86,14 +109,15 @@ public struct Recording: Identifiable, Codable, Hashable, Sendable {
         self.status = status
         self.isRevision = isRevision
         self.targetDocumentID = targetDocumentID
+        self.bodyDestination = bodyDestination
     }
 
     // Custom decoding so recordings saved (or transmitted) by older builds — which had no
-    // `isRevision` / `targetDocumentID` keys — still load: the missing keys default rather than
-    // failing.
+    // `isRevision` / `targetDocumentID` / `bodyDestination` keys — still load: the missing keys
+    // default rather than failing.
     enum CodingKeys: String, CodingKey {
         case id, name, createdAt, duration, audioFileName, sampleRate, origin,
-             sourceDeviceID, transcript, status, isRevision, targetDocumentID
+             sourceDeviceID, transcript, status, isRevision, targetDocumentID, bodyDestination
     }
 
     public init(from decoder: Decoder) throws {
@@ -110,6 +134,7 @@ public struct Recording: Identifiable, Codable, Hashable, Sendable {
         status = try c.decode(Status.self, forKey: .status)
         isRevision = try c.decodeIfPresent(Bool.self, forKey: .isRevision) ?? false
         targetDocumentID = try c.decodeIfPresent(UUID.self, forKey: .targetDocumentID)
+        bodyDestination = try c.decodeIfPresent(BodyDestination.self, forKey: .bodyDestination)
     }
 
     /// True when there is no audio behind this entry — text imported (from the clipboard or a text

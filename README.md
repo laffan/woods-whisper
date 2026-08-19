@@ -153,7 +153,9 @@ the rest of the app depends on.
   of its open arrow — the graph canvas's button, on a list row. **Hold** it and recording starts
   where you are; let go and it stops, transcribes itself, and lands in that document: one more
   paragraph at the end of an ordinary document, or a new root node in a graph. The row shows the
-  counter while you hold. (**Tap** it rather than holding and it simply opens the document.)
+  counter while you hold. (**Tap** it rather than holding and it simply opens the document.) Record
+  before the speech model has finished loading and the clip just waits its turn — it's transcribed
+  and filed into the document by itself the moment the model is ready, this launch or the next.
 - **Pin documents.** Swipe a document and tap **Pin** to hold it at the top of the list.
 - **Bulk actions on documents.** **Long-press** a document to enter selection mode, then tap the
   others you want (or **Select All**). The bar along the bottom applies **Delete**, **Copy**,
