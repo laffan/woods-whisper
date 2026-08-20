@@ -223,13 +223,11 @@ struct SettingsView: View {
         } header: {
             WWSectionHeader("Language Model")
         } footer: {
-            WWFooter("Rewrites transcripts. The on-device models (Liquid AI's LFM2.5 1.2B and 2.6B) "
-                     + "download once while online and then work offline; a downloaded model reloads "
-                     + "automatically when you pick it (tap Remove Download to free its space). The "
-                     + "1.2B is the quick one; the 2.6B thinks before it answers, and shows its "
-                     + "reasoning separately. The online Claude models stream from Anthropic — pick "
-                     + "one when you have a cell signal and tap Authenticate to add your API key "
-                     + "(no download).")
+            WWFooter("Rewrites transcripts. The on-device model (Liquid AI's LFM2.5 1.2B) downloads "
+                     + "once while online and then works offline; it reloads automatically when you "
+                     + "pick it (tap Remove Download to free its space). The online Claude models "
+                     + "stream from Anthropic — pick one when you have a cell signal and tap "
+                     + "Authenticate to add your API key (no download).")
         }
         .listRowBackground(WW.surface)
         .sheet(isPresented: $showingAuthSheet) {

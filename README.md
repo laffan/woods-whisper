@@ -96,7 +96,8 @@ the rest of the app depends on.
 - **Graph documents (experimental).** The **✎** button now asks what you're making: a **Document** or
   a **Graph**. A graph is a mind map on a pannable, zoomable canvas over a very light grid — endless
   in every direction, so there's always more room a drag away. **Hold anywhere on the canvas** and a
-  node appears under your finger and starts recording; lift and it stops, transcribes, and the words
+  node appears under your finger and starts recording — a short **tick** under your finger says so,
+  since a hold gives no other sign the app heard it; lift and it stops, transcribes, and the words
   drop into that node — one gesture for "make a node and say what's in it". It's the same every
   time, wherever you hold: a new root node, right there. **Double-tap** instead and you get a node
   to type into.
@@ -153,9 +154,9 @@ the rest of the app depends on.
   direct-to-iPad transports still file into the Inbox.)
 - **Record into a document from the list.** Every row in **Documents** carries a **"+"** just left
   of its open arrow — the graph canvas's button, on a list row. **Hold** it and recording starts
-  where you are; let go and it stops, transcribes itself, and lands in that document: one more
-  paragraph at the end of an ordinary document, or a new root node in a graph. The row shows the
-  counter while you hold. (**Tap** it rather than holding and it simply opens the document.) Record
+  where you are — the same tick confirms it — and let go and it stops, transcribes itself, and lands
+  in that document: one more paragraph at the end of an ordinary document, or a new root node in a
+  graph. The row shows the counter while you hold. (**Tap** it rather than holding and it simply opens the document.) Record
   before the speech model has finished loading and the clip just waits its turn — it's transcribed
   and filed into the document by itself the moment the model is ready, this launch or the next.
 - **Pin documents.** Swipe a document and tap **Pin** to hold it at the top of the list.
@@ -290,25 +291,25 @@ how the pieces fit together.
 |---------------|-------------------------------|------------|--------------------|
 | Speech → text | Parakeet TDT 0.6b **v3** (default) | FluidAudio | iPhone / iPad (ANE)|
 |               | Whisper tiny / base / small (selectable) | WhisperKit | iPhone / iPad |
-| Text rewrite  | **LFM2.5 1.2B Instruct** (default) | MLX Swift  | iPhone / iPad      |
-|               | LFM2.5 2.6B (selectable, reasoning) | MLX Swift |            |
+| Text rewrite  | **LFM2.5 1.2B Instruct**      | MLX Swift  | iPhone / iPad      |
 |               | Claude Sonnet 4.6 / Haiku 4.5 (online, selectable) | Anthropic API | cloud (needs signal) |
 
 **Speech model.** Parakeet TDT v3 is the default — most accurate and multilingual. The smaller
 **Whisper** variants (tiny/base/small) are lighter, faster downloads; pick one in
 **Settings → Speech Model** if you prefer Whisper or want a smaller footprint.
 
-**Language model.** Both on-device options are Liquid AI's **LFM2.5** models, 4-bit quantized via
-MLX. The default is **LFM2.5 1.2B Instruct** (~0.7 GB) — small and quick, which is what tidying a
-transcript wants; **LFM2.5 2.6B** (~1.5 GB) is the bigger one. Change it in **Settings → Language
-Model**. Each downloads once while online and is reloaded automatically from cache on subsequent
-launches (no need to re-tap Download). The **2.6B** is a "thinking" model — it reasons before it
-answers, and that reasoning is shown in a collapsible **Reasoning** section above each result and
-**never reaches your text**: the block is split off as it streams, and what's saved is the answer
-alone. While that first stretch is running, the placeholder where the words will go says
-**Thinking…** rather than "Transforming…", so a slow start reads as a stage rather than a stall. And
-if a run spends its whole budget thinking and never gets to an answer, nothing is written — the text
-you asked it to rewrite is left exactly as it was.
+**Language model.** On-device it's Liquid AI's **LFM2.5 1.2B Instruct** (~0.7 GB, 4-bit via MLX) —
+small and quick, which is what tidying a transcript wants. It downloads once while online and is
+reloaded automatically from cache on subsequent launches (no need to re-tap Download); see
+**Settings → Language Model**. (The 2.6B was offered alongside it for a while. It reasons before
+answering, which on a phone meant a long wait for no better a result, so it was dropped — and its
+weights are deleted from the device on the next launch.)
+
+Should a model that reasons ever be back, the app is ready for it: a `<think>…</think>` block is
+split off as it streams and **never reaches your text** — what's saved is the answer alone, shown in
+a collapsible **Reasoning** section instead — the placeholder reads **Thinking…** until the answer
+starts, and a run that never gets past thinking writes nothing at all rather than replacing your
+words with half a thought.
 
 **Online models (optional).** When you have a cell signal, you can instead pick **Claude Sonnet
 4.6** or **Claude Haiku 4.5** from the same picker. These stream from Anthropic's API rather than

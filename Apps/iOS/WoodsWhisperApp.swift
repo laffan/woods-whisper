@@ -322,6 +322,57 @@ extension View {
     }
 }
 
+// MARK: - Haptics
+
+/// The app's haptics, in one place.
+///
+/// Retained generators rather than a fresh one per event: the engine takes a moment to warm up, and
+/// a generator created and released in the same breath tends to drop or delay its first tick —
+/// which is exactly the tick that matters when it's confirming that a recording just began. So the
+/// press that *might* become a recording primes it (`prepare`), and the moment capture actually
+/// starts, `recordingStarted` fires into a warm engine.
+@MainActor
+enum WWHaptics {
+    #if canImport(UIKit)
+    /// A crisp tick — short and sharp, for "that happened", rather than the softer thud of a
+    /// medium impact.
+    private static let tick = UIImpactFeedbackGenerator(style: .rigid)
+    private static let soft = UIImpactFeedbackGenerator(style: .light)
+    private static let firm = UIImpactFeedbackGenerator(style: .medium)
+    #endif
+
+    /// Warm the engine for a tick that may be a fraction of a second away — a finger going down on
+    /// something holdable, say. Cheap, and safe to call on every press.
+    static func prepare() {
+        #if canImport(UIKit)
+        tick.prepare()
+        #endif
+    }
+
+    /// Recording has begun: the one tick the hand is waiting for, since a hold gives no other sign
+    /// that the app heard it.
+    static func recordingStarted() {
+        #if canImport(UIKit)
+        tick.impactOccurred()
+        tick.prepare()          // the next one is usually close behind (a chain, another node)
+        #endif
+    }
+
+    /// Something small happened — a selection changed, a node settled.
+    static func light() {
+        #if canImport(UIKit)
+        soft.impactOccurred()
+        #endif
+    }
+
+    /// Something with more weight to it — a branch re-parented, a group drawn.
+    static func medium() {
+        #if canImport(UIKit)
+        firm.impactOccurred()
+        #endif
+    }
+}
+
 // MARK: - Transcription text size
 
 /// How big transcription text is set, in points — document paragraphs, Inbox transcripts, graph

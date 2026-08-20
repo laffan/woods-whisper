@@ -86,11 +86,11 @@ final class WoodsWhisperKitTests: XCTestCase {
         XCTAssertFalse(LanguageModelChoice.default.isOnline)
     }
 
-    /// The on-device half of the lineup is the two LFM2.5 models, by their MLX repos — the ids the
-    /// download actually asks HuggingFace for.
-    func testOnDeviceLineupIsTheTwoLFMModels() {
+    /// On-device there's one model: LFM2.5 1.2B Instruct, by the MLX repo the download actually
+    /// asks HuggingFace for.
+    func testOnDeviceLineupIsTheSmallLFM() {
         let local = LanguageModelChoice.allCases.filter { !$0.isOnline }
-        XCTAssertEqual(local, [.lfm2_5_1_2B, .lfm2_5_2_6B])
+        XCTAssertEqual(local, [.lfm2_5_1_2B])
         XCTAssertTrue(local.allSatisfy { $0.rawValue.contains("LFM2.5") })
         XCTAssertTrue(local.allSatisfy { $0.rawValue.contains("MLX-4bit") })
     }
@@ -110,21 +110,18 @@ final class WoodsWhisperKitTests: XCTestCase {
         XCTAssertTrue(LanguageModelChoice.claudeSonnet.stopSequences.isEmpty)
     }
 
-    /// Only the 2.6B thinks — and its thinking is opened by the chat template, so the splitter has
-    /// to start inside the block rather than wait for a `<think>` that never comes.
-    func testOnlyTheLargerLFMThinks() {
-        XCTAssertTrue(LanguageModelChoice.lfm2_5_2_6B.usesThinkTags)
-        XCTAssertTrue(LanguageModelChoice.lfm2_5_2_6B.opensThinkBlockInTemplate)
-        XCTAssertFalse(LanguageModelChoice.lfm2_5_1_2B.usesThinkTags)
-        XCTAssertFalse(LanguageModelChoice.lfm2_5_1_2B.opensThinkBlockInTemplate)
-        XCTAssertFalse(LanguageModelChoice.claudeSonnet.usesThinkTags)
+    /// Nothing in the lineup reasons any more — the one that did was too slow on a phone to keep —
+    /// so no transform should be splitting a `<think>` block out of anything. (`ThinkSplitter`
+    /// itself is still tested below: the guarantee has to hold the day a reasoning model returns.)
+    func testNoModelInTheLineupThinks() {
+        XCTAssertTrue(LanguageModelChoice.allCases.allSatisfy { !$0.usesThinkTags })
+        XCTAssertTrue(LanguageModelChoice.allCases.allSatisfy { !$0.opensThinkBlockInTemplate })
     }
 
     func testOnlyClaudeModelsAreOnline() {
         XCTAssertTrue(LanguageModelChoice.claudeSonnet.isOnline)
         XCTAssertTrue(LanguageModelChoice.claudeHaiku.isOnline)
         XCTAssertFalse(LanguageModelChoice.lfm2_5_1_2B.isOnline)
-        XCTAssertFalse(LanguageModelChoice.lfm2_5_2_6B.isOnline)
     }
 
     func testOnlineModelsUseApiModelIDAsRawValue() {

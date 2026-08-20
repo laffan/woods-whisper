@@ -21,15 +21,17 @@ final class AppSettings {
         static let allowRotation = "allowRotation"
         static let graphAutoTransformPresetID = "graphAutoTransformPresetID"
         static let transcriptTextSize = "transcriptTextSize"
-        static let didPruneRetiredModels = "didPruneRetiredModels"
+        static let prunedModelRepos = "prunedModelRepos"
     }
 
-    /// Whether the weights of models that have since left the picker have been cleared off this
-    /// device. A one-shot: the lineup changed, the old downloads are gigabytes, and nothing in the
-    /// UI can reach them any more.
-    var didPruneRetiredModels: Bool {
-        get { defaults.bool(forKey: Key.didPruneRetiredModels) }
-        set { defaults.set(newValue, forKey: Key.didPruneRetiredModels) }
+    /// The retired models whose downloaded weights have already been cleared off this device.
+    ///
+    /// A list rather than a single "done" flag, because the lineup changes more than once: whatever
+    /// is dropped next gets cleaned up on the following launch too, instead of leaving its gigabytes
+    /// behind on every device that already ran the tidy-up once.
+    var prunedModelRepos: Set<String> {
+        get { Set(defaults.stringArray(forKey: Key.prunedModelRepos) ?? []) }
+        set { defaults.set(Array(newValue), forKey: Key.prunedModelRepos) }
     }
 
     // MARK: Transcription text size

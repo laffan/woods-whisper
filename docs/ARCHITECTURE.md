@@ -120,8 +120,10 @@ than appending a new block.
 **A model's reasoning never becomes your words.** The two filters a streamed response passes through
 — `StopSequenceFilter` (drops the turn-end marker and everything after it) and `ThinkSplitter`
 (separates a `<think>…</think>` block from the answer) — live in the kit, in `StreamFilters.swift`,
-precisely because that's the guarantee the reasoning models rest on: they're pure value types with no
-MLX dependency, and the tests pin the invariant down, tags split across chunks included. Only
+precisely because that's the guarantee a reasoning model rests on: they're pure value types with no
+MLX dependency, and the tests pin the invariant down, tags split across chunks included. No model in
+the current lineup reasons — the one that did, LFM2.5-2.6B, was too slow on a phone to keep — so
+this is dormant rather than dead: it's what the day one returns will need. Only
 `answer` is ever written back. A block that never closes is reasoning to the last character, so such
 a run yields *no* answer — and `AppModel.usableAnswer` refuses to write an empty one, because
 replacing a paragraph with half a thought (or with nothing) is worse than leaving it alone and

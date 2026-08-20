@@ -301,7 +301,7 @@ struct DocumentsView: View {
             return
         }
         recordingDocumentID = doc.id
-        haptic()
+        WWHaptics.recordingStarted()
     }
 
     /// The finger lifted: file the clip against the document it was spoken into, and let
@@ -351,11 +351,7 @@ struct DocumentsView: View {
         return true
     }
 
-    private func haptic() {
-        #if canImport(UIKit)
-        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        #endif
-    }
+    private func haptic() { WWHaptics.medium() }
 
     // MARK: Selection mode
 

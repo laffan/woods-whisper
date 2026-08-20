@@ -1805,6 +1805,7 @@ struct RecordingSheet: View {
         do {
             try recorder.start(to: url)
             startedURL = url
+            WWHaptics.recordingStarted()
             // Mirror the recorder onto the Lock Screen / Dynamic Island for as long as it runs, and
             // take the controls over there, so a press lands on this recording.
             RecordingActivityController.shared.start(taskName: title)
@@ -3206,6 +3207,7 @@ struct GraphDocumentView: View {
     /// every time, not only for the first node of a graph and no longer needing a tap in front of it.
     /// The hold *is* the record button here, so it answers the same way wherever it lands.
     private func armHold(at viewPoint: CGPoint) {
+        WWHaptics.prepare()          // this press may be a recording in 0.4 seconds
         holdTask?.cancel()
         holdTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: UInt64(GraphCanvas.holdDuration * 1_000_000_000))
@@ -3253,7 +3255,7 @@ struct GraphDocumentView: View {
         recordingAnchor = viewPoint
         chainRingCenter = viewPoint
         phase = .recording
-        haptic(strong: true)
+        WWHaptics.recordingStarted()
     }
 
     /// A "+" held rather than tapped: make the node it would have made, and record into it until
@@ -3273,7 +3275,7 @@ struct GraphDocumentView: View {
         recordingNodeID = node.id
         // The "+" is where the finger is, so anchoring to the button anchors to the finger.
         recordingAnchor = viewPoint(for: spot)
-        haptic(strong: true)
+        WWHaptics.recordingStarted()
     }
 
     /// A canvas point in view coordinates — the forward direction of `canvasPoint(for:)`.
@@ -3373,7 +3375,7 @@ struct GraphDocumentView: View {
         settleReference = point
         settleSince = Date()
         watchForSettle()
-        haptic(strong: true)
+        WWHaptics.recordingStarted()
     }
 
     /// Watch for the finger to stop. It has to be a clock rather than the gesture: a finger held
@@ -3629,9 +3631,7 @@ struct GraphDocumentView: View {
     }
 
     private func haptic(strong: Bool = false) {
-        #if canImport(UIKit)
-        UIImpactFeedbackGenerator(style: strong ? .medium : .light).impactOccurred()
-        #endif
+        if strong { WWHaptics.medium() } else { WWHaptics.light() }
     }
 
     // MARK: Dragging a node (and its branch)
@@ -4498,6 +4498,10 @@ private struct GraphGrid: View {
 /// into a red dot while it's recording, the way the record button does. Three places use it now —
 /// a node's right edge (add a child), the midpoint of a line (insert a node between the two it
 /// joins), and a row of the Documents list — so it knows about none of them.
+///
+/// Explicitly main-actor: unlike the views around it, this one holds no `@EnvironmentObject` to
+/// infer that from, and its gesture reaches the shared haptics.
+@MainActor
 struct HoldablePlusButton: View {
     var diameter: CGFloat = 22
     let onTap: () -> Void
@@ -4532,6 +4536,7 @@ struct HoldablePlusButton: View {
                         if gestureStart != value.startLocation {
                             gestureStart = value.startLocation
                             strayed = false
+                            WWHaptics.prepare()      // a hold is 0.4s away; warm the engine now
                             holdTask?.cancel()
                             holdTask = Task { @MainActor in
                                 try? await Task.sleep(nanoseconds: UInt64(GraphCanvas.holdDuration * 1_000_000_000))

@@ -161,8 +161,9 @@ public final class GemmaTransformService: TextTransformService {
         // (`<|im_end|>`) after the real answer and runs away until the token cap — or the app —
         // gives out. The filter also strips the marker from the output.
         var filter = StopSequenceFilter(stops: activeModel.stopSequences)
-        // Split a `<think>…</think>` reasoning block (LFM2.5 2.6B) out of the answer, incrementally
-        // so it streams. Disabled models pass everything through as the answer.
+        // Split a `<think>…</think>` reasoning block out of the answer, incrementally so it
+        // streams. No model in the lineup reasons at the moment, so this passes everything through
+        // as the answer — until one does.
         var splitter = ThinkSplitter(enabled: activeModel.usesThinkTags,
                                      startsInside: activeModel.opensThinkBlockInTemplate)
         var answer = ""

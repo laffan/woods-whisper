@@ -832,16 +832,19 @@ final class AppModel: ObservableObject {
         llmPrepareTask?.cancel()
     }
 
-    /// Clear out the weights of language models that used to be in the picker — once, on the first
-    /// launch after the lineup changed. Each is a couple of gigabytes, and with the model gone from
-    /// Settings there's no "Remove Download" left to reach them with.
+    /// Clear out the weights of language models that used to be in the picker — each once, on the
+    /// first launch after it left. They're gigabytes apiece, and with the model gone from Settings
+    /// there's no "Remove Download" left to reach them with.
     private func pruneRetiredModelDownloads() {
-        guard !AppSettings.shared.didPruneRetiredModels else { return }
-        AppSettings.shared.didPruneRetiredModels = true
-        for repo in LanguageModelChoice.retiredRepos {
+        var pruned = AppSettings.shared.prunedModelRepos
+        let outstanding = LanguageModelChoice.retiredRepos.filter { !pruned.contains($0) }
+        guard !outstanding.isEmpty else { return }
+        for repo in outstanding {
             GemmaTransformService.removeDownload(repo: repo)
             AppSettings.shared.unmarkModelDownloaded(repo)
+            pruned.insert(repo)
         }
+        AppSettings.shared.prunedModelRepos = pruned
     }
 
     func refreshReadiness() async {
@@ -874,8 +877,9 @@ final class AppModel: ObservableObject {
     /// a paragraph, a node, a whole document — so that placeholder can say "Thinking…" rather than
     /// "Transforming…" through a stretch that would otherwise read as a stall.
     ///
-    /// Only a reasoning model ever lands in here (LFM2.5 2.6B thinks before every answer); the rest
-    /// go straight to the words.
+    /// Only a reasoning model ever lands in here, and the lineup has none at the moment — the one
+    /// that reasoned was too slow on a phone to keep. The wiring stays: it costs a comparison per
+    /// token, and it's what the day a reasoning model returns will need.
     @Published private(set) var reasoningIDs: Set<UUID> = []
 
     func isThinking(_ id: UUID) -> Bool { reasoningIDs.contains(id) }

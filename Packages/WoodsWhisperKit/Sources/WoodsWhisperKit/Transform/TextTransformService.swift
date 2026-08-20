@@ -48,22 +48,21 @@ public struct TransformResult: Sendable, Equatable {
     }
 }
 
-/// Available language models. The on-device pair are Liquid AI's **LFM2.5** models (4-bit MLX
-/// weights, running on iPhone/iPad): the 1.2B *Instruct* is the default — small, quick, and enough
-/// for tidying a transcript — and the 2.6B is the bigger one, a reasoning model that thinks before
-/// it answers (its thinking is shown in a collapsible *Reasoning* section and kept out of the saved
-/// text). Two **online** options — Anthropic's Claude Sonnet and Haiku — are also selectable for
-/// when the device has a cell signal; these call the Anthropic API instead of downloading weights,
-/// so they show an *Authenticate* step (an API key) rather than a *Download*.
+/// Available language models. On-device there is one: Liquid AI's **LFM2.5 1.2B Instruct** (4-bit
+/// MLX weights, running on iPhone/iPad) — small and quick, which is what tidying a transcript wants.
+/// Two **online** options — Anthropic's Claude Sonnet and Haiku — are also selectable for when the
+/// device has a cell signal; these call the Anthropic API instead of downloading weights, so they
+/// show an *Authenticate* step (an API key) rather than a *Download*.
+///
+/// (The 2.6B was here too, briefly. It's a reasoning model, and on a phone it spent long enough
+/// thinking — for results no better than the small one's — that it wasn't worth the wait.)
 ///
 /// LFM2.5 checkpoints declare the `lfm2` architecture, which `mlx-swift-lm` implements, and their
 /// chat template is ChatML-shaped — hence `<|im_end|>` as the turn-end stop.
 public enum LanguageModelChoice: String, CaseIterable, Codable, Sendable, Identifiable {
-    // The rawValue is the HuggingFace repo the weights are pulled from. The publishers differ
-    // because the 4-bit MLX conversions do: Liquid AI ship the 2.6B's themselves, and the LM Studio
-    // community one is the 1.2B Instruct's.
+    // The rawValue is the HuggingFace repo the weights are pulled from — the LM Studio community's
+    // 4-bit MLX conversion of Liquid AI's model.
     case lfm2_5_1_2B = "lmstudio-community/LFM2.5-1.2B-Instruct-MLX-4bit"
-    case lfm2_5_2_6B = "LiquidAI/LFM2.5-2.6B-MLX-4bit"
     // Online (Anthropic). The rawValue doubles as the API `model` id.
     case claudeSonnet = "claude-sonnet-4-6"
     case claudeHaiku = "claude-haiku-4-5"
@@ -76,14 +75,13 @@ public enum LanguageModelChoice: String, CaseIterable, Codable, Sendable, Identi
     public var isOnline: Bool {
         switch self {
         case .claudeSonnet, .claudeHaiku:   return true
-        case .lfm2_5_1_2B, .lfm2_5_2_6B:    return false
+        case .lfm2_5_1_2B:                  return false
         }
     }
 
     public var displayName: String {
         switch self {
         case .lfm2_5_1_2B:  return "LFM2.5 · 1.2B (default)"
-        case .lfm2_5_2_6B:  return "LFM2.5 · 2.6B (reasoning)"
         case .claudeSonnet: return "Claude Sonnet 4.6"
         case .claudeHaiku:  return "Claude Haiku 4.5"
         }
@@ -93,7 +91,6 @@ public enum LanguageModelChoice: String, CaseIterable, Codable, Sendable, Identi
     public var shortName: String {
         switch self {
         case .lfm2_5_1_2B:  return "LFM2.5 1.2B"
-        case .lfm2_5_2_6B:  return "LFM2.5 2.6B"
         case .claudeSonnet: return "Sonnet 4.6"
         case .claudeHaiku:  return "Haiku 4.5"
         }
@@ -104,7 +101,6 @@ public enum LanguageModelChoice: String, CaseIterable, Codable, Sendable, Identi
     public var approxRAMNote: String {
         switch self {
         case .lfm2_5_1_2B:                return "~1 GB"
-        case .lfm2_5_2_6B:                return "~2.5 GB"
         case .claudeSonnet, .claudeHaiku: return "runs in the cloud"
         }
     }
@@ -114,7 +110,6 @@ public enum LanguageModelChoice: String, CaseIterable, Codable, Sendable, Identi
     public var approxDownloadSize: String {
         switch self {
         case .lfm2_5_1_2B:                return "~0.7 GB"
-        case .lfm2_5_2_6B:                return "~1.5 GB"
         case .claudeSonnet, .claudeHaiku: return "no download"
         }
     }
@@ -126,7 +121,7 @@ public enum LanguageModelChoice: String, CaseIterable, Codable, Sendable, Identi
     /// signals turn-end itself, so they need none.
     public var stopSequences: [String] {
         switch self {
-        case .lfm2_5_1_2B, .lfm2_5_2_6B:
+        case .lfm2_5_1_2B:
             return ["<|im_end|>", "<|endoftext|>"]
         case .claudeSonnet, .claudeHaiku:
             return []
@@ -134,25 +129,22 @@ public enum LanguageModelChoice: String, CaseIterable, Codable, Sendable, Identi
     }
 
     /// Whether this model wraps its reasoning in a `<think>…</think>` block that should be split out
-    /// of the answer. LFM2.5-2.6B always thinks before it answers; the 1.2B Instruct never does.
+    /// of the answer. Nothing in the current lineup thinks — the one that did was slow enough on a
+    /// phone to be dropped — so this is the hook a future reasoning model hangs on rather than a
+    /// live setting. `ThinkSplitter` keeps its half of the bargain either way: reasoning never
+    /// reaches the saved text.
     public var usesThinkTags: Bool {
         switch self {
-        case .lfm2_5_2_6B:
-            return true
         case .lfm2_5_1_2B, .claudeSonnet, .claudeHaiku:
             return false
         }
     }
 
-    /// Whether the *template* opens the reasoning block, so generation begins already inside it.
-    ///
-    /// LFM2.5-2.6B's chat template ends the prompt with `<think>` — the model is expected to think,
-    /// so it isn't asked to say so. That means the stream starts mid-reasoning and the only tag that
-    /// ever arrives is the closing one, and a splitter waiting for an opening `<think>` would take
-    /// the whole reasoning trace for the answer.
+    /// Whether the *template* opens the reasoning block, so generation begins already inside it —
+    /// as LFM2.5-2.6B's did, its prompt ending with `<think>` because the model was expected to
+    /// think rather than to say it would. Only meaningful alongside `usesThinkTags`.
     public var opensThinkBlockInTemplate: Bool {
         switch self {
-        case .lfm2_5_2_6B:                                  return true
         case .lfm2_5_1_2B, .claudeSonnet, .claudeHaiku:     return false
         }
     }
@@ -167,7 +159,8 @@ public enum LanguageModelChoice: String, CaseIterable, Codable, Sendable, Identi
         "mlx-community/gemma-3-4b-it-qat-4bit",
         "mlx-community/Qwen3-4B-4bit",
         "mlx-community/Llama-3.2-3B-Instruct-4bit",
-        "mlx-community/gemma-3-1b-it-qat-4bit"
+        "mlx-community/gemma-3-1b-it-qat-4bit",
+        "LiquidAI/LFM2.5-2.6B-MLX-4bit"
     ]
 }
 
