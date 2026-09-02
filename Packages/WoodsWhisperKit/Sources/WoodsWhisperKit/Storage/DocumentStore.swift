@@ -69,9 +69,12 @@ public final class DocumentStore: ObservableObject {
     /// The link is stored on one half only, so this looks both ways: the id this document points at,
     /// or the document that points at this one. Callers don't have to know which half they hold.
     public func jointPartnerID(of documentID: UUID) -> UUID? {
-        if let joined = document(with: documentID)?.joinedID,
-           document(with: joined) != nil { return joined }
-        return documents.first { $0.joinedID == documentID }?.id
+        guard let doc = document(with: documentID) else { return nil }
+        // A pair is always a document *and* a graph. A link to something missing, or to another of
+        // the same kind, isn't a pair — it's damage — so nothing is routed or hidden by it.
+        if let joined = doc.joinedID, let partner = document(with: joined),
+           partner.isGraph != doc.isGraph { return joined }
+        return documents.first { $0.joinedID == documentID && $0.isGraph != doc.isGraph }?.id
     }
 
     /// Whether this document is the half that's reached *through* the other one — the one the
@@ -91,17 +94,36 @@ public final class DocumentStore: ObservableObject {
         guard let doc = document(with: documentID),
               doc.title != Self.inboxTitle,
               jointPartnerID(of: documentID) == nil,
-              let idx = index(of: documentID) else { return nil }
+              index(of: documentID) != nil else { return nil }
         let counterpart = Document(title: doc.title, kind: doc.isGraph ? .document : .graph)
         documents.insert(counterpart, at: 0)
+        // The index *after* the insert. A new document goes in at the front, which moves every
+        // other one down a place — an index taken before it points at the document above the one it
+        // named, and the link would be written onto a stranger.
+        guard let idx = index(of: documentID) else { return nil }
         documents[idx].joinedID = counterpart.id
         touch(idx)
         return counterpart
     }
 
-    /// "Separate Joint Document": drop the link, from either side. Both halves survive as ordinary
-    /// documents — nothing written in either of them is touched — and the one that was reached
-    /// through the other takes its own place in the list.
+    /// Let go of any link that can't be a pair: one pointing at a document that isn't there, and —
+    /// the reason this exists — one joining two halves of the *same* kind.
+    ///
+    /// A pair is always a document and a graph. An early build wrote the link onto the wrong
+    /// document (an index taken before an insert, which the insert then shifted), leaving a real
+    /// document joined to a second document and opening onto "Joint document not found". Nothing
+    /// was lost — both halves are ordinary documents — but the link has to go, and going looking
+    /// for it by hand isn't something anyone should have to do.
+    private func dropImpossibleJoints() {
+        for idx in documents.indices {
+            guard let joined = documents[idx].joinedID else { continue }
+            let partner = documents.first { $0.id == joined }
+            if partner == nil || partner?.isGraph == documents[idx].isGraph {
+                documents[idx].joinedID = nil
+            }
+        }
+    }
+
     /// Separate the pair a document is part of, if any, on its way out — deleting or trashing half
     /// of a joint document ends the pairing rather than leaving the survivor pointing at something
     /// that isn't in the list any more (or reappearing joined when the other half is restored).
@@ -110,6 +132,9 @@ public final class DocumentStore: ObservableObject {
         separateJoint(documentID)
     }
 
+    /// "Separate Joint Document": drop the link, from either side. Both halves survive as ordinary
+    /// documents — nothing written in either of them is touched — and the one that was reached
+    /// through the other takes its own place in the list.
     public func separateJoint(_ documentID: UUID) {
         let leadID = document(with: documentID)?.joinedID != nil
             ? documentID
@@ -1061,6 +1086,7 @@ public final class DocumentStore: ObservableObject {
         if let data = try? Data(contentsOf: documentsURL),
            let decoded = try? JSONDecoder.iso.decode([Document].self, from: data) {
             documents = decoded.sorted { $0.updatedAt > $1.updatedAt }
+            dropImpossibleJoints()
         }
         if let data = try? Data(contentsOf: trashURL),
            let decoded = try? JSONDecoder.iso.decode([Document].self, from: data) {

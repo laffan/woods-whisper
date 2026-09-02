@@ -1976,15 +1976,23 @@ struct InboxView: View {
         model.documents.documents.filter { $0.id != documentID && $0.title != DocumentStore.inboxTitle }
     }
 
-    /// The tags on offer, as Settings has them.
-    private var tags: [String] { AppSettings.shared.inboxTags }
+    /// The tags on offer, as Settings has them — name and colour both.
+    private var tags: [InboxTagStyle] { AppSettings.shared.inboxTags }
+
+    /// The ink a tag is drawn in. A tag an entry still carries after it's been dropped from
+    /// Settings has no colour of its own left, so it falls back to the app's accent — it keeps its
+    /// filter, it just stops being colour-coded.
+    private func tagColor(_ name: String?) -> Color {
+        WW.tagColor(tags.first { $0.name == name }?.colorID)
+    }
 
     /// The tags worth filtering by: the ones entries are actually filed under, in the order Settings
     /// lists them — followed by any an entry still carries that the list has since dropped, since
     /// those entries are exactly the ones you'd want a way back to.
     private var tagsInUse: [String] {
         let used = Set(recordings.compactMap(\.tag))
-        return tags.filter(used.contains) + used.subtracting(tags).sorted()
+        let configured = tags.map(\.name)
+        return configured.filter(used.contains) + used.subtracting(configured).sorted()
     }
 
     /// What the list is showing: everything, or one tag's worth. A filter on a tag that has just
@@ -2165,7 +2173,8 @@ struct InboxView: View {
             onCopy: { copy(recording) },
             onRetranscribe: { Task { await model.transcribe(recordingID: recording.id, inDocument: documentID) } },
             moveTargets: documentTargets,
-            onMove: { target in model.documents.moveRecording(recording.id, from: documentID, to: target.id) }
+            onMove: { target in model.documents.moveRecording(recording.id, from: documentID, to: target.id) },
+            tagColor: tagColor(recording.tag)
         ) {
             if isEditing { transcriptEditBox() }
         }
@@ -2373,11 +2382,11 @@ struct InboxView: View {
         if !inUse.isEmpty, !selectionMode, editingID == nil {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
-                    tagChip("All", isOn: filterTag == nil) {
+                    tagChip("All", isOn: filterTag == nil, tint: WW.inkSecondary) {
                         withAnimation(.snappy(duration: 0.2)) { filterTag = nil }
                     }
                     ForEach(inUse, id: \.self) { tag in
-                        tagChip(tag, isOn: filterTag == tag) {
+                        tagChip(tag, isOn: filterTag == tag, tint: tagColor(tag)) {
                             withAnimation(.snappy(duration: 0.2)) {
                                 filterTag = (filterTag == tag) ? nil : tag
                             }
@@ -2392,15 +2401,18 @@ struct InboxView: View {
         }
     }
 
-    private func tagChip(_ title: String, isOn: Bool, action: @escaping () -> Void) -> some View {
+    /// A filter chip in its tag's own colour: outlined in it while it's off, filled with it while
+    /// it's on, so the row reads as a set of tags rather than a set of buttons.
+    private func tagChip(_ title: String, isOn: Bool, tint: Color,
+                         action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
                 .font(.system(size: 13, weight: isOn ? .semibold : .regular))
-                .foregroundStyle(isOn ? WW.paper : WW.ink)
+                .foregroundStyle(isOn ? WW.paper : tint)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
-                .background(isOn ? WW.moss : WW.surface, in: Capsule())
-                .overlay(Capsule().stroke(isOn ? WW.moss : WW.hairline, lineWidth: 1))
+                .background(isOn ? tint : tint.opacity(0.10), in: Capsule())
+                .overlay(Capsule().stroke(isOn ? tint : tint.opacity(0.45), lineWidth: 1))
                 .contentShape(Capsule())
         }
         .buttonStyle(.plain)
@@ -2432,8 +2444,8 @@ struct InboxView: View {
         .padding(.vertical, 10)
         .frame(maxWidth: WW.contentMaxWidth)
         .frame(maxWidth: .infinity)
-        .background(WW.surface)
-        .overlay(alignment: .top) { WWHairline() }
+        // No plate and no rule: the two words float over the paper the entries scroll past on, the
+        // way the record button does. They belong to the filter above them, not to the bar below.
         .disabled(visibleRecordings.isEmpty)
         .opacity(visibleRecordings.isEmpty ? 0.35 : 1)
         .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -2491,8 +2503,11 @@ struct InboxView: View {
             WWHairline()
             ScrollView {
                 VStack(spacing: 0) {
-                    ForEach(tags, id: \.self) { tag in
-                        tagRow(tag, isOn: current == tag) { apply(tag: tag, to: ids) }
+                    ForEach(tags) { tag in
+                        tagRow(tag.name, isOn: current == tag.name,
+                               swatch: WW.tagColor(tag.colorID)) {
+                            apply(tag: tag.name, to: ids)
+                        }
                         WWHairline().padding(.leading, 16)
                     }
                     tagRow("No Tag", isOn: current == nil, tint: WW.inkSecondary) {
@@ -2511,10 +2526,15 @@ struct InboxView: View {
         }
     }
 
-    private func tagRow(_ title: String, isOn: Bool, tint: Color = WW.ink,
+    private func tagRow(_ title: String, isOn: Bool, tint: Color = WW.ink, swatch: Color? = nil,
                         action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 10) {
+                if let swatch {
+                    Circle()
+                        .fill(swatch)
+                        .frame(width: 10, height: 10)
+                }
                 Text(title).foregroundStyle(tint)
                 Spacer(minLength: 8)
                 if isOn {
@@ -2729,6 +2749,9 @@ private struct InboxRecordingRow<Editor: View>: View {
     let onRetranscribe: () -> Void
     let moveTargets: [Document]
     let onMove: (Document) -> Void
+    /// The ink this entry's tag is drawn in — the Inbox looks it up, since it's the one that reads
+    /// the setting the colours live in.
+    var tagColor: Color = WW.moss
     @ViewBuilder var editor: Editor
 
     var body: some View {
@@ -2762,10 +2785,10 @@ private struct InboxRecordingRow<Editor: View>: View {
                     if let tag = recording.tag {
                         Text(tag)
                             .font(.system(size: 10, weight: .medium))
-                            .foregroundStyle(WW.moss)
+                            .foregroundStyle(tagColor)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
-                            .background(WW.moss.opacity(0.12), in: Capsule())
+                            .background(tagColor.opacity(0.12), in: Capsule())
                     }
                     Text(recording.createdAt.formatted(date: .abbreviated, time: .shortened))
                         .font(.caption2)
@@ -3214,7 +3237,13 @@ struct GraphDocumentView: View {
     @ViewBuilder
     private func canvas(for document: Document) -> some View {
         GeometryReader { geo in
-            content(for: document)
+            // Every card's rectangle, worked out once for the whole pass and handed to everything
+            // that needs one — the edges, the group rings, the cards, and the minimap, which draws
+            // the very same curves. A drag re-runs this body on every frame, and looking each node
+            // up again per edge and per ring made that quadratic in the size of the graph.
+            let boxes = cardBoxes(in: document)
+            let lines = edges(of: document, boxes: boxes)
+            content(for: document, boxes: boxes, lines: lines)
                 .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
                 .background(alignment: .topLeading) { GraphGrid(pan: pan, scale: scale) }
                 .background(WW.paper)
@@ -3230,7 +3259,7 @@ struct GraphDocumentView: View {
                 .overlay(alignment: .bottom) {
                     VStack(spacing: 8) {
                         selectionBar()
-                        bottomControls(for: document)
+                        bottomControls(for: document, edges: lines)
                     }
                 }
                 .overlay { chainRing() }
@@ -3260,13 +3289,8 @@ struct GraphDocumentView: View {
     /// One transform is applied to the lot — `scaleEffect` then `offset` — so a canvas point `c`
     /// lands at `c * scale + pan` and `canvasPoint(for:)` is its exact inverse.
     @ViewBuilder
-    private func content(for document: Document) -> some View {
-        // Every card's rectangle, worked out once for the whole pass and handed to everything that
-        // needs one. A drag re-runs this body on every frame, and looking each node up again per
-        // edge, per ring and per card made that quadratic in the size of the graph — which is what
-        // a drag felt like on anything but a small one.
-        let boxes = cardBoxes(in: document)
-        let lines = edges(of: document, boxes: boxes)
+    private func content(for document: Document, boxes: [UUID: CGRect],
+                         lines: [GraphEdgeLine]) -> some View {
         ZStack(alignment: .topLeading) {
             // Rings first, so they sit behind the cards they're drawn around.
             ForEach(document.groups) { group in
@@ -4748,11 +4772,11 @@ struct GraphDocumentView: View {
     /// The controls stay whether or not the minimap is shown — they're how the canvas is worked,
     /// not part of the map — so hiding the map doesn't take Auto tidy and the ⌘ with it.
     @ViewBuilder
-    private func bottomControls(for document: Document) -> some View {
+    private func bottomControls(for document: Document, edges: [GraphEdgeLine]) -> some View {
         if editingNodeID == nil, menuNodeID == nil {
             HStack(alignment: .bottom, spacing: 8) {
                 canvasControls(for: document)
-                minimap(for: document)
+                minimap(for: document, edges: edges)
             }
             .padding(.horizontal, 12)
             .padding(.bottom, 10)
@@ -4816,9 +4840,9 @@ struct GraphDocumentView: View {
     /// The whole graph, small, along the bottom — every node a dot, with a box around what's on
     /// screen.
     @ViewBuilder
-    private func minimap(for document: Document) -> some View {
+    private func minimap(for document: Document, edges: [GraphEdgeLine]) -> some View {
         if showsMinimap, !document.nodes.isEmpty {
-            GraphMinimap(nodes: document.nodes, viewport: viewportInCanvas) { spot in
+            GraphMinimap(nodes: document.nodes, edges: edges, viewport: viewportInCanvas) { spot in
                 center(on: spot, animated: false)
             }
             .equatable()
@@ -5467,8 +5491,9 @@ struct CommandKeyWatcher: UIViewRepresentable {
 /// The whole graph in a strip along the bottom of the canvas: one dot per node — filled for a node
 /// with words, hollow for one still waiting on them — inside a box showing what's on screen.
 ///
-/// Every node is a dot and every parent→child link a hairline between two of them, so the map shows
-/// the shape of the graph and not just where its nodes happen to fall.
+/// Every node is a dot and every parent→child link a hairline between two of them — the *same*
+/// curves the canvas draws, handed in rather than guessed at, so the map is a small picture of the
+/// graph and not a diagram of it.
 ///
 /// Touch anywhere on it (or drag across it) to go there. With no simulation moving nodes about,
 /// where a dot sits on this map is exactly where the node is, which is what makes it a map.
@@ -5480,11 +5505,18 @@ struct CommandKeyWatcher: UIViewRepresentable {
 /// bindings, so an older copy of it does exactly what a fresh one would.
 private struct GraphMinimap: View, Equatable {
     let nodes: [GraphNode]
+    /// The curves between them, as the canvas has them — control points and all, so the map bends
+    /// the way the canvas does.
+    let edges: [GraphEdgeLine]
     /// What the canvas is showing, in canvas points.
     let viewport: CGRect
     /// The canvas point the user picked out.
     let onGo: (CGPoint) -> Void
 
+    /// Compared on the nodes and the viewport alone. The edges are worked out from those same
+    /// positions (plus the measured cards), so they can't change without one of these changing —
+    /// and leaving them out keeps a drag from repainting a map that, drawn from *stored* positions,
+    /// isn't moving anyway.
     static func == (lhs: GraphMinimap, rhs: GraphMinimap) -> Bool {
         lhs.viewport == rhs.viewport && lhs.nodes == rhs.nodes
     }
@@ -5501,15 +5533,16 @@ private struct GraphMinimap: View, Equatable {
                 context.stroke(Path(roundedRect: box, cornerRadius: 3),
                                with: .color(WW.moss.opacity(0.7)), lineWidth: 1)
 
-                // The links, under the dots: straight centre to centre, since a curve at this size
-                // is a curve nobody can see. Drawn as one path — it's the *shape* of the graph the
-                // map is for, and a hundred separate strokes would say the same thing slower.
+                // The links, under the dots: the canvas's own curves, every point run through the
+                // same projection the dots are, so a link on the map leaves and arrives exactly
+                // where it does on the canvas. One path for the lot — it's the *shape* of the graph
+                // the map is for, and a hundred separate strokes would say the same thing slower.
                 var links = Path()
-                let byID = Dictionary(nodes.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-                for node in nodes {
-                    guard let parentID = node.parentID, let parent = byID[parentID] else { continue }
-                    links.move(to: project(CGPoint(x: parent.position.x, y: parent.position.y), fit))
-                    links.addLine(to: project(CGPoint(x: node.position.x, y: node.position.y), fit))
+                for edge in edges {
+                    links.move(to: project(edge.from, fit))
+                    links.addCurve(to: project(edge.to, fit),
+                                   control1: project(edge.fromControl, fit),
+                                   control2: project(edge.toControl, fit))
                 }
                 context.stroke(links, with: .color(WW.inkTertiary.opacity(0.55)), lineWidth: 0.75)
 

@@ -513,7 +513,7 @@ final class AppModel: ObservableObject {
         var entry = Recording.textEntry(trimmed, origin: deviceOrigin())
         // Text arrives already "transcribed", so it never passes the transcription path where a
         // spoken entry files itself — it files itself here instead, by the same rule.
-        entry.tag = InboxTag.autoTag(for: trimmed, from: AppSettings.shared.inboxTags)
+        entry.tag = InboxTag.autoTag(for: trimmed, from: AppSettings.shared.inboxTagNames)
         documents.addRecording(entry, toDocument: documentID)
         wwLog("Imported \(trimmed.count) characters of text into the Inbox", .general)
         return true
@@ -668,7 +668,7 @@ final class AppModel: ObservableObject {
                 .recordings.first(where: { $0.id == recordingID }),
               recording.tag == nil,
               let text = recording.transcript,
-              let tag = InboxTag.autoTag(for: text, from: AppSettings.shared.inboxTags)
+              let tag = InboxTag.autoTag(for: text, from: AppSettings.shared.inboxTagNames)
         else { return }
         recording.tag = tag
         documents.updateRecording(recording, inDocument: documentID)

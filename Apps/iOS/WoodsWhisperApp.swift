@@ -132,6 +132,20 @@ enum WW {
     static let slate = dynamicColor(light: UIColor(red: 0.353, green: 0.478, blue: 0.553, alpha: 1),
                                     dark: UIColor(red: 0.545, green: 0.655, blue: 0.729, alpha: 1))
 
+    /// The ink an Inbox tag is drawn in, by the id stored with it (`InboxTag.paletteIDs`). The kit
+    /// names these; the palette they name lives here, which is what keeps a tag's colour right in
+    /// both light and dark. An id nothing here answers to falls back to the app's one accent.
+    static func tagColor(_ colorID: String?) -> Color {
+        switch colorID {
+        case "violet": return violet
+        case "amber":  return amber
+        case "slate":  return slate
+        case "ember":  return ember
+        case "ink":    return inkSecondary
+        default:       return moss
+        }
+    }
+
     /// Supporting hue for transform-ish actions and the model log category: muted violet.
     static let violet = dynamicColor(light: UIColor(red: 0.494, green: 0.435, blue: 0.596, alpha: 1),
                                      dark: UIColor(red: 0.647, green: 0.588, blue: 0.745, alpha: 1))

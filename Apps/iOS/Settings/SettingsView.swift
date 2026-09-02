@@ -20,7 +20,7 @@ struct SettingsView: View {
     @State private var deviceName = AppSettings.shared.deviceDisplayName
     @State private var graphAutoTransformID: UUID? = AppSettings.shared.graphAutoTransformPresetID
     /// The tag list as it's being edited, and the field a new one is typed into.
-    @State private var inboxTags: [String] = AppSettings.shared.inboxTags
+    @State private var inboxTags: [InboxTagStyle] = AppSettings.shared.inboxTags
     @State private var newTag = ""
     @FocusState private var deviceNameFocused: Bool
 
@@ -294,14 +294,30 @@ struct SettingsView: View {
     /// for the entries, not for the filing system.
     private var inboxTagsSection: some View {
         Section {
-            ForEach(inboxTags, id: \.self) { tag in
+            ForEach($inboxTags) { $tag in
                 HStack(spacing: 10) {
-                    Image(systemName: "tag")
-                        .font(.system(size: 12))
-                        .foregroundStyle(WW.moss)
-                    Text(tag).foregroundStyle(WW.ink)
+                    // The swatch is the control: tap it for the palette. Nothing else in the row
+                    // does anything, so there's no doubt about what's tappable.
+                    Menu {
+                        Picker("Colour", selection: $tag.colorID) {
+                            ForEach(InboxTag.paletteIDs, id: \.self) { id in
+                                Label(colorName(id), systemImage: "circle.fill")
+                                    .foregroundStyle(WW.tagColor(id))
+                                    .tag(id)
+                            }
+                        }
+                    } label: {
+                        Circle()
+                            .fill(WW.tagColor(tag.colorID))
+                            .frame(width: 18, height: 18)
+                            .overlay(Circle().stroke(WW.hairline, lineWidth: 1))
+                            .contentShape(Circle())
+                    }
+                    .accessibilityLabel("Colour for \(tag.name)")
+                    Text(tag.name).foregroundStyle(WW.ink)
                 }
             }
+            // `onDelete` belongs to the ForEach itself, so nothing may come between them.
             .onDelete { offsets in
                 inboxTags.remove(atOffsets: offsets)
                 AppSettings.shared.inboxTags = inboxTags
@@ -321,24 +337,45 @@ struct SettingsView: View {
         } footer: {
             WWFooter("Swipe an Inbox entry right and tap Tag to file it under one of these. An entry "
                      + "whose first word *is* one of them — “Question…”, “Fixed…”, “Reminders…” — "
-                     + "files itself the moment it's transcribed. Swipe a tag away here and the "
-                     + "entries filed under it keep saying so; they simply have no filter to sit in.")
+                     + "files itself the moment it's transcribed. Tap a colour to change it. Swipe a "
+                     + "tag away and the entries filed under it keep saying so — and keep their "
+                     + "filter — until they're filed somewhere else.")
         }
+        // A colour picked through a row's binding writes straight into the array; this is where it
+        // reaches the setting the rest of the app reads.
+        .onChange(of: inboxTags) { _, tags in AppSettings.shared.inboxTags = tags }
         .listRowBackground(WW.surface)
     }
 
     private var canAddTag: Bool {
         let trimmed = newTag.trimmingCharacters(in: .whitespacesAndNewlines)
-        return !trimmed.isEmpty && !inboxTags.contains { $0.caseInsensitiveCompare(trimmed) == .orderedSame }
+        return !trimmed.isEmpty
+            && !inboxTags.contains { $0.name.caseInsensitiveCompare(trimmed) == .orderedSame }
     }
 
+    /// A new tag takes the first colour none of the others is wearing, so it stands apart from them
+    /// without anyone having to choose one.
     private func addTag() {
         let trimmed = newTag.trimmingCharacters(in: .whitespacesAndNewlines)
         guard canAddTag else { return }
-        inboxTags.append(trimmed)
+        let color = InboxTag.nextColorID(notIn: inboxTags.map(\.colorID))
+        inboxTags.append(InboxTagStyle(name: trimmed, colorID: color))
         AppSettings.shared.inboxTags = inboxTags
         newTag = ""
         wwLog("Added the Inbox tag “\(trimmed)”", .general)
+    }
+
+    /// What to call a colour in the picker — the palette's ids are for storage, not for reading.
+    private func colorName(_ id: String) -> String {
+        switch id {
+        case "moss":   return "Moss"
+        case "violet": return "Violet"
+        case "amber":  return "Amber"
+        case "slate":  return "Slate"
+        case "ember":  return "Ember"
+        case "ink":    return "Ink"
+        default:       return id.capitalized
+        }
     }
 
     // MARK: Graphs

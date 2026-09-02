@@ -37,14 +37,35 @@ final class AppSettings {
 
     // MARK: Inbox tags
 
-    /// The tags an Inbox entry can be filed under, in the order they're offered — edited in
-    /// Settings → Inbox Tags. Starts as `InboxTag.defaults`; an empty list is honoured (the Inbox
-    /// simply stops offering to file anything), which is why "never set" and "set to nothing" are
-    /// told apart by the key's presence rather than by the array being empty.
-    var inboxTags: [String] {
-        get { defaults.stringArray(forKey: Key.inboxTags) ?? InboxTag.defaults }
-        set { defaults.set(newValue, forKey: Key.inboxTags) }
+    /// The tags an Inbox entry can be filed under — name and colour, in the order they're offered —
+    /// edited in Settings → Inbox Tags. Starts as `InboxTag.defaultStyles`; an empty list is
+    /// honoured (the Inbox simply stops offering to file anything), which is why "never set" and
+    /// "set to nothing" are told apart by the key's presence rather than by the array being empty.
+    ///
+    /// The same key held a plain list of names before tags had colours, and `data(forKey:)` and
+    /// `stringArray(forKey:)` each answer nil for what the other wrote — so the old list is read
+    /// back here and given colours rather than being thrown away.
+    var inboxTags: [InboxTagStyle] {
+        get {
+            if let data = defaults.data(forKey: Key.inboxTags),
+               let styles = try? JSONDecoder().decode([InboxTagStyle].self, from: data) {
+                return styles
+            }
+            if let names = defaults.stringArray(forKey: Key.inboxTags) {
+                var used: [String] = []
+                return names.map { name in
+                    let color = InboxTag.nextColorID(notIn: used)
+                    used.append(color)
+                    return InboxTagStyle(name: name, colorID: color)
+                }
+            }
+            return InboxTag.defaultStyles
+        }
+        set { defaults.set(try? JSONEncoder().encode(newValue), forKey: Key.inboxTags) }
     }
+
+    /// Just the names, which is what the filing rule compares and what an entry stores.
+    var inboxTagNames: [String] { inboxTags.map(\.name) }
 
     // MARK: Transcription text size
 

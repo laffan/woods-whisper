@@ -73,15 +73,16 @@ the rest of the app depends on.
   **Delete**; **swipe right** for **Tag**, **Copy** and **Transform**. Long-press still enters batch
   selection.
 - **Tags.** An Inbox entry can be filed under a tag — **Question**, **Reminder**, **Fix** to start
-  with, and the list is yours to edit in **Settings → Inbox Tags**. Two ways in: swipe an entry right
+  with, each in its own colour, and the list is yours to edit in **Settings → Inbox Tags** (tap a
+  tag's swatch to change its colour; a new tag takes the first colour none of the others is wearing). Two ways in: swipe an entry right
   and tap **Tag**, or simply *say* it — an entry whose **first word is a tag** files itself the
   moment it's transcribed. It's forgiving about how you said it ("Questions…", "Fixed…", "Reminders…"
   all count) and strict about where: a tag has to open the entry, not turn up in the middle of a
   sentence. A transform runs first, so what the entry ends up saying is what files it, and a tag you
   chose by hand is never overruled. Once anything is filed, a row of tags appears across the top of
   the Inbox — tap one to see just those, tap it again for everything. While you're looking at one
-  tag, **Copy All** and **Delete All** appear at the bottom, because everything on screen is then one
-  kind of thing. Entries keep the tag they were filed under even if you later drop it from the
+  tag, **Copy All** and **Delete All** appear at the bottom — no plate under them, floating over the
+  page the way the record button does — because everything on screen is then one kind of thing. Entries keep the tag they were filed under even if you later drop it from the
   Settings list.
 - **Moving an entry into a document.** Swipe an Inbox entry left → **Move** (or select several and
   tap **Move**) and the pane that slides up leads with **New Document**, *above* the list of existing
@@ -188,8 +189,8 @@ the rest of the app depends on.
   each other, so the branch survives, and the node floats free where it stands.
 - **Finding your way around a graph.** A **minimap** sits along the bottom, the two buttons above at
   its left: every node as a dot, every parent-to-child link as a hairline between two of them, all
-  inside a box showing what's on screen — so the map carries the shape of the graph and not just
-  where the nodes happen to have fallen. Touch or drag it to go there. The **⋯** menu adds **List
+  inside a box showing what's on screen — the same curves the canvas draws, so the map carries the
+  shape of the graph and not just where the nodes happen to have fallen. Touch or drag it to go there. The **⋯** menu adds **List
   Nodes** (the graph as an indented list, in outline order), **Center Graph**, and a switch for the
   minimap itself. The same menu's **Copy Outline** / **Share
   Outline** — and the backup folder — hand over the graph as a **Markdown outline**: one bullet per

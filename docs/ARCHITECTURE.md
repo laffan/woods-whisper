@@ -149,6 +149,11 @@ the stream, so an ordinary token costs a comparison rather than a hop back to th
 (`AppSettings.inboxTags`, edited in Settings): the list is a setting the user rearranges, and an
 entry shouldn't lose what it says about itself because a tag was renamed or dropped — a filter for
 an orphaned tag simply appears alongside the configured ones for as long as entries carry it.
+A tag also carries an ink: `InboxTagStyle` is name + `colorID`, stored as JSON under the same
+defaults key the plain name list used (`data(forKey:)` and `stringArray(forKey:)` each answer nil
+for what the other wrote, so the old list is read back and given colours rather than dropped). The
+kit names the palette but defines none of it — it compiles for the Watch, which draws none of this —
+so `WW.tagColor(_:)` in the app holds the light and dark versions.
 Automatic filing is `InboxTag.autoTag(for:from:)`, which compares *stems*: lowercase, letters only,
 then endings taken off repeatedly and never below three characters, so "Questions", "Fixed" and
 "Reminders" file where you'd expect while "Fixture" doesn't land under "Fix". It's the **first word**
@@ -166,6 +171,13 @@ out of the Documents list, the Watch's target list and the widget (`Document.joi
 the one rule all three read), because it's reached through the row of the half that points. So the
 pairing is one optional id, and separating is clearing it — which is also what deleting or trashing
 either half does on its way out, so a survivor never points at something that isn't there.
+A pair is *always* a document and a graph, and both `jointPartnerID(of:)` and `jointFollowerIDs(in:)`
+require that: a link to something missing, or to another of the same kind, routes nothing and hides
+nothing. An early build could write one — `createJointCounterpart` took the lead's index *before*
+inserting the counterpart at the front, and the insert shifted it, so the link landed on whichever
+document sat above it — which showed up as a stranger being "joined" and the pair opening onto
+"Joint document not found". The index is now taken after the insert, and `dropImpossibleJoints()`
+clears any such link at load, since nobody should have to go looking for it by hand.
 `JointDocumentView` puts each half in a `NavigationStack` of its own, which is what lets
 `DocumentDetailView` and `GraphDocumentView` go in unchanged and keep the title and **⋯** menu they
 have everywhere else; without it both toolbars would pile into the one bar above and fight over it.
@@ -204,8 +216,11 @@ transform — `scaleEffect(anchor: .topLeading)` then `offset` — so a canvas p
   force-directed layout, which read well right up until you tried to drop one node onto another and
   the target slid out of the way; it was removed in favour of this, and lives in the history if it's
   ever wanted back. Because positions are stable, the minimap is a real map — where a dot is, is
-  where the node is, and the links drawn between the dots (straight, centre to centre: a curve that
-  small is a curve nobody sees) are the graph's actual shape.
+  where the node is. The links between the dots are the canvas's *own* curves — `GraphEdgeLine`
+  values handed to the minimap and run through its projection, control points and all — so the map
+  bends where the canvas bends. They're left out of the map's `==` on purpose: they're a function of
+  the same positions, so nothing can change them without changing the nodes, and comparing them
+  would repaint a map that (drawn from stored positions) doesn't move during a drag anyway.
 - **A drag is one edit, measured in a space that isn't moving.** The live translation stays in view
   state and is written to the nodes only when the finger lifts, so dragging a branch doesn't rewrite
   the document (and its Markdown mirror) once per frame. Like pinning, positions don't bump

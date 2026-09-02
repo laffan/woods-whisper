@@ -120,7 +120,14 @@ public struct Document: Identifiable, Codable, Hashable, Sendable {
     /// so they're reached through that one rather than standing on their own in the Documents list,
     /// the Watch's target list or the widget.
     public static func jointFollowerIDs(in documents: [Document]) -> Set<UUID> {
-        Set(documents.compactMap(\.joinedID))
+        let byID = Dictionary(documents.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return Set(documents.compactMap { document -> UUID? in
+            // Only a real pair hides a half: a document and a graph, both still here. A link to
+            // something missing, or to another of its own kind, hides nothing — it isn't a pair.
+            guard let joined = document.joinedID, let partner = byID[joined],
+                  partner.isGraph != document.isGraph else { return nil }
+            return joined
+        })
     }
 
     /// One editable block of the document body.

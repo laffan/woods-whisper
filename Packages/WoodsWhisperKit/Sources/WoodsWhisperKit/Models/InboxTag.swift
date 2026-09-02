@@ -1,5 +1,23 @@
 import Foundation
 
+/// A tag as it's configured: what it's called, and which ink it's drawn in.
+///
+/// The name is the identity — it's what a `Recording` stores and what the matching below compares —
+/// so renaming a tag in Settings makes a new one rather than renaming what entries carry. That's
+/// the honest behaviour for something an entry keeps a copy of.
+public struct InboxTagStyle: Codable, Hashable, Sendable, Identifiable {
+    public var name: String
+    /// One of `InboxTag.paletteIDs`.
+    public var colorID: String
+
+    public var id: String { name }
+
+    public init(name: String, colorID: String) {
+        self.name = name
+        self.colorID = colorID
+    }
+}
+
 /// What an Inbox entry can be filed under, and how an entry files itself.
 ///
 /// A tag is a plain string — the list of them is a setting the user edits, and an entry keeps the
@@ -13,8 +31,27 @@ import Foundation
 /// are all the same intent — without being so forgiving that an ordinary sentence beginning with a
 /// coincidence gets filed. Stems, compared exactly, are the line this draws.
 public enum InboxTag {
-    /// What the Inbox starts with, before anyone edits the list in Settings.
-    public static let defaults = ["Question", "Reminder", "Fix"]
+    /// The inks a tag can be drawn in, named rather than defined: this package has no colours in it
+    /// (it compiles for the Watch, which draws none of this), so the app maps each id to one of its
+    /// own — see `WW.tagColor(_:)` — and holds the light and dark versions there.
+    public static let paletteIDs = ["moss", "violet", "amber", "slate", "ember", "ink"]
+
+    /// What the Inbox starts with, before anyone edits the list in Settings — three tags, three
+    /// colours, so they tell themselves apart the first time you see them.
+    public static let defaultStyles = [
+        InboxTagStyle(name: "Question", colorID: "violet"),
+        InboxTagStyle(name: "Reminder", colorID: "amber"),
+        InboxTagStyle(name: "Fix", colorID: "moss")
+    ]
+
+    /// Just the names — what the matching below works on, and what a `Recording` stores.
+    public static var defaultNames: [String] { defaultStyles.map(\.name) }
+
+    /// A colour for a tag being added: the first one nothing else is wearing, so a new tag stands
+    /// apart without anyone having to choose. Once every colour is taken it starts round again.
+    public static func nextColorID(notIn used: [String]) -> String {
+        paletteIDs.first { !used.contains($0) } ?? paletteIDs[used.count % paletteIDs.count]
+    }
 
     /// The tag this text files itself under, if its **first word** says so — otherwise nil, which is
     /// most text. Ties go to the earlier tag in the list, so the order in Settings is the priority.

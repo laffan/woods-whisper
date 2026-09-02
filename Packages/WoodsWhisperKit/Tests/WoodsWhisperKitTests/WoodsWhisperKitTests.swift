@@ -273,36 +273,110 @@ final class WoodsWhisperKitTests: XCTestCase {
         XCTAssertTrue(Document.paragraphs(fromLinesOf: "   \n\n ").isEmpty)
     }
 
+    // MARK: Joint documents, made
+
+    /// The link has to land on the document that asked for it. It used to land on whichever
+    /// document sat above it in the array: the index was taken before the counterpart was inserted
+    /// at the front, and the insert moved everything down a place.
+    @MainActor
+    func testCreatingAJointCounterpartLinksTheDocumentThatAskedForIt() {
+        let name = "JointTests-\(UUID().uuidString)"
+        let store = DocumentStore(directoryName: name)
+        defer { removeStore(named: name) }
+
+        // The graph goes in first so that the *other* document ends up above it — which is the
+        // stranger the link used to be written onto.
+        let graph = store.createDocument(title: "Field Notes", kind: .graph)
+        let stranger = store.createDocument(title: "Trip Log")
+
+        let counterpart = store.createJointCounterpart(for: graph.id)
+
+        XCTAssertNotNil(counterpart)
+        XCTAssertEqual(counterpart?.isGraph, false)                      // a graph gets prose
+        XCTAssertEqual(store.jointPartnerID(of: graph.id), counterpart?.id)
+        XCTAssertEqual(store.document(with: graph.id)?.joinedID, counterpart?.id)
+        XCTAssertNil(store.document(with: stranger.id)?.joinedID)
+        XCTAssertNil(store.document(with: counterpart!.id)?.joinedID)
+        XCTAssertTrue(store.isJointFollower(counterpart!.id))
+    }
+
+    @MainActor
+    func testADocumentGetsAGraphAndOnlyOne() {
+        let name = "JointTests-\(UUID().uuidString)"
+        let store = DocumentStore(directoryName: name)
+        defer { removeStore(named: name) }
+
+        let notes = store.createDocument(title: "Field Notes")
+        let graph = store.createJointCounterpart(for: notes.id)
+        XCTAssertEqual(graph?.isGraph, true)
+        // Asking twice does nothing: it's already half of a pair.
+        XCTAssertNil(store.createJointCounterpart(for: notes.id))
+        XCTAssertNil(store.createJointCounterpart(for: graph!.id))
+    }
+
+    /// Two documents of the same kind is not a pair, and a build that wrote one is repaired on the
+    /// next load rather than left opening onto "Joint document not found".
+    @MainActor
+    func testAnImpossibleJointIsDroppedOnLoad() throws {
+        let name = "JointTests-\(UUID().uuidString)"
+        let follower = Document(title: "Trip Log")
+        let lead = Document(title: "Field Notes", joinedID: follower.id)   // document → document
+        try writeDocuments([lead, follower], toStoreNamed: name)
+        defer { removeStore(named: name) }
+
+        let store = DocumentStore(directoryName: name)
+
+        XCTAssertEqual(store.documents.count, 2, "the fixture didn't load — has the layout moved?")
+        XCTAssertNil(store.document(with: lead.id)?.joinedID)
+        XCTAssertNil(store.jointPartnerID(of: lead.id))
+    }
+
+    private func storeDirectory(named name: String) -> URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent(name, isDirectory: true)
+    }
+
+    private func writeDocuments(_ documents: [Document], toStoreNamed name: String) throws {
+        let directory = storeDirectory(named: name)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try JSONEncoder.iso.encode(documents)
+            .write(to: directory.appendingPathComponent("documents.json"))
+    }
+
+    private func removeStore(named name: String) {
+        try? FileManager.default.removeItem(at: storeDirectory(named: name))
+    }
+
     // MARK: Inbox tags
 
     func testTheFirstWordFilesTheEntry() {
         XCTAssertEqual(InboxTag.autoTag(for: "Question — where does the trail cross?",
-                                        from: InboxTag.defaults), "Question")
+                                        from: InboxTag.defaultNames), "Question")
     }
 
     /// "How it was said" shouldn't decide whether it files: same word, same tag.
     func testVersionsOfTheWordStillFile() {
-        XCTAssertEqual(InboxTag.autoTag(for: "Questions about the pass", from: InboxTag.defaults),
+        XCTAssertEqual(InboxTag.autoTag(for: "Questions about the pass", from: InboxTag.defaultNames),
                        "Question")
-        XCTAssertEqual(InboxTag.autoTag(for: "Fixed the stove", from: InboxTag.defaults), "Fix")
-        XCTAssertEqual(InboxTag.autoTag(for: "Fixing the stove", from: InboxTag.defaults), "Fix")
-        XCTAssertEqual(InboxTag.autoTag(for: "Reminders: water filter", from: InboxTag.defaults),
+        XCTAssertEqual(InboxTag.autoTag(for: "Fixed the stove", from: InboxTag.defaultNames), "Fix")
+        XCTAssertEqual(InboxTag.autoTag(for: "Fixing the stove", from: InboxTag.defaultNames), "Fix")
+        XCTAssertEqual(InboxTag.autoTag(for: "Reminders: water filter", from: InboxTag.defaultNames),
                        "Reminder")
         XCTAssertEqual(InboxTag.autoTag(for: "remind me to soak the beans",
-                                        from: InboxTag.defaults), "Reminder")
+                                        from: InboxTag.defaultNames), "Reminder")
     }
 
     /// The word has to *start* the entry — a tag mentioned later is just a word in a sentence.
     func testATagInTheMiddleDoesNotFile() {
         XCTAssertNil(InboxTag.autoTag(for: "I have a question about the pass",
-                                      from: InboxTag.defaults))
+                                      from: InboxTag.defaultNames))
     }
 
     func testOrdinaryTextFilesNowhere() {
         XCTAssertNil(InboxTag.autoTag(for: "Elk by the creek at first light",
-                                      from: InboxTag.defaults))
-        XCTAssertNil(InboxTag.autoTag(for: "", from: InboxTag.defaults))
-        XCTAssertNil(InboxTag.autoTag(for: "   ", from: InboxTag.defaults))
+                                      from: InboxTag.defaultNames))
+        XCTAssertNil(InboxTag.autoTag(for: "", from: InboxTag.defaultNames))
+        XCTAssertNil(InboxTag.autoTag(for: "   ", from: InboxTag.defaultNames))
     }
 
     /// A short tag isn't stemmed away to nothing, and doesn't swallow longer words.
@@ -315,6 +389,27 @@ final class WoodsWhisperKitTests: XCTestCase {
     func testTheEarlierTagWins() {
         XCTAssertEqual(InboxTag.autoTag(for: "Fix that", from: ["Fix", "Fixes"]), "Fix")
         XCTAssertEqual(InboxTag.autoTag(for: "Fix that", from: ["Fixes", "Fix"]), "Fixes")
+    }
+
+    /// The three you start with are three different colours — the point of colouring them at all.
+    func testTheDefaultTagsAreDifferentColours() {
+        let colors = InboxTag.defaultStyles.map(\.colorID)
+        XCTAssertEqual(Set(colors).count, colors.count)
+        XCTAssertTrue(colors.allSatisfy(InboxTag.paletteIDs.contains))
+    }
+
+    /// A tag being added takes the first colour nothing else is wearing.
+    func testANewTagTakesAnUnusedColour() {
+        let used = InboxTag.defaultStyles.map(\.colorID)
+        let next = InboxTag.nextColorID(notIn: used)
+        XCTAssertFalse(used.contains(next))
+        XCTAssertTrue(InboxTag.paletteIDs.contains(next))
+    }
+
+    /// With every colour taken it starts round again rather than coming back with nothing.
+    func testColoursRunOutGracefully() {
+        let next = InboxTag.nextColorID(notIn: InboxTag.paletteIDs)
+        XCTAssertTrue(InboxTag.paletteIDs.contains(next))
     }
 
     func testATagSurvivesARecordingRoundTrip() throws {
@@ -335,6 +430,19 @@ final class WoodsWhisperKitTests: XCTestCase {
     }
 
     // MARK: Joint documents
+
+    /// A link between two of a kind isn't a pair, so it hides nothing — the state an early build
+    /// could leave behind, harmless until it's cleared.
+    func testALinkBetweenTwoOfAKindHidesNothing() {
+        let other = Document(title: "Trip Log")
+        let notes = Document(title: "Field Notes", joinedID: other.id)
+        XCTAssertTrue(Document.jointFollowerIDs(in: [notes, other]).isEmpty)
+    }
+
+    func testALinkToSomethingMissingHidesNothing() {
+        let notes = Document(title: "Field Notes", joinedID: UUID())
+        XCTAssertTrue(Document.jointFollowerIDs(in: [notes]).isEmpty)
+    }
 
     /// The half a link points at is the one the lists leave out; the half that points is the row.
     func testTheJoinedHalfIsTheFollower() {
