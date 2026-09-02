@@ -178,7 +178,8 @@ transform — `scaleEffect(anchor: .topLeading)` then `offset` — so a canvas p
   force-directed layout, which read well right up until you tried to drop one node onto another and
   the target slid out of the way; it was removed in favour of this, and lives in the history if it's
   ever wanted back. Because positions are stable, the minimap is a real map — where a dot is, is
-  where the node is.
+  where the node is, and the links drawn between the dots (straight, centre to centre: a curve that
+  small is a curve nobody sees) are the graph's actual shape.
 - **A drag is one edit, measured in a space that isn't moving.** The live translation stays in view
   state and is written to the nodes only when the finger lifts, so dragging a branch doesn't rewrite
   the document (and its Markdown mirror) once per frame. Like pinning, positions don't bump
@@ -265,6 +266,16 @@ card into its own view so SwiftUI can skip the ones a drag isn't touching.
 (`allowsHitTesting(false)`) so it isn't a dead zone over every node inside it, and only four strips
 at its edge take touches. The drag lives on those strips now; attached to the ring as a whole it
 never fired, which is why dragging a group did nothing until the finger came off.
+
+**Two shapes for one list (iOS).** `showingNodeList` is the *request*; how it's answered depends on
+the width. `horizontalSizeClass == .regular` puts the node list in an `HStack` beside the canvas as a
+300-point sidebar (the canvas simply gets narrower, and `canvasSize` follows through the
+`GeometryReader` it already had, so centring stays right); anything compact keeps the sheet, whose
+binding is `showingNodeList && !showsNodeSidebar`. One list body (`nodeList(for:)`) serves both.
+Tapping a row closes only the sheet — the sidebar covers nothing, so there's nothing to get out of
+the way — and both flash `highlightedNodeID`, which `nodeBorder` reads: the ring is drawn by the
+card itself, wherever it happens to be, and a `Task` clears it after `highlightDuration`, cancelling
+any flash still running so an old timer can't put the new ring out early.
 
 **Lining a selection up.** `GraphArrange` (in the kit) does the arithmetic behind Align Left, Align
 Top and the two Distributes, over `GraphNodeBox` values the view builds from its *measured* card

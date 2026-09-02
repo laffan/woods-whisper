@@ -176,12 +176,20 @@ the rest of the app depends on.
   node out of the tree without taking its words with it — its parent and its children are joined to
   each other, so the branch survives, and the node floats free where it stands.
 - **Finding your way around a graph.** A **minimap** sits along the bottom, the two buttons above at
-  its left: every node as a dot inside a box showing what's on screen — touch or drag it to go
-  there. The **⋯** menu adds **List
-  Nodes** (the graph as an indented list, in outline order; tap a line to fly to that node),
-  **Center Graph**, and a switch for the minimap itself. The same menu's **Copy Outline** / **Share
+  its left: every node as a dot, every parent-to-child link as a hairline between two of them, all
+  inside a box showing what's on screen — so the map carries the shape of the graph and not just
+  where the nodes happen to have fallen. Touch or drag it to go there. The **⋯** menu adds **List
+  Nodes** (the graph as an indented list, in outline order), **Center Graph**, and a switch for the
+  minimap itself. The same menu's **Copy Outline** / **Share
   Outline** — and the backup folder — hand over the graph as a **Markdown outline**: one bullet per
   node, indented by depth, in the order the canvas reads.
+- **The node list, beside the canvas or over it.** On an **iPad** — any wide screen — **List Nodes**
+  opens as a **sidebar down the right**: tap a line and the canvas slides to that node with the list
+  still open, ready for the next one. Nothing is covered, so nothing has to close. On a **phone** it
+  stays a sheet over the canvas, and tapping a line closes it, since it's covering the answer. Either
+  way the node you picked **rings itself in amber** for a moment when the canvas arrives — amber
+  precisely because nothing else on a card is: it says "this is the one you asked for" rather than
+  "this one is selected".
 - **Record straight to a document from the Watch.** The iPhone syncs your document list to the Watch
   over WatchConnectivity; swipe left on the Watch's record screen to pick a target document (or the
   Inbox). The chosen target's name shows on the record screen, and clips captured there are filed into

@@ -2690,6 +2690,16 @@ struct GraphDocumentView: View {
     /// graphs — it's a preference about how you like to work, not about one document.
     @AppStorage("graphShowsMinimap") private var showsMinimap = true
     @State private var showingNodeList = false
+    /// The node the list has just sent you to, ringed for a moment so the eye can find it among
+    /// however many cards the canvas slid across, and the clock that lets go of it again.
+    @State private var highlightedNodeID: UUID?
+    @State private var highlightTask: Task<Void, Never>?
+
+    /// A phone shows the node list as a sheet over the canvas; anything wider shows it as a sidebar
+    /// down the right, where it can stay open while you work — the list is a way *around* the
+    /// canvas, and on an iPad there's room to keep it beside what it's pointing at.
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    private var showsNodeSidebar: Bool { sizeClass == .regular }
 
     /// Auto tidy: with it on, adding a node lines its siblings up around it — "Tidy Children" run
     /// for you, every time, instead of when you ask. Remembered across graphs for the same reason
@@ -2711,7 +2721,16 @@ struct GraphDocumentView: View {
     var body: some View {
         Group {
             if let document {
-                canvas(for: document)
+                HStack(spacing: 0) {
+                    canvas(for: document)
+                    if showsNodeSidebar, showingNodeList {
+                        // `WWHairline` is a horizontal rule; this one stands up.
+                        Rectangle().fill(WW.hairline).frame(width: 1)
+                        nodeListSidebar(for: document)
+                            .frame(width: GraphCanvas.nodeListWidth)
+                            .transition(.move(edge: .trailing))
+                    }
+                }
             } else {
                 WWEmptyState(title: "Graph not found", systemImage: "point.3.connected.trianglepath.dotted")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -2739,6 +2758,8 @@ struct GraphDocumentView: View {
             marqueeOrigin = nil
             marqueeCurrent = nil
             pendingTidyParents = []
+            highlightTask?.cancel()
+            highlightedNodeID = nil
             finishEditing()
         }
         .sheet(item: $reviseTask) { task in
@@ -2748,7 +2769,7 @@ struct GraphDocumentView: View {
                                        nodeID: task.nodeID, in: documentID)
             }
         }
-        .sheet(isPresented: $showingNodeList) {
+        .sheet(isPresented: nodeListSheetPresented) {
             if let document { nodeListSheet(for: document) }
         }
         .sheet(item: $shareItem) { item in
@@ -3050,14 +3071,20 @@ struct GraphDocumentView: View {
         return (false, false)
     }
 
+    /// What a card's border says about it. A recording outranks everything — it's the one thing
+    /// happening rather than a state — then the ring the node list leaves behind, which is amber
+    /// precisely because nothing else here is: "this is the one you asked for", not "this is
+    /// selected".
     private func nodeBorder(_ node: GraphNode) -> Color {
         if recordingNodeID == node.id { return WW.ember }
+        if highlightedNodeID == node.id { return WW.amber }
         if dropTargetID == node.id || selectedNodeIDs.contains(node.id) { return WW.moss }
         return WW.hairline
     }
 
     private func nodeBorderWidth(_ node: GraphNode) -> CGFloat {
         if recordingNodeID == node.id || dropTargetID == node.id { return 2 }
+        if highlightedNodeID == node.id { return 3 }
         return selectedNodeIDs.contains(node.id) ? 2 : 1
     }
 
@@ -4422,37 +4449,104 @@ struct GraphDocumentView: View {
 
     // MARK: Node list
 
-    /// "List Nodes": the graph as an indented list, in the same order as the outline it exports.
-    /// Tapping a line takes you to that node on the canvas — the way back to something you recorded
-    /// twenty screens away and can no longer see.
+    /// Whether the *sheet* is up: the list is asked for by one flag, and a phone answers with a
+    /// sheet where an iPad answers with the sidebar. Rotating an iPhone into a regular width with
+    /// the sheet open hands it over to the sidebar, which is the right thing either way round.
+    private var nodeListSheetPresented: Binding<Bool> {
+        Binding(get: { showingNodeList && !showsNodeSidebar },
+                set: { showingNodeList = $0 })
+    }
+
+    /// "List Nodes" on a phone: the graph as an indented list, over the canvas. Tapping a line
+    /// closes the sheet and takes you to that node — the canvas is behind it, so it has to get out
+    /// of the way to show you what it found.
     @ViewBuilder
     private func nodeListSheet(for document: Document) -> some View {
         NavigationStack {
-            List {
-                ForEach(document.nodeEntries) { entry in
-                    Button {
-                        showingNodeList = false
-                        center(on: CGPoint(x: entry.node.position.x, y: entry.node.position.y))
-                    } label: {
-                        nodeListRow(entry, in: document)
+            nodeList(for: document)
+                .navigationTitle("Nodes")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { showingNodeList = false }
                     }
-                    .buttonStyle(.plain)
-                    .wwRow()
                 }
-            }
-            .wwList()
-            .navigationTitle("Nodes")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { showingNodeList = false }
+        }
+    }
+
+    /// The same list as a sidebar down the right of the canvas, for a screen with room for both.
+    /// Nothing is covered, so a tap doesn't close it: the canvas slides to the node beside you and
+    /// the list stays where it is, ready for the next one — which is what makes it a way of reading
+    /// a graph rather than a way of jumping into one.
+    @ViewBuilder
+    private func nodeListSidebar(for document: Document) -> some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Nodes")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(WW.ink)
+                Spacer(minLength: 8)
+                Button {
+                    withAnimation(.snappy(duration: 0.25)) { showingNodeList = false }
+                } label: {
+                    Image(systemName: "sidebar.right")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(WW.moss)
+                        .frame(width: 34, height: 30)
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Hide the node list")
             }
-            .overlay {
-                if document.nodes.isEmpty {
-                    WWEmptyState(title: "No nodes yet", systemImage: "list.bullet.indent")
+            .padding(.leading, 16)
+            .padding(.trailing, 8)
+            .padding(.vertical, 8)
+            WWHairline()
+            nodeList(for: document)
+        }
+        .background(WW.paper)
+    }
+
+    /// The graph as an indented list, in the same order as the outline it exports — the way back to
+    /// something you recorded twenty screens away and can no longer see.
+    @ViewBuilder
+    private func nodeList(for document: Document) -> some View {
+        List {
+            ForEach(document.nodeEntries) { entry in
+                Button { goTo(entry.node) } label: {
+                    nodeListRow(entry, in: document)
                 }
+                .buttonStyle(.plain)
+                .wwRow()
             }
+        }
+        .wwList()
+        .overlay {
+            if document.nodes.isEmpty {
+                WWEmptyState(title: "No nodes yet", systemImage: "list.bullet.indent")
+            }
+        }
+    }
+
+    /// Take the canvas to a node the list picked out, and ring it for a moment when it gets there.
+    /// The sheet closes on its way (it's covering the answer); the sidebar stays.
+    private func goTo(_ node: GraphNode) {
+        if !showsNodeSidebar { showingNodeList = false }
+        center(on: CGPoint(x: node.position.x, y: node.position.y))
+        flash(node.id)
+    }
+
+    /// Ring a node briefly. Which node is view state and the border reads it, so the ring appears
+    /// wherever that card is drawn; a clock lets go of it again, and a second flash cancels the
+    /// first rather than letting an old timer put the ring out early.
+    private func flash(_ nodeID: UUID) {
+        highlightTask?.cancel()
+        withAnimation(.snappy(duration: 0.2)) { highlightedNodeID = nodeID }
+        haptic()
+        highlightTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(GraphCanvas.highlightDuration * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.35)) { highlightedNodeID = nil }
         }
     }
 
@@ -4562,8 +4656,11 @@ struct GraphDocumentView: View {
                               systemImage: isSelecting ? "xmark.circle" : "checkmark.circle")
                     }
                     .disabled(document.nodes.isEmpty)
-                    Button { showingNodeList = true } label: {
-                        Label("List Nodes", systemImage: "list.bullet.indent")
+                    Button {
+                        withAnimation(.snappy(duration: 0.25)) { showingNodeList.toggle() }
+                    } label: {
+                        Label(showsNodeSidebar && showingNodeList ? "Hide Nodes" : "List Nodes",
+                              systemImage: "list.bullet.indent")
                     }
                     Button { recenter() } label: {
                         Label("Center Graph", systemImage: "scope")
@@ -4669,6 +4766,13 @@ enum GraphCanvas {
     /// What's left of the speed after each frame of coasting — a flick runs on for about a second.
     static let glideDecay: CGFloat = 0.94
     static let doubleTapWindow: TimeInterval = 0.35
+
+    /// How wide the node list sits when it's a sidebar rather than a sheet: enough for two lines of
+    /// a node at a readable size, without taking the canvas's half of the screen.
+    static let nodeListWidth: CGFloat = 300
+    /// How long a node keeps its ring after the list sends you to it — long enough to find it,
+    /// short enough not to be mistaken for a state the node is in.
+    static let highlightDuration: TimeInterval = 1.4
 }
 
 // MARK: - Edges
@@ -4945,6 +5049,9 @@ struct CommandKeyWatcher: UIViewRepresentable {
 /// The whole graph in a strip along the bottom of the canvas: one dot per node — filled for a node
 /// with words, hollow for one still waiting on them — inside a box showing what's on screen.
 ///
+/// Every node is a dot and every parent→child link a hairline between two of them, so the map shows
+/// the shape of the graph and not just where its nodes happen to fall.
+///
 /// Touch anywhere on it (or drag across it) to go there. With no simulation moving nodes about,
 /// where a dot sits on this map is exactly where the node is, which is what makes it a map.
 ///
@@ -4975,6 +5082,18 @@ private struct GraphMinimap: View, Equatable {
                 context.fill(Path(roundedRect: box, cornerRadius: 3), with: .color(WW.moss.opacity(0.10)))
                 context.stroke(Path(roundedRect: box, cornerRadius: 3),
                                with: .color(WW.moss.opacity(0.7)), lineWidth: 1)
+
+                // The links, under the dots: straight centre to centre, since a curve at this size
+                // is a curve nobody can see. Drawn as one path — it's the *shape* of the graph the
+                // map is for, and a hundred separate strokes would say the same thing slower.
+                var links = Path()
+                let byID = Dictionary(nodes.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+                for node in nodes {
+                    guard let parentID = node.parentID, let parent = byID[parentID] else { continue }
+                    links.move(to: project(CGPoint(x: parent.position.x, y: parent.position.y), fit))
+                    links.addLine(to: project(CGPoint(x: node.position.x, y: node.position.y), fit))
+                }
+                context.stroke(links, with: .color(WW.inkTertiary.opacity(0.55)), lineWidth: 0.75)
 
                 for node in nodes {
                     let point = project(CGPoint(x: node.position.x, y: node.position.y), fit)
