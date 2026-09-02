@@ -70,8 +70,19 @@ the rest of the app depends on.
 - **Inbox gestures.** **Tap** an entry to read the whole thing: the row opens out to every line of
   the transcript, and tapping again folds it back to a few. **Double-tap** to edit it — **in place**,
   where it sits (see *Editing in place* below). **Swipe left** for **Move** (into a document) and
-  **Delete**; **swipe right** for **Copy** and **Transform**. Long-press still enters batch
+  **Delete**; **swipe right** for **Tag**, **Copy** and **Transform**. Long-press still enters batch
   selection.
+- **Tags.** An Inbox entry can be filed under a tag — **Question**, **Reminder**, **Fix** to start
+  with, and the list is yours to edit in **Settings → Inbox Tags**. Two ways in: swipe an entry right
+  and tap **Tag**, or simply *say* it — an entry whose **first word is a tag** files itself the
+  moment it's transcribed. It's forgiving about how you said it ("Questions…", "Fixed…", "Reminders…"
+  all count) and strict about where: a tag has to open the entry, not turn up in the middle of a
+  sentence. A transform runs first, so what the entry ends up saying is what files it, and a tag you
+  chose by hand is never overruled. Once anything is filed, a row of tags appears across the top of
+  the Inbox — tap one to see just those, tap it again for everything. While you're looking at one
+  tag, **Copy All** and **Delete All** appear at the bottom, because everything on screen is then one
+  kind of thing. Entries keep the tag they were filed under even if you later drop it from the
+  Settings list.
 - **Moving an entry into a document.** Swipe an Inbox entry left → **Move** (or select several and
   tap **Move**) and the pane that slides up leads with **New Document**, *above* the list of existing
   documents — it's the destination that's always there, so it no longer sits below however many

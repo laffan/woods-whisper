@@ -22,6 +22,7 @@ final class AppSettings {
         static let graphAutoTransformPresetID = "graphAutoTransformPresetID"
         static let transcriptTextSize = "transcriptTextSize"
         static let prunedModelRepos = "prunedModelRepos"
+        static let inboxTags = "inboxTags"
     }
 
     /// The retired models whose downloaded weights have already been cleared off this device.
@@ -32,6 +33,17 @@ final class AppSettings {
     var prunedModelRepos: Set<String> {
         get { Set(defaults.stringArray(forKey: Key.prunedModelRepos) ?? []) }
         set { defaults.set(Array(newValue), forKey: Key.prunedModelRepos) }
+    }
+
+    // MARK: Inbox tags
+
+    /// The tags an Inbox entry can be filed under, in the order they're offered — edited in
+    /// Settings → Inbox Tags. Starts as `InboxTag.defaults`; an empty list is honoured (the Inbox
+    /// simply stops offering to file anything), which is why "never set" and "set to nothing" are
+    /// told apart by the key's presence rather than by the array being empty.
+    var inboxTags: [String] {
+        get { defaults.stringArray(forKey: Key.inboxTags) ?? InboxTag.defaults }
+        set { defaults.set(newValue, forKey: Key.inboxTags) }
     }
 
     // MARK: Transcription text size

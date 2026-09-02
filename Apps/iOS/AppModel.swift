@@ -510,8 +510,11 @@ final class AppModel: ObservableObject {
             setupError = "There was no text to import."
             return false
         }
-        documents.addRecording(Recording.textEntry(trimmed, origin: deviceOrigin()),
-                               toDocument: documentID)
+        var entry = Recording.textEntry(trimmed, origin: deviceOrigin())
+        // Text arrives already "transcribed", so it never passes the transcription path where a
+        // spoken entry files itself — it files itself here instead, by the same rule.
+        entry.tag = InboxTag.autoTag(for: trimmed, from: AppSettings.shared.inboxTags)
+        documents.addRecording(entry, toDocument: documentID)
         wwLog("Imported \(trimmed.count) characters of text into the Inbox", .general)
         return true
     }
@@ -623,6 +626,9 @@ final class AppModel: ObservableObject {
                          Date().timeIntervalSince(start), result.text.count), .transcription)
             if isFirstTranscription {
                 await applyAutoTransform(recordingID: recordingID, in: documentID)
+                // After the transform, not before: what the entry *ends up saying* is what files it,
+                // so a transform that rewrites the opening words has the last word on the tag.
+                applyAutoTag(recordingID: recordingID, in: documentID)
             }
             // In a graph, the node this clip was spoken into is still empty and waiting for it —
             // after the Auto transform, so the canvas shows the shaped text rather than flashing
@@ -646,6 +652,39 @@ final class AppModel: ObservableObject {
             setupError = error.localizedDescription
             wwLog("Transcription failed for “\(recording.name)”: \(error.localizedDescription)", .error)
         }
+    }
+
+    // MARK: Inbox tags
+
+    /// File a freshly transcribed Inbox entry under a tag, if its first word says which one.
+    ///
+    /// Only the Inbox, and only an entry nobody has filed by hand: the tag is the Inbox's own way of
+    /// sorting a feed of captures, and a choice already made isn't overruled by a rule. Reads the
+    /// transcript back from the store rather than trusting a copy, since an Auto transform may have
+    /// rewritten it a moment ago.
+    func applyAutoTag(recordingID: UUID, in documentID: UUID) {
+        guard documents.document(with: documentID)?.title == DocumentStore.inboxTitle,
+              var recording = documents.document(with: documentID)?
+                .recordings.first(where: { $0.id == recordingID }),
+              recording.tag == nil,
+              let text = recording.transcript,
+              let tag = InboxTag.autoTag(for: text, from: AppSettings.shared.inboxTags)
+        else { return }
+        recording.tag = tag
+        documents.updateRecording(recording, inDocument: documentID)
+        wwLog("Filed “\(recording.name)” under “\(tag)”", .general)
+    }
+
+    /// File an entry by hand — the Tag button behind a swipe. Nil clears the tag.
+    func setTag(_ tag: String?, forRecordings ids: Set<UUID>, in documentID: UUID) {
+        guard let document = documents.document(with: documentID) else { return }
+        for var recording in document.recordings where ids.contains(recording.id) {
+            guard recording.tag != tag else { continue }
+            recording.tag = tag
+            documents.updateRecording(recording, inDocument: documentID)
+        }
+        wwLog(tag.map { "Filed \(ids.count) entr\(ids.count == 1 ? "y" : "ies") under “\($0)”" }
+                ?? "Cleared the tag on \(ids.count) entr\(ids.count == 1 ? "y" : "ies")", .general)
     }
 
     // MARK: Auto transform

@@ -1962,6 +1962,11 @@ struct InboxView: View {
     @State private var pendingNewDocIDs: Set<UUID>?
     @State private var newDocTitle = ""
 
+    // Tags: the entries a tag is being picked for, and the one the list is filtered by.
+    @State private var taggingIDs: Set<UUID>?
+    @State private var filterTag: String?
+    @State private var showingFilteredDeleteConfirm = false
+
     private var inbox: Document? { model.documents.document(with: documentID) }
     /// Newest first — the Inbox reads as a capture feed, so the clip you just made is at the top.
     private var recordings: [Recording] {
@@ -1971,20 +1976,48 @@ struct InboxView: View {
         model.documents.documents.filter { $0.id != documentID && $0.title != DocumentStore.inboxTitle }
     }
 
+    /// The tags on offer, as Settings has them.
+    private var tags: [String] { AppSettings.shared.inboxTags }
+
+    /// The tags worth filtering by: the ones entries are actually filed under, in the order Settings
+    /// lists them — followed by any an entry still carries that the list has since dropped, since
+    /// those entries are exactly the ones you'd want a way back to.
+    private var tagsInUse: [String] {
+        let used = Set(recordings.compactMap(\.tag))
+        return tags.filter(used.contains) + used.subtracting(tags).sorted()
+    }
+
+    /// What the list is showing: everything, or one tag's worth. A filter on a tag that has just
+    /// lost its last entry falls away on its own rather than leaving an empty screen.
+    private var visibleRecordings: [Recording] {
+        guard let filterTag else { return recordings }
+        return recordings.filter { $0.tag == filterTag }
+    }
+
     var body: some View {
         List {
-            ForEach(recordings) { recording in
+            ForEach(visibleRecordings) { recording in
                 inboxRow(recording)
             }
         }
         .wwList()
+        // The filter row rides above the list rather than scrolling with it: it's how you're
+        // *reading* the Inbox, so it stays put while the entries move under it.
+        .safeAreaInset(edge: .top, spacing: 0) { tagFilterBar() }
+        .onChange(of: tagsInUse) { _, inUse in
+            // The last entry under this tag has just gone (deleted, moved, re-filed): drop the
+            // filter rather than leaving an empty list with no way to see it's a filter's doing.
+            if let filterTag, !inUse.contains(filterTag) { self.filterTag = nil }
+        }
         .navigationTitle(selectionMode ? "\(selected.count) selected" : DocumentStore.inboxTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             if selectionMode {
                 ToolbarItem(placement: .cancellationAction) { Button("Done") { exitSelection() } }
                 ToolbarItem(placement: .primaryAction) {
-                    Button(selected.count == recordings.count ? "Deselect All" : "Select All") { selectAll() }
+                    Button(selected.count == visibleRecordings.count ? "Deselect All" : "Select All") {
+                        selectAll()
+                    }
                 }
             } else {
                 // The import menu the documents carry. (No mic beside it any more — recording is the
@@ -2015,6 +2048,9 @@ struct InboxView: View {
                         exitSelection()
                     }
                     WWBatchButton("Copy", "doc.on.doc") { copySelected() }
+                    WWBatchButton("Tag", "tag") {
+                        withAnimation(.snappy(duration: 0.22)) { taggingIDs = selected }
+                    }
                     WWBatchButton("New", "doc.badge.plus") { startNewDocument(for: selected) }
                     WWBatchButton("Move", "folder") {
                         withAnimation(.snappy(duration: 0.22)) { movingIDs = selected }
@@ -2022,10 +2058,15 @@ struct InboxView: View {
                 }
                 .disabled(selected.isEmpty)
             } else if editingID == nil {
-                CaptureBar(presets: model.documents.presets,
-                           selected: model.autoTransformPreset(for: documentID),
-                           onSelect: { model.setAutoTransform($0, for: documentID) },
-                           onRecord: { showingRecorder = true })
+                VStack(spacing: 0) {
+                    // While a filter is on, the whole of what's on screen is one kind of thing —
+                    // so there's a sensible "all of it" to copy or to be rid of.
+                    if filterTag != nil { filteredActionsBar() }
+                    CaptureBar(presets: model.documents.presets,
+                               selected: model.autoTransformPreset(for: documentID),
+                               onSelect: { model.setAutoTransform($0, for: documentID) },
+                               onRecord: { showingRecorder = true })
+                }
             }
         }
         .overlay {
@@ -2062,6 +2103,17 @@ struct InboxView: View {
             if let ids = movingIDs {
                 moveOverlay(ids: ids)
             }
+        }
+        .overlay {
+            if let ids = taggingIDs {
+                tagOverlay(ids: ids)
+            }
+        }
+        .confirmationDialog("Delete every “\(filterTag ?? "")” entry?",
+                            isPresented: $showingFilteredDeleteConfirm, titleVisibility: .visible) {
+            Button("Delete \(visibleRecordings.count)", role: .destructive) { deleteFiltered() }
+        } message: {
+            Text("The audio goes with them. This can't be undone.")
         }
         // Swipe-right Transform: pick the preset, then rewrite the transcript in place. The target
         // id is captured while the dialog is built, so the action doesn't race the dismissal.
@@ -2134,8 +2186,11 @@ struct InboxView: View {
                     Button("Move") { withAnimation(.snappy(duration: 0.22)) { movingIDs = [recording.id] } }
                         .tint(WW.slate)
                 }
-                // Swipe right → Copy / Transform.
+                // Swipe right → Tag / Copy / Transform.
                 .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                    Button("Tag") {
+                        withAnimation(.snappy(duration: 0.22)) { taggingIDs = [recording.id] }
+                    }.tint(WW.moss)
                     Button("Copy") { copy(recording) }.tint(WW.inkTertiary)
                     Button("Transform") { transformTargetID = recording.id }
                         .tint(WW.violet)
@@ -2304,6 +2359,192 @@ struct InboxView: View {
         }
     }
 
+    // MARK: Tags
+
+    /// The row of tags across the top of the Inbox, there only once something is filed under one —
+    /// a filter you didn't ask for is a control in the way, and an Inbox nobody has tagged has
+    /// nothing to filter.
+    ///
+    /// Tapping the tag you're already on takes the filter off, which is the same gesture as tapping
+    /// "All" and saves reaching for it.
+    @ViewBuilder
+    private func tagFilterBar() -> some View {
+        let inUse = tagsInUse
+        if !inUse.isEmpty, !selectionMode, editingID == nil {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    tagChip("All", isOn: filterTag == nil) {
+                        withAnimation(.snappy(duration: 0.2)) { filterTag = nil }
+                    }
+                    ForEach(inUse, id: \.self) { tag in
+                        tagChip(tag, isOn: filterTag == tag) {
+                            withAnimation(.snappy(duration: 0.2)) {
+                                filterTag = (filterTag == tag) ? nil : tag
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 8)
+            }
+            .background(WW.paper)
+            .overlay(alignment: .bottom) { WWHairline() }
+        }
+    }
+
+    private func tagChip(_ title: String, isOn: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 13, weight: isOn ? .semibold : .regular))
+                .foregroundStyle(isOn ? WW.paper : WW.ink)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(isOn ? WW.moss : WW.surface, in: Capsule())
+                .overlay(Capsule().stroke(isOn ? WW.moss : WW.hairline, lineWidth: 1))
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// What a filtered Inbox can do to the whole of what it's showing: take it all, or be rid of it
+    /// all. It only stands up while a filter is on, because "all of it" only means something when
+    /// what's on screen is one kind of thing.
+    @ViewBuilder
+    private func filteredActionsBar() -> some View {
+        HStack(spacing: 0) {
+            Button { copyFiltered() } label: {
+                Label("Copy All", systemImage: "doc.on.doc")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(WW.moss)
+                    .frame(maxWidth: .infinity)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            Button { showingFilteredDeleteConfirm = true } label: {
+                Label("Delete All", systemImage: "trash")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(WW.ember)
+                    .frame(maxWidth: .infinity)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.vertical, 10)
+        .frame(maxWidth: WW.contentMaxWidth)
+        .frame(maxWidth: .infinity)
+        .background(WW.surface)
+        .overlay(alignment: .top) { WWHairline() }
+        .disabled(visibleRecordings.isEmpty)
+        .opacity(visibleRecordings.isEmpty ? 0.35 : 1)
+        .transition(.move(edge: .bottom).combined(with: .opacity))
+    }
+
+    /// Every entry the filter is showing, as one piece of text — the same shape a batch Copy hands
+    /// over, in the order they're on screen.
+    private func copyFiltered() {
+        let text = visibleRecordings
+            .compactMap { $0.transcript?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n\n")
+        guard !text.isEmpty else { return }
+        #if canImport(UIKit)
+        UIPasteboard.general.string = text
+        #endif
+        WWHaptics.light()
+        wwLog("Copied \(visibleRecordings.count) “\(filterTag ?? "")” entries", .general)
+    }
+
+    private func deleteFiltered() {
+        let ids = Set(visibleRecordings.map(\.id))
+        guard !ids.isEmpty else { return }
+        model.documents.deleteRecordings(ids, fromDocument: documentID)
+        wwLog("Deleted \(ids.count) “\(filterTag ?? "")” entries", .general)
+        withAnimation(.snappy(duration: 0.2)) { filterTag = nil }
+    }
+
+    /// The tag picker: the same floating pane as Move, over the same dimmed scrim. Lists the tags
+    /// Settings holds, with the one this entry already carries marked, and **No Tag** to take it
+    /// off again.
+    @ViewBuilder
+    private func tagOverlay(ids: Set<UUID>) -> some View {
+        ZStack(alignment: .bottom) {
+            Color.black.opacity(0.25)
+                .ignoresSafeArea()
+                .onTapGesture { withAnimation(.snappy(duration: 0.22)) { taggingIDs = nil } }
+            tagPane(ids: ids)
+                .wwPane()
+                .padding(.horizontal, 12)
+                .padding(.bottom, 8)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+        }
+    }
+
+    @ViewBuilder
+    private func tagPane(ids: Set<UUID>) -> some View {
+        let current = currentTag(of: ids)
+        VStack(spacing: 0) {
+            Text("Tag")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(WW.ink)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16).padding(.top, 16).padding(.bottom, 12)
+            WWHairline()
+            ScrollView {
+                VStack(spacing: 0) {
+                    ForEach(tags, id: \.self) { tag in
+                        tagRow(tag, isOn: current == tag) { apply(tag: tag, to: ids) }
+                        WWHairline().padding(.leading, 16)
+                    }
+                    tagRow("No Tag", isOn: current == nil, tint: WW.inkSecondary) {
+                        apply(tag: nil, to: ids)
+                    }
+                    if tags.isEmpty {
+                        Text("Add tags in Settings → Inbox Tags.")
+                            .font(.caption)
+                            .foregroundStyle(WW.inkSecondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 16).padding(.vertical, 12)
+                    }
+                }
+            }
+            .frame(maxHeight: 320)
+        }
+    }
+
+    private func tagRow(_ title: String, isOn: Bool, tint: Color = WW.ink,
+                        action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Text(title).foregroundStyle(tint)
+                Spacer(minLength: 8)
+                if isOn {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(WW.moss)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 16).padding(.vertical, 12)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// The tag these entries share, or nil when they don't share one (or carry none).
+    private func currentTag(of ids: Set<UUID>) -> String? {
+        let tags = Set(recordings.filter { ids.contains($0.id) }.map(\.tag))
+        return tags.count == 1 ? tags.first ?? nil : nil
+    }
+
+    private func apply(tag: String?, to ids: Set<UUID>) {
+        withAnimation(.snappy(duration: 0.22)) {
+            model.setTag(tag, forRecordings: ids, in: documentID)
+            taggingIDs = nil
+            exitSelection()
+        }
+        WWHaptics.light()
+    }
+
     // MARK: Move-to-document pane
 
     /// Floating pane (swipe a recording left → Move, or batch "Move"): the same design as the
@@ -2431,8 +2672,9 @@ struct InboxView: View {
         if selected.contains(id) { selected.remove(id) } else { selected.insert(id) }
     }
 
+    /// "Select All" means all of what's *shown*: with a filter on, the entries under it.
     private func selectAll() {
-        let all = Set(recordings.map(\.id))
+        let all = Set(visibleRecordings.map(\.id))
         selected = (selected == all) ? [] : all
     }
 
@@ -2513,9 +2755,22 @@ private struct InboxRecordingRow<Editor: View>: View {
                 } else {
                     RecordingLabel(recording: recording, lineLimit: isExpanded ? nil : 8)
                 }
-                Text(recording.createdAt.formatted(date: .abbreviated, time: .shortened))
-                    .font(.caption2)
-                    .foregroundStyle(WW.inkTertiary)
+                // The capture time, and — for an entry that's been filed — what it was filed as.
+                // Small and beside the date rather than over the text: it's a note about the entry,
+                // not part of what the entry says.
+                HStack(spacing: 6) {
+                    if let tag = recording.tag {
+                        Text(tag)
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(WW.moss)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(WW.moss.opacity(0.12), in: Capsule())
+                    }
+                    Text(recording.createdAt.formatted(date: .abbreviated, time: .shortened))
+                        .font(.caption2)
+                        .foregroundStyle(WW.inkTertiary)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())

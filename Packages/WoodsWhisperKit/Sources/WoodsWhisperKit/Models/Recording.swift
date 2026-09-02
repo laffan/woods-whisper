@@ -59,6 +59,12 @@ public struct Recording: Identifiable, Codable, Hashable, Sendable {
     /// Nil for a clip with no body to reach — an Inbox capture, a graph node's, a Watch arrival.
     public var bodyDestination: BodyDestination?
 
+    /// What this entry was filed under in the Inbox — "Question", "Reminder", "Fix" — or nil for
+    /// one that hasn't been filed. The tag's **name**, not a reference to one: the list of tags is a
+    /// setting the user edits, and an entry shouldn't lose what it says about itself because a tag
+    /// was renamed or dropped from that list.
+    public var tag: String?
+
     /// Where a clip's transcript belongs in the body it was captured into.
     public enum BodyDestination: Codable, Hashable, Sendable {
         /// At the end of the body — the document's record button, and the Documents list's "+".
@@ -95,7 +101,8 @@ public struct Recording: Identifiable, Codable, Hashable, Sendable {
         status: Status = .pending,
         isRevision: Bool = false,
         targetDocumentID: UUID? = nil,
-        bodyDestination: BodyDestination? = nil
+        bodyDestination: BodyDestination? = nil,
+        tag: String? = nil
     ) {
         self.id = id
         self.name = name ?? Recording.defaultName(for: createdAt, duration: duration, byteCount: nil)
@@ -110,6 +117,7 @@ public struct Recording: Identifiable, Codable, Hashable, Sendable {
         self.isRevision = isRevision
         self.targetDocumentID = targetDocumentID
         self.bodyDestination = bodyDestination
+        self.tag = tag
     }
 
     // Custom decoding so recordings saved (or transmitted) by older builds — which had no
@@ -117,7 +125,7 @@ public struct Recording: Identifiable, Codable, Hashable, Sendable {
     // default rather than failing.
     enum CodingKeys: String, CodingKey {
         case id, name, createdAt, duration, audioFileName, sampleRate, origin,
-             sourceDeviceID, transcript, status, isRevision, targetDocumentID, bodyDestination
+             sourceDeviceID, transcript, status, isRevision, targetDocumentID, bodyDestination, tag
     }
 
     public init(from decoder: Decoder) throws {
@@ -135,6 +143,7 @@ public struct Recording: Identifiable, Codable, Hashable, Sendable {
         isRevision = try c.decodeIfPresent(Bool.self, forKey: .isRevision) ?? false
         targetDocumentID = try c.decodeIfPresent(UUID.self, forKey: .targetDocumentID)
         bodyDestination = try c.decodeIfPresent(BodyDestination.self, forKey: .bodyDestination)
+        tag = try c.decodeIfPresent(String.self, forKey: .tag)
     }
 
     /// True when there is no audio behind this entry — text imported (from the clipboard or a text

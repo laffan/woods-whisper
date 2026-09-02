@@ -19,6 +19,9 @@ struct SettingsView: View {
     @State private var showingFolderPicker = false
     @State private var deviceName = AppSettings.shared.deviceDisplayName
     @State private var graphAutoTransformID: UUID? = AppSettings.shared.graphAutoTransformPresetID
+    /// The tag list as it's being edited, and the field a new one is typed into.
+    @State private var inboxTags: [String] = AppSettings.shared.inboxTags
+    @State private var newTag = ""
     @FocusState private var deviceNameFocused: Bool
 
     var body: some View {
@@ -29,6 +32,7 @@ struct SettingsView: View {
                 speechModelSection
                 languageModelSection
                 presetsSection
+                inboxTagsSection
                 graphSection
                 backupSection
                 connectivitySection
@@ -281,6 +285,60 @@ struct SettingsView: View {
             WWSectionHeader("Prompt Presets")
         }
         .listRowBackground(WW.surface)
+    }
+
+    // MARK: Inbox tags
+
+    /// The tags the Inbox files entries under. Kept here rather than in the Inbox itself because
+    /// it's a list you set up once and then use for months — and because the Inbox's own screen is
+    /// for the entries, not for the filing system.
+    private var inboxTagsSection: some View {
+        Section {
+            ForEach(inboxTags, id: \.self) { tag in
+                HStack(spacing: 10) {
+                    Image(systemName: "tag")
+                        .font(.system(size: 12))
+                        .foregroundStyle(WW.moss)
+                    Text(tag).foregroundStyle(WW.ink)
+                }
+            }
+            .onDelete { offsets in
+                inboxTags.remove(atOffsets: offsets)
+                AppSettings.shared.inboxTags = inboxTags
+            }
+            HStack(spacing: 10) {
+                TextField("New tag", text: $newTag)
+                    .textInputAutocapitalization(.words)
+                    .autocorrectionDisabled()
+                    .onSubmit(addTag)
+                Button("Add", action: addTag)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(canAddTag ? WW.moss : WW.inkTertiary)
+                    .disabled(!canAddTag)
+            }
+        } header: {
+            WWSectionHeader("Inbox Tags")
+        } footer: {
+            WWFooter("Swipe an Inbox entry right and tap Tag to file it under one of these. An entry "
+                     + "whose first word *is* one of them — “Question…”, “Fixed…”, “Reminders…” — "
+                     + "files itself the moment it's transcribed. Swipe a tag away here and the "
+                     + "entries filed under it keep saying so; they simply have no filter to sit in.")
+        }
+        .listRowBackground(WW.surface)
+    }
+
+    private var canAddTag: Bool {
+        let trimmed = newTag.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !trimmed.isEmpty && !inboxTags.contains { $0.caseInsensitiveCompare(trimmed) == .orderedSame }
+    }
+
+    private func addTag() {
+        let trimmed = newTag.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard canAddTag else { return }
+        inboxTags.append(trimmed)
+        AppSettings.shared.inboxTags = inboxTags
+        newTag = ""
+        wwLog("Added the Inbox tag “\(trimmed)”", .general)
     }
 
     // MARK: Graphs

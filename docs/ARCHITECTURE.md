@@ -145,6 +145,18 @@ screen is showing a placeholder for (recording, paragraph, node, document), so t
 read **Thinking…** until the answer starts and **Transforming…** after. The phase is latched beside
 the stream, so an ordinary token costs a comparison rather than a hop back to the main actor.
 
+**Inbox tags (iOS).** `Recording.tag` holds a tag's **name**, not a reference into the list of them
+(`AppSettings.inboxTags`, edited in Settings): the list is a setting the user rearranges, and an
+entry shouldn't lose what it says about itself because a tag was renamed or dropped — a filter for
+an orphaned tag simply appears alongside the configured ones for as long as entries carry it.
+Automatic filing is `InboxTag.autoTag(for:from:)`, which compares *stems*: lowercase, letters only,
+then endings taken off repeatedly and never below three characters, so "Questions", "Fixed" and
+"Reminders" file where you'd expect while "Fixture" doesn't land under "Fix". It's the **first word**
+only — a tag in the middle of a sentence is a word in a sentence. It runs from `AppModel.transcribe`
+*after* the Auto transform (what the entry ends up saying is what files it) and never over a tag
+already set by hand, and again in `importText(_:intoInbox:)`, since text arrives already
+"transcribed" and never passes the transcription path at all.
+
 **Joint documents (iOS).** A document and a graph shown at once are *two documents and a link*,
 not a third kind of container. `Document.joinedID` is stored on one half only — the one the pair was
 made from — and `DocumentStore.jointPartnerID(of:)` answers from either side, so no caller has to

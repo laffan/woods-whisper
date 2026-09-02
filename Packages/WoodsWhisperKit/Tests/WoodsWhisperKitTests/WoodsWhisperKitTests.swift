@@ -273,6 +273,67 @@ final class WoodsWhisperKitTests: XCTestCase {
         XCTAssertTrue(Document.paragraphs(fromLinesOf: "   \n\n ").isEmpty)
     }
 
+    // MARK: Inbox tags
+
+    func testTheFirstWordFilesTheEntry() {
+        XCTAssertEqual(InboxTag.autoTag(for: "Question — where does the trail cross?",
+                                        from: InboxTag.defaults), "Question")
+    }
+
+    /// "How it was said" shouldn't decide whether it files: same word, same tag.
+    func testVersionsOfTheWordStillFile() {
+        XCTAssertEqual(InboxTag.autoTag(for: "Questions about the pass", from: InboxTag.defaults),
+                       "Question")
+        XCTAssertEqual(InboxTag.autoTag(for: "Fixed the stove", from: InboxTag.defaults), "Fix")
+        XCTAssertEqual(InboxTag.autoTag(for: "Fixing the stove", from: InboxTag.defaults), "Fix")
+        XCTAssertEqual(InboxTag.autoTag(for: "Reminders: water filter", from: InboxTag.defaults),
+                       "Reminder")
+        XCTAssertEqual(InboxTag.autoTag(for: "remind me to soak the beans",
+                                        from: InboxTag.defaults), "Reminder")
+    }
+
+    /// The word has to *start* the entry — a tag mentioned later is just a word in a sentence.
+    func testATagInTheMiddleDoesNotFile() {
+        XCTAssertNil(InboxTag.autoTag(for: "I have a question about the pass",
+                                      from: InboxTag.defaults))
+    }
+
+    func testOrdinaryTextFilesNowhere() {
+        XCTAssertNil(InboxTag.autoTag(for: "Elk by the creek at first light",
+                                      from: InboxTag.defaults))
+        XCTAssertNil(InboxTag.autoTag(for: "", from: InboxTag.defaults))
+        XCTAssertNil(InboxTag.autoTag(for: "   ", from: InboxTag.defaults))
+    }
+
+    /// A short tag isn't stemmed away to nothing, and doesn't swallow longer words.
+    func testShortTagsSurviveStemming() {
+        XCTAssertTrue(InboxTag.matches("Fix:", tag: "Fix"))
+        XCTAssertFalse(InboxTag.matches("Fixture", tag: "Fix"))
+    }
+
+    /// Ties go to the order the list is in, which is the order Settings shows.
+    func testTheEarlierTagWins() {
+        XCTAssertEqual(InboxTag.autoTag(for: "Fix that", from: ["Fix", "Fixes"]), "Fix")
+        XCTAssertEqual(InboxTag.autoTag(for: "Fix that", from: ["Fixes", "Fix"]), "Fixes")
+    }
+
+    func testATagSurvivesARecordingRoundTrip() throws {
+        let clip = Recording(audioFileName: "a.m4a", origin: .phone, tag: "Reminder")
+        let decoded = try JSONDecoder.iso.decode(Recording.self,
+                                                 from: try JSONEncoder.iso.encode(clip))
+        XCTAssertEqual(decoded.tag, "Reminder")
+    }
+
+    /// A recording saved before tags existed reads back untagged.
+    func testRecordingWithoutATagKeyDecodesAsUntagged() throws {
+        let json = """
+        {"id":"\(UUID().uuidString)","name":"Clip","createdAt":"2026-07-31T14:30:05Z",\
+        "duration":3,"audioFileName":"a.m4a","sampleRate":16000,"origin":"phone","status":"done"}
+        """
+        let decoded = try JSONDecoder.iso.decode(Recording.self, from: Data(json.utf8))
+        XCTAssertNil(decoded.tag)
+    }
+
     // MARK: Joint documents
 
     /// The half a link points at is the one the lists leave out; the half that points is the row.
