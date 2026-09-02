@@ -57,10 +57,6 @@ struct DocumentDetailView: View {
     @State private var showingRename = false
     @State private var renameText = ""
 
-    /// Set when "Create Joint Document" has just made the other half: the pair opens straight away
-    /// rather than waiting to be found again from the Documents list.
-    @State private var showingJoint = false
-
     // Reset-with-originals confirmation
     @State private var showingResetConfirm = false
 
@@ -91,11 +87,6 @@ struct DocumentDetailView: View {
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbarContent(for: document) }
-        .navigationDestination(isPresented: $showingJoint) {
-            if let partner = model.documents.jointPartnerID(of: documentID) {
-                JointDocumentView(documentID: documentID, partnerID: partner)
-            }
-        }
         .onAppear { playback.onError = { message in model.setupError = message } }
         // Leaving the document commits an open in-place edit rather than dropping it.
         .onDisappear {
@@ -511,12 +502,13 @@ struct DocumentDetailView: View {
     /// Whether this document is half of a pair.
     private var isJoined: Bool { model.documents.jointPartnerID(of: documentID) != nil }
 
-    /// "Create Joint Document": make the graph half and open the two together. The push lands on
-    /// top of this screen, so Back still leads where it did.
+    /// "Create Joint Document": make the graph half. Nothing is pushed — this screen *becomes* the
+    /// pair, because the route that opened it (`Route.document`) asks the store each time whether
+    /// that document has a partner, and now it has. Pushing instead would mean a second navigation
+    /// style in a stack driven by a typed path, which SwiftUI treats as a fatal mismatch.
     private func createJointCounterpart() {
         guard let counterpart = model.documents.createJointCounterpart(for: documentID) else { return }
         wwLog("Joined “\(counterpart.title)” to a new graph", .general)
-        showingJoint = true
     }
 
     /// "Separate Joint Document": the halves go their own ways, both keeping everything in them.
@@ -2909,9 +2901,13 @@ private struct ShareTarget: Identifiable {
 /// Which pane goes where is decided by what the halves *are*, not by which one was made first: the
 /// document reads top-to-bottom so it takes the top (or, with room across, the left), and the graph
 /// takes the half that's left.
+///
+/// Nothing pushes this screen. It's what the Documents list's own route resolves to while the
+/// document it names has a partner, so making a pair from inside a half turns that half into this,
+/// and separating turns it back — without a second navigation style in a stack that already has
+/// one, which is a mismatch SwiftUI treats as fatal rather than as a layout to sort out.
 struct JointDocumentView: View {
     @EnvironmentObject private var model: AppModel
-    @Environment(\.dismiss) private var dismiss
     @Environment(\.horizontalSizeClass) private var sizeClass
 
     /// The half that was open when the pair was made, and the one made for it. Which is which
@@ -2925,12 +2921,6 @@ struct JointDocumentView: View {
               let b = model.documents.document(with: partnerID) else { return nil }
         if a.isGraph == b.isGraph { return nil }          // two of a kind is not a pair
         return a.isGraph ? (b.id, a.id) : (a.id, b.id)
-    }
-
-    /// Whether the pair still holds. Separating from inside either pane leaves this screen showing
-    /// something that isn't a pair any more, so it takes itself off the stack instead.
-    private var isStillJoined: Bool {
-        model.documents.jointPartnerID(of: documentID) == partnerID
     }
 
     var body: some View {
@@ -2958,11 +2948,13 @@ struct JointDocumentView: View {
         }
         // The pair's own bar carries nothing but the way back: everything you can do to either half
         // is in that half's own menu, including separating the two.
+        //
+        // Nothing here watches for the pair being separated, and nothing dismisses. This screen is
+        // what the route `Route.document(id)` *resolves to* while that document has a partner, so
+        // separating from inside a pane resolves it back to the single half on its own — the way it
+        // arrived. One navigation style, one source of truth, no stack to unwind by hand.
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
-        .onChange(of: isStillJoined) { _, joined in
-            if !joined { dismiss() }
-        }
     }
 
     /// One half, in a navigation stack of its own — which is what gives it the bar its title and
@@ -3128,8 +3120,6 @@ struct GraphDocumentView: View {
     @State private var renameText = ""
     @State private var shareItem: ShareItem?
     @State private var documentFileShare: DocumentFileShareItem?
-    /// Set when "Create Joint Document" has just made the other half — the pair opens straight away.
-    @State private var showingJoint = false
 
     private var document: Document? { model.documents.document(with: documentID) }
 
@@ -3155,11 +3145,6 @@ struct GraphDocumentView: View {
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbarContent(for: document) }
-        .navigationDestination(isPresented: $showingJoint) {
-            if let partner = model.documents.jointPartnerID(of: documentID) {
-                JointDocumentView(documentID: documentID, partnerID: partner)
-            }
-        }
         // No bottom bar here. A graph has no record button — the hold on the canvas is it — and its
         // Auto transform is an app-wide setting ("Auto transform nodes", in Settings → Graphs)
         // rather than a per-document toggle, so the canvas runs all the way down to the edge.
@@ -5106,11 +5091,11 @@ struct GraphDocumentView: View {
     /// Whether this graph is half of a pair.
     private var isJoined: Bool { model.documents.jointPartnerID(of: documentID) != nil }
 
-    /// "Create Joint Document": make the prose half and open the two together.
+    /// "Create Joint Document": make the prose half. This screen *becomes* the pair — see the same
+    /// method on `DocumentDetailView` for why nothing is pushed.
     private func createJointCounterpart() {
         guard let counterpart = model.documents.createJointCounterpart(for: documentID) else { return }
         wwLog("Joined “\(counterpart.title)” to a new document", .general)
-        showingJoint = true
     }
 
     /// "Separate Joint Document": the halves go their own ways, both keeping everything in them.

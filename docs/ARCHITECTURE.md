@@ -183,6 +183,15 @@ clears any such link at load, since nobody should have to go looking for it by h
 have everywhere else; without it both toolbars would pile into the one bar above and fight over it.
 Which pane is where is decided by kind, not by which half came first.
 
+**Nothing pushes the pair, and nothing pops it.** `Route.document(id)` asks the store, each time it
+resolves, whether that document has a partner — so making a pair from inside a half turns that half
+into the split view, and separating turns it back, with no navigation to drive. The first cut pushed
+it with `navigationDestination(isPresented:)`, which is a *second* navigation style inside a stack
+already driven by a typed `[Route]` path: the boolean push puts an element in that path the typed
+binding can't represent, and SwiftUI raises `AnyNavigationPath.Error.comparisonTypeMismatch` — a
+`try!` inside the framework, so it takes the app with it. One stack, one style, one source of
+truth.
+
 **Graph documents (iOS).** A graph is a `Document` with `kind == .graph`; `DocumentsView` routes to
 `GraphDocumentView` (at the bottom of `DocumentDetailView.swift`, alongside the Inbox and the
 recorder, so the app target picks it up without an xcodegen regen) on that flag alone, so every way
