@@ -85,9 +85,10 @@ struct SettingsView: View {
             WWSectionHeader("Display")
         } footer: {
             WWFooter("When on, the screen rotates to landscape. Turn it off to lock the app to portrait. "
-                     + "Text Size sets how big transcriptions are drawn — a document's paragraphs, "
-                     + "an Inbox entry, a graph node — and the editor each of those becomes when you "
-                     + "open it, so nothing changes size under your finger.")
+                     + "Text Size sets how big transcriptions are drawn — a document's paragraphs and "
+                     + "an Inbox entry alike, at the size below; a graph node a little under it, being "
+                     + "a card on a canvas — and the editor each of those becomes when you open it, "
+                     + "so nothing changes size under your finger.")
         }
         .listRowBackground(WW.surface)
     }

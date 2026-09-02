@@ -1126,19 +1126,22 @@ struct InlineTextEditor: View {
 enum InlineTextStyle {
     /// A paragraph of a document body: the chosen size, at `.lineSpacing(5)`.
     case documentBody
-    /// An Inbox entry's transcript: the compact size its preview is set in.
+    /// An Inbox entry's transcript: the chosen size too — an Inbox entry is text you read, the same
+    /// as a paragraph, so it's set the same. Only the line spacing is tighter, the rows being a
+    /// feed rather than a page.
     case inboxTranscript
-    /// A node on a graph canvas — the same compact type an Inbox entry is set in, since a node card
-    /// is the same small block of text.
+    /// A node on a graph canvas: two points under the chosen size, as it has always been. A node is
+    /// a card pinned to fixed coordinates rather than a line of running text — its size decides how
+    /// much of the canvas it covers — so it stays compact.
     case graphNode
 
     /// The size this style comes out at, given the text size chosen in Settings → Display. A
-    /// paragraph is set at the chosen size itself; the compact blocks — an Inbox transcript, a node
-    /// card — sit two points under it, the same step they've always been below body text.
+    /// paragraph and an Inbox entry are both set at the chosen size itself — one setting, one size,
+    /// wherever text is read top-to-bottom. A node card keeps its two-point step below that.
     func pointSize(_ points: Double) -> CGFloat {
         switch self {
-        case .documentBody:                 return CGFloat(points)
-        case .inboxTranscript, .graphNode:  return CGFloat(max(points - 2, 9))
+        case .documentBody, .inboxTranscript:   return CGFloat(points)
+        case .graphNode:                        return CGFloat(max(points - 2, 9))
         }
     }
 
@@ -2271,8 +2274,10 @@ struct InboxView: View {
 
     /// Floating pane (swipe a recording left → Move, or batch "Move"): the same design as the
     /// document Transform pane — a dimmed scrim you tap to dismiss, with the pane anchored at the
-    /// bottom. Lists the destination documents and, below them, a "New Document" button that opens
-    /// the rename step and then moves the recording(s) into the fresh document.
+    /// bottom. A "New Document" button sits at the top, above the list of destination documents: it
+    /// opens the rename step and then moves the recording(s) into the fresh document — the one
+    /// choice that is always there, so it doesn't move down the pane as documents pile up (or get
+    /// scrolled to at all).
     @ViewBuilder
     private func moveOverlay(ids: Set<UUID>) -> some View {
         ZStack(alignment: .bottom) {
@@ -2287,8 +2292,9 @@ struct InboxView: View {
         }
     }
 
-    /// The pane body: a "Move to Document" header, one row per destination document, then a
-    /// "New Document" row (mirroring "Add New Transform…" on the Transform pane).
+    /// The pane body: a "Move to Document" header, a "New Document" row, then one row per
+    /// destination document. "New Document" leads because it's the one destination that's always
+    /// available — a long list of documents would otherwise push it out of sight below the scroll.
     @ViewBuilder
     private func movePane(ids: Set<UUID>) -> some View {
         VStack(spacing: 0) {
@@ -2301,7 +2307,21 @@ struct InboxView: View {
             WWHairline()
             ScrollView {
                 VStack(spacing: 0) {
+                    Button {
+                        withAnimation(.snappy(duration: 0.22)) { movingIDs = nil }
+                        startNewDocument(for: ids)
+                    } label: {
+                        Label("New Document", systemImage: "plus")
+                            .foregroundStyle(WW.moss)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 16).padding(.vertical, 12)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    // The hairline goes *above* each destination — under "New Document" and between
+                    // the documents — so the list doesn't end on a rule against the pane's edge.
                     ForEach(documentTargets) { target in
+                        WWHairline().padding(.leading, 16)
                         Button {
                             withAnimation(.snappy(duration: 0.22)) {
                                 model.documents.moveRecordings(ids, from: documentID, to: target.id)
@@ -2316,16 +2336,6 @@ struct InboxView: View {
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
-                        WWHairline().padding(.leading, 16)
-                    }
-                    Button {
-                        withAnimation(.snappy(duration: 0.22)) { movingIDs = nil }
-                        startNewDocument(for: ids)
-                    } label: {
-                        Label("New Document", systemImage: "plus")
-                            .foregroundStyle(WW.moss)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 16).padding(.vertical, 12)
                     }
                 }
             }

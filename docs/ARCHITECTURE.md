@@ -91,7 +91,15 @@ storage, and connectivity code without the model dependencies.
 **Transcribe (iOS):** `AppModel.transcribe` → `TranscriptionService.transcribe`
 (`SpeechTranscriptionCoordinator` routes to Parakeet — decoding to 16 kHz `[Float]` — or to
 WhisperKit by file path) → sets the recording's `transcript`. "Re-transcribe" then appends that
-text to the document body as a paragraph.
+text to the document body.
+
+**Two paragraph rules, by who wrote the text.** Text the app *produced* — a transcript, a
+transform's answer — is split by `Document.paragraphs(fromLinesOf:)`, one paragraph per line: a
+transform can hand back a list or a set of points separated by a single newline, and filing that as
+one paragraph leaves text that *reads* as several sections but is one, with no inter-paragraph "+"
+between them and nothing to reorder, swipe or transform on its own. Text *you* wrote — an in-place
+edit, an imported file, the clipboard — keeps `Document.paragraphs(from:)`, blank lines only, so a
+soft break you typed stays inside its paragraph.
 
 **Where a capture's words land is carried by the clip, not by whoever recorded it.** A recording
 made *into* a document — the record button, the Documents list's "+", an "insert here", a
@@ -115,7 +123,8 @@ backup — then works on it unchanged.
 **Transform (iOS):** `AppModel.transformDocument` (whole body) / `transformParagraph` (one
 paragraph) / `transformGraphNode` (one node) / `transformRecordingTranscript` (one clip's
 transcript) → `TextTransformService.transform` → the result **replaces** the text in place rather
-than appending a new block.
+than appending a new block — split back into paragraphs by the line rule above wherever it lands in
+a document body.
 
 **A model's reasoning never becomes your words.** The two filters a streamed response passes through
 — `StopSequenceFilter` (drops the turn-end marker and everything after it) and `ThinkSplitter`
@@ -249,8 +258,9 @@ whole hierarchy as the `transcriptTextSize` environment value, so changing it in
 that draws such text rather than taking effect on whatever redraws next. `InlineTextStyle` turns that
 number into both halves of a style — the SwiftUI `Font` a row is drawn with and the `UIFont` the
 in-place `UITextView` editor uses — which is what keeps text from resizing the instant you tap it.
-The compact blocks (an Inbox transcript, a node card) sit two points under the chosen size, the step
-they've always been below body text.
+A document's paragraphs and an Inbox entry are set at the chosen size itself — one setting, one
+size, wherever text is read top-to-bottom — while a node card sits two points under it, being a card
+pinned to fixed canvas coordinates rather than a line of running text.
 
 ## Persistence
 

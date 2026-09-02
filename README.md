@@ -72,6 +72,19 @@ the rest of the app depends on.
   where it sits (see *Editing in place* below). **Swipe left** for **Move** (into a document) and
   **Delete**; **swipe right** for **Copy** and **Transform**. Long-press still enters batch
   selection.
+- **Moving an entry into a document.** Swipe an Inbox entry left → **Move** (or select several and
+  tap **Move**) and the pane that slides up leads with **New Document**, *above* the list of existing
+  documents — it's the destination that's always there, so it no longer sits below however many
+  documents you've got. Pick it, name the document, and the entries move across with their text
+  seeded into the body.
+- **A line break makes a section.** Text the app itself produced — a transcript, a transform's
+  answer — becomes **one paragraph per line** when it lands in a document body. So an Inbox entry a
+  transform broke into lines (a list, a set of points) arrives as the sections it reads as, each with
+  its own inter-paragraph **"+"**, its own swipe actions, and its own place in the reorder — rather
+  than as one block with the breaks buried inside it. It holds wherever that text reaches a body: a
+  new document seeded from the Inbox, a clip recorded straight into a document, **Append** /
+  **Re-transcribe**, and a whole-document or paragraph transform. Text *you* wrote keeps the other
+  rule — blank lines split, a single line break you typed stays inside its paragraph.
 - **Editing in place.** Editing never opens a sheet over what you're reading. Double-tap an Inbox
   entry (or a paragraph in a document, or swipe it right → **Edit**) and *that block* becomes the
   editor: an outlined box that grows with the text, in the type it was already set in, everything
@@ -79,7 +92,8 @@ the rest of the app depends on.
   outline — a compressed row of icons at the **left**, **Done** at the **right**. For an Inbox entry
   the icons are **Copy / Share / Transform / Reset** (Share hands off either the text or the audio
   clip); for a paragraph they're **Revise / Insert / Transform**. **Done** saves and closes; blank
-  lines you added split the block into separate paragraphs.
+  lines you added split the block into separate paragraphs (a single line break you typed stays
+  inside the paragraph — it's text the *app* wrote that splits on every line).
 - **One red record button.** Recording isn't a toolbar glyph any more. In the **Inbox** and inside a
   **document** it's a plain red dot, centered above the bottom bar — nothing behind it, the text
   scrolling past underneath — and it does what the mic did there before: a clip filed into the
@@ -184,10 +198,12 @@ the rest of the app depends on.
   text quietly drop the actions that need audio: no play control, no Retranscribe, no Reset.)
 - **Number Paragraphs.** A built-in transform that numbers the paragraphs (applied locally, so it needs
   no language model).
-- **Text size.** **Settings → Display → Text Size** sets how big transcriptions are drawn —
-  a document's paragraphs, an Inbox entry, a graph node — with a sample line under the slider so you
-  can see what you're choosing. The in-place editors read the same number, so text never changes
-  size the moment you tap it.
+- **Text size.** **Settings → Display → Text Size** sets how big transcriptions are drawn, with a
+  sample line under the slider so you can see what you're choosing. **A document's paragraphs and an
+  Inbox entry are set at exactly that size** — one setting, one size, wherever text is read
+  top-to-bottom; a graph node stays two points under it, being a card pinned to a canvas rather than
+  a line of running text. The in-place editors read the same number, so text never changes size the
+  moment you tap it.
 - **Local backup folder.** Pick a folder in **Settings → Local Backup** and Woods Whisper keeps a
   plain-Markdown copy of everything you write there — see below.
 - **Recording controls on the Lock Screen.** Start a recording and it follows you out of the app: a

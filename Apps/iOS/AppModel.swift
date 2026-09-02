@@ -297,18 +297,21 @@ final class AppModel: ObservableObject {
         autoTranscribe(recordingID: recordingID, inDocument: documentID)
     }
 
-    /// "Reset with Originals": rebuild the document body from the recordings' own transcripts, one
-    /// paragraph per recording, discarding any edits/transforms. Revision clips (captured via
-    /// "Revise") are kept separate: their transcripts are appended below the originals under a
-    /// "--- Revisions ---" heading.
+    /// "Reset with Originals": rebuild the document body from the recordings' own transcripts,
+    /// discarding any edits/transforms. Revision clips (captured via "Revise") are kept separate:
+    /// their transcripts are appended below the originals under a "--- Revisions ---" heading.
+    ///
+    /// A transcript that carries line breaks — a transform ran over it in the Inbox and handed back
+    /// a list, or points — becomes one paragraph per line rather than a single block, so the text
+    /// arrives as the sections it reads as: each one with its own "+" beneath it, its own swipe
+    /// actions, and its own place in the reorder.
     func resetWithOriginals(in documentID: UUID) {
         guard let doc = documents.document(with: documentID) else { return }
-        func paragraph(for recording: Recording) -> Document.Paragraph? {
-            let text = recording.transcript?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            return text.isEmpty ? nil : Document.Paragraph(text: text)
+        func blocks(for recording: Recording) -> [Document.Paragraph] {
+            Document.paragraphs(fromLinesOf: recording.transcript ?? "")
         }
-        var paragraphs = doc.recordings.filter { !$0.isRevision }.compactMap(paragraph)
-        let revisions = doc.recordings.filter { $0.isRevision }.compactMap(paragraph)
+        var paragraphs = doc.recordings.filter { !$0.isRevision }.flatMap(blocks)
+        let revisions = doc.recordings.filter { $0.isRevision }.flatMap(blocks)
         if !revisions.isEmpty {
             paragraphs.append(Document.Paragraph(text: "--- Revisions ---"))
             paragraphs.append(contentsOf: revisions)
@@ -328,9 +331,8 @@ final class AppModel: ObservableObject {
         await transcribe(recordingID: recordingID, inDocument: documentID)
         guard !owedTheBody else { return }
         guard let text = documents.document(with: documentID)?
-            .recordings.first(where: { $0.id == recordingID })?.transcript,
-              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        documents.appendParagraph(text, to: documentID)
+            .recordings.first(where: { $0.id == recordingID })?.transcript else { return }
+        documents.appendParagraphs(Document.paragraphs(fromLinesOf: text), to: documentID)
     }
 
     /// "Append": add the recording's transcript as a new paragraph at the bottom of the document
@@ -346,9 +348,8 @@ final class AppModel: ObservableObject {
             if currentTranscript().isEmpty {
                 await transcribe(recordingID: recordingID, inDocument: documentID)
             }
-            let text = currentTranscript()
-            guard !text.isEmpty else { return }
-            documents.appendParagraph(text, to: documentID)
+            documents.appendParagraphs(Document.paragraphs(fromLinesOf: currentTranscript()),
+                                       to: documentID)
         }
     }
 
@@ -416,11 +417,12 @@ final class AppModel: ObservableObject {
         // A graph has no body to write into — its nodes are filled by `fillGraphNodes` — which only
         // comes up for a clip moved into one while it was still waiting to be transcribed.
         guard !text.isEmpty, documents.document(with: documentID)?.isGraph == false else { return }
+        let paragraphs = Document.paragraphs(fromLinesOf: text)
         switch destination {
-        case .append:           documents.appendParagraph(text, to: documentID)
-        case .at(let position): documents.insertParagraph(text, at: position, in: documentID)
+        case .append:           documents.appendParagraphs(paragraphs, to: documentID)
+        case .at(let position): documents.insertParagraphs(paragraphs, at: position, in: documentID)
         case .replacing(let paragraphID):
-            documents.replaceParagraph(paragraphID, in: documentID, withTextSplitInto: text)
+            documents.replaceParagraph(paragraphID, in: documentID, with: paragraphs)
         }
         let title = documents.document(with: documentID)?.title ?? "a document"
         wwLog("Filed a new transcript into the body of “\(title)”", .general)
@@ -927,7 +929,8 @@ final class AppModel: ObservableObject {
     }
 
     /// Run a preset against the document's whole body, replacing it with the transformed text
-    /// (split back into paragraphs) rather than appending a new block.
+    /// (split back into paragraphs — one per line, so a list the model hands back arrives as
+    /// separate sections) rather than appending a new block.
     func transformDocument(_ preset: PromptPreset,
                            on document: Document,
                            onToken: (@Sendable (TransformToken) -> Void)? = nil) async {
@@ -938,8 +941,9 @@ final class AppModel: ObservableObject {
         }
         // "Number Paragraphs" is deterministic — number the paragraphs locally, no model needed.
         if preset.isNumberParagraphs {
-            documents.setParagraphs(Document.paragraphs(from: PromptPreset.numberParagraphs(in: source)),
-                                    in: document.id)
+            documents.setParagraphs(
+                Document.paragraphs(fromLinesOf: PromptPreset.numberParagraphs(in: source)),
+                in: document.id)
             wwLog("Numbered paragraphs of “\(document.title)”", .transform)
             return
         }
@@ -950,7 +954,7 @@ final class AppModel: ObservableObject {
             let result = try await transform.transform(transcript: source, with: preset,
                                                        onToken: trackingThinking(document.id, onToken))
             guard let answer = usableAnswer(result, preset: preset) else { return }
-            documents.setParagraphs(Document.paragraphs(from: answer), in: document.id)
+            documents.setParagraphs(Document.paragraphs(fromLinesOf: answer), in: document.id)
             wwLog(String(format: "Preset “%@” finished in %.1fs (%d chars)", preset.name,
                          Date().timeIntervalSince(start), answer.count), .transform)
         } catch {
@@ -1029,8 +1033,9 @@ final class AppModel: ObservableObject {
             .paragraphs.first(where: { $0.id == paragraphID })?.text,
               !source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         if preset.isNumberParagraphs {
-            documents.replaceParagraph(paragraphID, in: documentID,
-                                       withTextSplitInto: PromptPreset.numberParagraphs(in: source))
+            documents.replaceParagraph(
+                paragraphID, in: documentID,
+                with: Document.paragraphs(fromLinesOf: PromptPreset.numberParagraphs(in: source)))
             wwLog("Numbered a paragraph", .transform)
             return
         }
@@ -1040,7 +1045,8 @@ final class AppModel: ObservableObject {
             let result = try await transform.transform(transcript: source, with: preset,
                                                        onToken: trackingThinking(paragraphID, onToken))
             guard let answer = usableAnswer(result, preset: preset) else { return }
-            documents.replaceParagraph(paragraphID, in: documentID, withTextSplitInto: answer)
+            documents.replaceParagraph(paragraphID, in: documentID,
+                                       with: Document.paragraphs(fromLinesOf: answer))
             wwLog(String(format: "Paragraph transform “%@” finished (%d chars)", preset.name,
                          answer.count), .transform)
         } catch {

@@ -115,8 +115,10 @@ public struct Document: Identifiable, Codable, Hashable, Sendable {
         }
     }
 
-    /// Split model output (or any transcript) into paragraphs on blank lines, trimming and dropping
-    /// empties, so paragraph-level operations keep working after a transform.
+    /// Split text you **wrote** — an in-place edit, an imported file, the clipboard — into
+    /// paragraphs on blank lines, trimming and dropping empties, so a soft break inside a paragraph
+    /// stays part of it. Text the app *produced* (a transcript, a transform's answer) splits on
+    /// every line instead: see `paragraphs(fromLinesOf:)`.
     public static func paragraphs(from text: String) -> [Paragraph] {
         let blocks = text
             .replacingOccurrences(of: "\r\n", with: "\n")
@@ -124,6 +126,25 @@ public struct Document: Identifiable, Codable, Hashable, Sendable {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
         return blocks.isEmpty ? [] : blocks.map { Paragraph(text: $0) }
+    }
+
+    /// Split text the app **produced** — a transcript, a transform's answer — into body paragraphs
+    /// on *any* line break, not just blank lines.
+    ///
+    /// Spoken words come back as one unbroken run, but a transform can hand back several blocks — a
+    /// list, points, numbered paragraphs — separated by a single newline as often as by a blank one.
+    /// Filing that away as a single paragraph leaves text that *reads* as several sections but is
+    /// one: no inter-paragraph "+" between them, and nothing to reorder, swipe or transform on its
+    /// own. So here every line starts a paragraph of its own.
+    ///
+    /// Text you typed keeps the other rule — `paragraphs(from:)`, blank lines only.
+    public static func paragraphs(fromLinesOf text: String) -> [Paragraph] {
+        text
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .map { Paragraph(text: $0) }
     }
 
     // Custom decoding so documents saved by older builds (which stored `transformations` and no

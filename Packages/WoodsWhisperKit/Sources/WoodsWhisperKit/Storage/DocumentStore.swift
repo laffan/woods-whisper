@@ -349,26 +349,23 @@ public final class DocumentStore: ObservableObject {
 
     // MARK: Document body (paragraphs)
 
-    /// Append a paragraph to the bottom of the body (e.g. from "Re-transcribe").
-    public func appendParagraph(_ text: String, to documentID: UUID) {
-        guard let idx = index(of: documentID) else { return }
-        documents[idx].paragraphs.append(Document.Paragraph(text: text))
-        touch(idx)
-    }
-
-    /// Append several paragraphs to the bottom of the body in one go (a text import), persisting
-    /// once for the whole batch rather than once per paragraph.
+    /// Append paragraphs to the bottom of the body — a text import, or a transcript arriving from
+    /// "Append" / "Re-transcribe". Whatever the source, it's already split into its blocks by the
+    /// caller (the two rules live on `Document`), and the batch persists once rather than per
+    /// paragraph. Nothing to append is a no-op.
     public func appendParagraphs(_ paragraphs: [Document.Paragraph], to documentID: UUID) {
         guard !paragraphs.isEmpty, let idx = index(of: documentID) else { return }
         documents[idx].paragraphs.append(contentsOf: paragraphs)
         touch(idx)
     }
 
-    /// Insert a paragraph at `position` in the body (used by the inter-paragraph "+" button).
-    public func insertParagraph(_ text: String, at position: Int, in documentID: UUID) {
-        guard let idx = index(of: documentID) else { return }
+    /// Insert paragraphs at `position` in the body — what the inter-paragraph "+" files its clip
+    /// into, each block of the transcript its own section.
+    public func insertParagraphs(_ paragraphs: [Document.Paragraph], at position: Int,
+                                 in documentID: UUID) {
+        guard !paragraphs.isEmpty, let idx = index(of: documentID) else { return }
         let clamped = max(0, min(position, documents[idx].paragraphs.count))
-        documents[idx].paragraphs.insert(Document.Paragraph(text: text), at: clamped)
+        documents[idx].paragraphs.insert(contentsOf: paragraphs, at: clamped)
         touch(idx)
     }
 
@@ -381,13 +378,20 @@ public final class DocumentStore: ObservableObject {
     }
 
     /// Replace a paragraph with the result of splitting `text` on blank lines — so paragraph breaks
-    /// introduced while editing (or produced by a transform) become separate sections, each with its
-    /// own inter-paragraph insert button. An empty result removes the paragraph.
+    /// introduced while editing become separate sections, each with its own inter-paragraph insert
+    /// button. An empty result removes the paragraph.
     public func replaceParagraph(_ paragraphID: UUID, in documentID: UUID, withTextSplitInto text: String) {
+        replaceParagraph(paragraphID, in: documentID, with: Document.paragraphs(from: text))
+    }
+
+    /// Replace a paragraph with `replacements`, keeping its place in the body — the split itself is
+    /// the caller's, since typed text and text the app produced break into paragraphs by different
+    /// rules. An empty `replacements` removes the paragraph.
+    public func replaceParagraph(_ paragraphID: UUID, in documentID: UUID,
+                                 with replacements: [Document.Paragraph]) {
         guard let docIdx = index(of: documentID),
               let pIdx = documents[docIdx].paragraphs.firstIndex(where: { $0.id == paragraphID })
         else { return }
-        let replacements = Document.paragraphs(from: text)
         if replacements.isEmpty {
             documents[docIdx].paragraphs.remove(at: pIdx)
         } else {

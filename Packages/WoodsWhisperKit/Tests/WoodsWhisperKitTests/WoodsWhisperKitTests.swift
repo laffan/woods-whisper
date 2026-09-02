@@ -242,6 +242,37 @@ final class WoodsWhisperKitTests: XCTestCase {
         XCTAssertEqual(DocumentStore.inboxTitle, inboxTitle)
     }
 
+    // MARK: Paragraph splitting
+
+    /// Typed text keeps the blank-line rule: a soft break stays inside its paragraph.
+    func testTypedTextSplitsOnBlankLinesOnly() {
+        let split = Document.paragraphs(from: "First line\nsecond line\n\nSecond block")
+        XCTAssertEqual(split.map(\.text), ["First line\nsecond line", "Second block"])
+    }
+
+    /// A transcript a transform gave line breaks to arrives as one paragraph per line — each with
+    /// its own inter-paragraph "+" once it is in a document.
+    func testTranscriptSplitsOnEveryLineBreak() {
+        let split = Document.paragraphs(fromLinesOf: "- Firewood\n- Water\n- Map")
+        XCTAssertEqual(split.map(\.text), ["- Firewood", "- Water", "- Map"])
+    }
+
+    /// Blank lines, trailing whitespace and Windows line endings don't leave empty paragraphs behind.
+    func testTranscriptSplittingDropsBlanksAndTrimsLines() {
+        let split = Document.paragraphs(fromLinesOf: "  One  \r\n\r\n\nTwo\n   \n")
+        XCTAssertEqual(split.map(\.text), ["One", "Two"])
+    }
+
+    /// An unbroken transcript — what a spoken clip normally comes back as — stays a single paragraph.
+    func testAnUnbrokenTranscriptStaysOneParagraph() {
+        let split = Document.paragraphs(fromLinesOf: "Elk by the creek at first light.")
+        XCTAssertEqual(split.map(\.text), ["Elk by the creek at first light."])
+    }
+
+    func testSplittingNothingYieldsNoParagraphs() {
+        XCTAssertTrue(Document.paragraphs(fromLinesOf: "   \n\n ").isEmpty)
+    }
+
     // MARK: Auto transform
 
     func testAutoTransformChoiceRoundTrips() throws {
