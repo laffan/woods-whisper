@@ -219,7 +219,10 @@ the rest of the app depends on.
   half you haven't got, under the same title, and opens the two together. On an **iPad** they sit
   side by side (document left, graph right); on a **phone**, stacked (document above, graph below).
   Each half stays an ordinary document throughout — its own recordings, its own Auto transform, its
-  own backup file, its own **⋯** menu — so nothing about either of them changes by being paired. The
+  own backup file, and its own title and **⋯** menu in a slim header across the top of its pane — so
+  nothing about either of them changes by being paired. The **"+"** on a joint document's row
+  records into the **document** half: a clip spoken at a list row is a thought to write down, and it
+  lands as a paragraph at the end rather than as a node somewhere on the canvas nobody chose. The
   pair takes one row in **Documents**, counting what's in both. **Separate Joint Document**, in
   either half's menu, ends it: both survive with everything in them, and the second one takes its own
   place in the list. Deleting either half separates the pair on its way out.

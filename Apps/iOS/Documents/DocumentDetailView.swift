@@ -23,6 +23,10 @@ struct DocumentDetailView: View {
     /// The size transcription text is set in (Settings → Display) — the body's paragraphs here.
     @Environment(\.transcriptTextSize) private var transcriptTextSize: Double
     let documentID: UUID
+    /// True when this is one pane of a joint document rather than a screen of its own: it draws its
+    /// own header instead of filling in a navigation bar it doesn't have, and puts nothing in the
+    /// bar the pair sits under (which the other half would be fighting it for).
+    var isEmbedded = false
 
     // Body & recordings reorder (long-press → drag to rearrange)
     @State private var editMode: EditMode = .inactive
@@ -84,9 +88,12 @@ struct DocumentDetailView: View {
                     .background(WW.paper)
             }
         }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if isEmbedded { paneHeader(for: document) }
+        }
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar { toolbarContent(for: document) }
+        .toolbar { if !isEmbedded { toolbarContent(for: document) } }
         .onAppear { playback.onError = { message in model.setupError = message } }
         // Leaving the document commits an open in-place edit rather than dropping it.
         .onDisappear {
@@ -456,19 +463,69 @@ struct DocumentDetailView: View {
 
     // MARK: Toolbar
 
+    /// The title, tappable to rename — the same control whether it's sitting in a navigation bar or
+    /// in the header a pane of a joint document draws for itself.
+    private func titleButton(for document: Document?) -> some View {
+        Button {
+            renameText = document?.title ?? ""
+            showingRename = true
+        } label: {
+            Text(document?.title ?? "Document")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(WW.ink)
+                .lineLimit(1)
+        }
+    }
+
+    /// What's in the **⋯** menu. Kept apart from where it's *put* for the same reason.
+    @ViewBuilder
+    private func menuContent(for document: Document) -> some View {
+        TextImportItems(onClipboard: importFromClipboard,
+                        onFile: { showingTextImporter = true })
+        Divider()
+        Button { shareDocumentFile(document) } label: {
+            Label("Share as Woods Whisper File", systemImage: "arrow.up.doc")
+        }
+        JointDocumentMenuItem(isJoined: isJoined,
+                              onCreate: createJointCounterpart,
+                              onSeparate: separateJoint)
+    }
+
+    /// The bar a pane draws across its own top when it's half of a joint document.
+    ///
+    /// Half of a pair has no navigation bar to put its title and menu in: it isn't a screen of its
+    /// own, and it can't be given a `NavigationStack` to make one (nesting one inside the stack the
+    /// Documents list drives by a typed path is what SwiftUI ends with `comparisonTypeMismatch`).
+    /// So the pane draws the bar itself, with exactly what the navigation bar would have carried.
+    @ViewBuilder
+    private func paneHeader(for document: Document?) -> some View {
+        HStack(spacing: 12) {
+            titleButton(for: document)
+            Spacer(minLength: 8)
+            if editMode.isEditing {
+                Button("Done") { withAnimation { editMode = .inactive } }
+                    .foregroundStyle(WW.moss)
+            } else if let document {
+                Menu { menuContent(for: document) } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.system(size: 17))
+                        .foregroundStyle(WW.moss)
+                        .frame(width: 36, height: 30)
+                        .contentShape(Rectangle())
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
+        .background(WW.surface)
+        .overlay(alignment: .bottom) { WWHairline() }
+    }
+
     @ToolbarContentBuilder
     private func toolbarContent(for document: Document?) -> some ToolbarContent {
         // Tappable document title — opens the rename editor.
         ToolbarItem(placement: .principal) {
-            Button {
-                renameText = document?.title ?? ""
-                showingRename = true
-            } label: {
-                Text(document?.title ?? "Document")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(WW.ink)
-                    .lineLimit(1)
-            }
+            titleButton(for: document)
         }
 
         if editMode.isEditing {
@@ -480,15 +537,7 @@ struct DocumentDetailView: View {
             if let document {
                 ToolbarItem(placement: .primaryAction) {
                     Menu {
-                        TextImportItems(onClipboard: importFromClipboard,
-                                        onFile: { showingTextImporter = true })
-                        Divider()
-                        Button { shareDocumentFile(document) } label: {
-                            Label("Share as Woods Whisper File", systemImage: "arrow.up.doc")
-                        }
-                        JointDocumentMenuItem(isJoined: isJoined,
-                                              onCreate: createJointCounterpart,
-                                              onSeparate: separateJoint)
+                        menuContent(for: document)
                     } label: {
                         Image(systemName: "ellipsis.circle")
                     }
@@ -2894,9 +2943,11 @@ private struct ShareTarget: Identifiable {
 /// The halves are ordinary documents throughout. Each keeps its own recordings, its own Auto
 /// transform, its own backup file and its own `.wwdoc` export; a link on one of them is the whole
 /// of the pairing, and "Separate Joint Document" is nothing but clearing it. That's why each half
-/// is shown here as *itself*, `DocumentDetailView` and `GraphDocumentView` unchanged and each in
-/// its own `NavigationStack` — so each pane keeps the title and the **⋯** menu it has everywhere
-/// else, and neither has to learn that it's in a pair.
+/// is shown here as *itself* — `DocumentDetailView` and `GraphDocumentView`, told only that they're
+/// embedded, which makes each draw the title and **⋯** menu it would have put in a navigation bar
+/// as a header of its own instead. Neither is given a `NavigationStack` to hold that bar: nesting
+/// one inside the stack the Documents list drives by a typed path is what ends in
+/// `AnyNavigationPath.Error.comparisonTypeMismatch`, and the framework meets that with a `try!`.
 ///
 /// Which pane goes where is decided by what the halves *are*, not by which one was made first: the
 /// document reads top-to-bottom so it takes the top (or, with room across, the left), and the graph
@@ -2928,15 +2979,15 @@ struct JointDocumentView: View {
             if let halves {
                 if sizeClass == .regular {
                     HStack(spacing: 0) {
-                        pane { DocumentDetailView(documentID: halves.document) }
+                        pane { DocumentDetailView(documentID: halves.document, isEmbedded: true) }
                         Rectangle().fill(WW.hairline).frame(width: 1)
-                        pane { GraphDocumentView(documentID: halves.graph) }
+                        pane { GraphDocumentView(documentID: halves.graph, isEmbedded: true) }
                     }
                 } else {
                     VStack(spacing: 0) {
-                        pane { DocumentDetailView(documentID: halves.document) }
+                        pane { DocumentDetailView(documentID: halves.document, isEmbedded: true) }
                         WWHairline()
-                        pane { GraphDocumentView(documentID: halves.graph) }
+                        pane { GraphDocumentView(documentID: halves.graph, isEmbedded: true) }
                     }
                 }
             } else {
@@ -2957,12 +3008,11 @@ struct JointDocumentView: View {
         .navigationBarTitleDisplayMode(.inline)
     }
 
-    /// One half, in a navigation stack of its own — which is what gives it the bar its title and
-    /// **⋯** menu live in. Without it both halves' toolbars would pile into the one bar above and
-    /// fight over it.
+    /// One half, taking its share of the screen. Nothing wraps it: an embedded half puts nothing in
+    /// the navigation bar above (so the two can't fight over it) and carries its own header instead.
     @ViewBuilder
     private func pane<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
-        NavigationStack { content() }
+        content()
             .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
@@ -3001,6 +3051,8 @@ struct GraphDocumentView: View {
     /// The size transcription text is set in (Settings → Display) — a node's words here.
     @Environment(\.transcriptTextSize) private var transcriptTextSize: Double
     let documentID: UUID
+    /// True when this canvas is one pane of a joint document — see `DocumentDetailView.isEmbedded`.
+    var isEmbedded = false
 
     /// The recorder behind hold-to-record. (Revise uses the ordinary `RecordingSheet` instead —
     /// replacing a node deliberately deserves the pause/discard controls.)
@@ -3142,9 +3194,12 @@ struct GraphDocumentView: View {
                     .background(WW.paper)
             }
         }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if isEmbedded { paneHeader(for: document) }
+        }
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar { toolbarContent(for: document) }
+        .toolbar { if !isEmbedded { toolbarContent(for: document) } }
         // No bottom bar here. A graph has no record button — the hold on the canvas is it — and its
         // Auto transform is an app-wide setting ("Auto transform nodes", in Settings → Graphs)
         // rather than a per-document toggle, so the canvas runs all the way down to the edge.
@@ -5027,62 +5082,97 @@ struct GraphDocumentView: View {
 
     // MARK: Toolbar
 
+    /// The graph's title, tappable to rename — in the navigation bar, or in the header this canvas
+    /// draws for itself when it's half of a joint document.
+    private func titleButton(for document: Document?) -> some View {
+        Button {
+            renameText = document?.title ?? ""
+            showingRename = true
+        } label: {
+            Text(document?.title ?? "Graph")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(WW.ink)
+                .lineLimit(1)
+        }
+    }
+
+    /// The bar a pane draws across its own top when it's half of a joint document — see the same
+    /// method on `DocumentDetailView` for why a pane can't simply be given a navigation bar.
+    @ViewBuilder
+    private func paneHeader(for document: Document?) -> some View {
+        HStack(spacing: 12) {
+            titleButton(for: document)
+            Spacer(minLength: 8)
+            if let document {
+                Menu { menuContent(for: document) } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.system(size: 17))
+                        .foregroundStyle(WW.moss)
+                        .frame(width: 36, height: 30)
+                        .contentShape(Rectangle())
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
+        .background(WW.surface)
+        .overlay(alignment: .bottom) { WWHairline() }
+    }
+
     @ToolbarContentBuilder
     private func toolbarContent(for document: Document?) -> some ToolbarContent {
         ToolbarItem(placement: .principal) {
-            Button {
-                renameText = document?.title ?? ""
-                showingRename = true
-            } label: {
-                Text(document?.title ?? "Graph")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(WW.ink)
-                    .lineLimit(1)
-            }
+            titleButton(for: document)
         }
         if let document {
             ToolbarItem(placement: .primaryAction) {
                 Menu {
-                    Button { copyOutline(document) } label: {
-                        Label("Copy Outline", systemImage: "doc.on.doc")
-                    }
-                    Button {
-                        shareItem = ShareItem(text: MarkdownBackup.markdown(for: document))
-                    } label: {
-                        Label("Share Outline", systemImage: "square.and.arrow.up")
-                    }
-                    Button { shareDocumentFile(document) } label: {
-                        Label("Share as Woods Whisper File", systemImage: "arrow.up.doc")
-                    }
-                    JointDocumentMenuItem(isJoined: isJoined,
-                                          onCreate: createJointCounterpart,
-                                          onSeparate: separateJoint)
-                    Divider()
-                    Button {
-                        if isSelecting { endSelecting() } else { beginSelecting() }
-                    } label: {
-                        Label(isSelecting ? "Stop Selecting" : "Select Nodes",
-                              systemImage: isSelecting ? "xmark.circle" : "checkmark.circle")
-                    }
-                    .disabled(document.nodes.isEmpty)
-                    Button {
-                        withAnimation(.snappy(duration: 0.25)) { showingNodeList.toggle() }
-                    } label: {
-                        Label(showsNodeSidebar && showingNodeList ? "Hide Nodes" : "List Nodes",
-                              systemImage: "list.bullet.indent")
-                    }
-                    Button { recenter() } label: {
-                        Label("Center Graph", systemImage: "scope")
-                    }
-                    Button {
-                        withAnimation(.snappy(duration: 0.2)) { showsMinimap.toggle() }
-                    } label: {
-                        Label(showsMinimap ? "Hide Minimap" : "Show Minimap", systemImage: "map")
-                    }
+                    menuContent(for: document)
                 } label: {
                     Image(systemName: "ellipsis.circle")
                 }
             }
+        }
+    }
+
+    /// What's in the graph's **⋯** menu, apart from where it's put.
+    @ViewBuilder
+    private func menuContent(for document: Document) -> some View {
+        Button { copyOutline(document) } label: {
+            Label("Copy Outline", systemImage: "doc.on.doc")
+        }
+        Button {
+            shareItem = ShareItem(text: MarkdownBackup.markdown(for: document))
+        } label: {
+            Label("Share Outline", systemImage: "square.and.arrow.up")
+        }
+        Button { shareDocumentFile(document) } label: {
+            Label("Share as Woods Whisper File", systemImage: "arrow.up.doc")
+        }
+        JointDocumentMenuItem(isJoined: isJoined,
+                              onCreate: createJointCounterpart,
+                              onSeparate: separateJoint)
+        Divider()
+        Button {
+            if isSelecting { endSelecting() } else { beginSelecting() }
+        } label: {
+            Label(isSelecting ? "Stop Selecting" : "Select Nodes",
+                  systemImage: isSelecting ? "xmark.circle" : "checkmark.circle")
+        }
+        .disabled(document.nodes.isEmpty)
+        Button {
+            withAnimation(.snappy(duration: 0.25)) { showingNodeList.toggle() }
+        } label: {
+            Label(showsNodeSidebar && showingNodeList ? "Hide Nodes" : "List Nodes",
+                  systemImage: "list.bullet.indent")
+        }
+        Button { recenter() } label: {
+            Label("Center Graph", systemImage: "scope")
+        }
+        Button {
+            withAnimation(.snappy(duration: 0.2)) { showsMinimap.toggle() }
+        } label: {
+            Label(showsMinimap ? "Hide Minimap" : "Show Minimap", systemImage: "map")
         }
     }
 

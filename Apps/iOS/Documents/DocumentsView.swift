@@ -246,7 +246,7 @@ struct DocumentsView: View {
                 // The graph canvas's "+", on a list row: hold it and you're recording into this
                 // document without opening it; let go and the words are on their way.
                 HoldablePlusButton(onTap: { open(doc.id) },
-                                   onHold: { beginHoldRecording(into: doc) },
+                                   onHold: { beginHoldRecording(into: recordTarget(for: doc)) },
                                    onRelease: { finishHoldRecording() })
                     .accessibilityLabel("Record into \(doc.title)")
                 // Stands in for the disclosure indicator a NavigationLink would have drawn.
@@ -288,6 +288,15 @@ struct DocumentsView: View {
     private func jointPartner(of doc: Document) -> Document? {
         guard let id = model.documents.jointPartnerID(of: doc.id) else { return nil }
         return model.documents.document(with: id)
+    }
+
+    /// Where a hold on this row's "+" records to. For a joint document that's the **prose** half,
+    /// whichever half the row happens to name: a clip spoken at a list row is a thought to write
+    /// down, and it becomes a paragraph at the end of the document. Dropping it on the canvas would
+    /// put a node somewhere nobody chose, which is the one thing that canvas doesn't do.
+    private func recordTarget(for doc: Document) -> Document {
+        guard let partner = jointPartner(of: doc) else { return doc }
+        return doc.isGraph ? partner : doc
     }
 
     /// Push a document onto the stack, unless it's already the top of it. The row, the "+" and the

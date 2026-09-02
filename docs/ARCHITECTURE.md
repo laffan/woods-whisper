@@ -183,14 +183,21 @@ clears any such link at load, since nobody should have to go looking for it by h
 have everywhere else; without it both toolbars would pile into the one bar above and fight over it.
 Which pane is where is decided by kind, not by which half came first.
 
-**Nothing pushes the pair, and nothing pops it.** `Route.document(id)` asks the store, each time it
-resolves, whether that document has a partner — so making a pair from inside a half turns that half
-into the split view, and separating turns it back, with no navigation to drive. The first cut pushed
-it with `navigationDestination(isPresented:)`, which is a *second* navigation style inside a stack
-already driven by a typed `[Route]` path: the boolean push puts an element in that path the typed
-binding can't represent, and SwiftUI raises `AnyNavigationPath.Error.comparisonTypeMismatch` — a
-`try!` inside the framework, so it takes the app with it. One stack, one style, one source of
-truth.
+**One stack, and only one.** `AnyNavigationPath.Error.comparisonTypeMismatch` is SwiftUI meeting two
+kinds of navigation in one place, with a `try!` — so it takes the app down rather than picking one.
+The joint view walked into it twice. First by *pushing* itself with
+`navigationDestination(isPresented:)` inside a stack already driven by a typed `[Route]` path: a
+boolean push puts an element in that path the typed binding can't represent. Then, with the push
+gone, by giving each pane a `NavigationStack` of its own — nested inside that same typed stack,
+which is the same mismatch by another route.
+
+So: nothing pushes the pair and nothing nests. `Route.document(id)` asks the store, each time it
+resolves, whether that document has a partner, so making a pair from inside a half turns that half
+into the split view and separating turns it back. And a pane is told it's `isEmbedded`, which makes
+it draw the title and **⋯** menu it would have put in a navigation bar as a plain header of its own
+(`paneHeader(for:)`) and put *nothing* in the bar above — which is also what keeps the two halves
+from fighting over that bar. Both halves' menus come out of one `menuContent(for:)` either way, so
+the header and the toolbar can't drift apart.
 
 **Graph documents (iOS).** A graph is a `Document` with `kind == .graph`; `DocumentsView` routes to
 `GraphDocumentView` (at the bottom of `DocumentDetailView.swift`, alongside the Inbox and the
