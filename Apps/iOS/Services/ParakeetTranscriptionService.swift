@@ -99,6 +99,12 @@ public final class ParakeetTranscriptionService: SpeechModelBackend {
     public func transcribe(samples: [Float]) async throws -> TranscriptionResult {
         #if canImport(FluidAudio)
         guard let manager else { throw TranscriptionError.modelsNotPrepared }
+        // Parakeet refuses anything under 300 ms outright, and the refusal comes back as an opaque
+        // "Invalid audio data provided". Caught here, it's a clip with nothing in it rather than
+        // something that went wrong.
+        guard samples.count >= Transcription.minimumSampleCount else {
+            throw TranscriptionError.audioTooShort
+        }
         let started = Date()
         do {
             // Fresh decoder state per batch transcription (mirrors FluidAudio's own usage).

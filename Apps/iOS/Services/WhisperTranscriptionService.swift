@@ -1,4 +1,5 @@
 import Foundation
+import AVFoundation
 import WoodsWhisperKit
 
 #if canImport(WhisperKit)
@@ -81,6 +82,12 @@ final class WhisperTranscriptionService: SpeechModelBackend {
     func transcribe(audioFileAt url: URL) async throws -> WoodsWhisperKit.TranscriptionResult {
         #if canImport(WhisperKit)
         guard let kit else { throw TranscriptionError.modelsNotPrepared }
+        // "Too short to hold a word" is a property of the app rather than of whichever engine is
+        // selected, so the file is measured here as well — one file open against a whole ASR run.
+        if let file = try? AVAudioFile(forReading: url), file.processingFormat.sampleRate > 0,
+           Double(file.length) / file.processingFormat.sampleRate < Transcription.minimumClipDuration {
+            throw TranscriptionError.audioTooShort
+        }
         let started = Date()
         do {
             // (1) WhisperKit returns one result per decoded window; join their text.
@@ -104,6 +111,11 @@ final class WhisperTranscriptionService: SpeechModelBackend {
     func transcribe(samples: [Float]) async throws -> WoodsWhisperKit.TranscriptionResult {
         #if canImport(WhisperKit)
         guard let kit else { throw TranscriptionError.modelsNotPrepared }
+        // The same floor Parakeet enforces, applied here too so a clip too short to hold a word
+        // behaves the same whichever engine is selected.
+        guard samples.count >= Transcription.minimumSampleCount else {
+            throw TranscriptionError.audioTooShort
+        }
         let started = Date()
         do {
             // (1) WhisperKit accepts pre-decoded 16 kHz mono Float samples directly (the live path

@@ -630,6 +630,16 @@ final class AppModel: ObservableObject {
             // for is filed at the same point, for the same reason.
             fillGraphNodes(forRecording: recordingID, in: documentID)
             fillDocumentBody(forRecording: recordingID, in: documentID)
+        } catch TranscriptionError.audioTooShort {
+            // A clip with nothing in it — a stray press, a recording that never got going, a
+            // transfer that arrived empty. It's *done*, not failed: marking it failed would put it
+            // back in `transcribePending`, and it would raise the same alert on every launch from
+            // now on for a clip that can never say anything. The row reads "(no speech detected)".
+            recording.transcript = ""
+            recording.status = .done
+            recording.bodyDestination = nil
+            documents.updateRecording(recording, inDocument: documentID)
+            wwLog("“\(recording.name)” is under \(Transcription.minimumClipDuration)s — nothing to transcribe", .transcription)
         } catch {
             recording.status = .failed
             documents.updateRecording(recording, inDocument: documentID)

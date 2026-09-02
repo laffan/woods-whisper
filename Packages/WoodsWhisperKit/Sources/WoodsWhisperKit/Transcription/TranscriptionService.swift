@@ -71,6 +71,18 @@ public enum SpeechModel: String, CaseIterable, Codable, Sendable, Identifiable {
     public static let `default`: SpeechModel = .parakeetV3
 }
 
+/// The numbers every speech engine here agrees on, in one place — chiefly the shortest clip worth
+/// handing one.
+///
+/// Parakeet refuses anything under 300 ms of 16 kHz audio outright ("Invalid audio data provided"),
+/// and a clip that short holds no word anyone said, so it's caught on the way in rather than coming
+/// back as an error the user is asked to do something about.
+public enum Transcription {
+    public static let sampleRate: Double = 16_000
+    public static let minimumClipDuration: TimeInterval = 0.3
+    public static var minimumSampleCount: Int { Int(minimumClipDuration * sampleRate) }
+}
+
 public struct TranscriptionResult: Sendable {
     public var text: String
     public var detectedLanguage: String?
@@ -86,6 +98,9 @@ public enum TranscriptionError: Error, LocalizedError {
     case modelsNotPrepared
     case unsupportedPlatform
     case audioReadFailed(URL)
+    /// The clip is shorter than `Transcription.minimumClipDuration` — a stray press, or a recording
+    /// that never got going. Not a failure to report: there was nothing said to transcribe.
+    case audioTooShort
     case underlying(Error)
 
     public var errorDescription: String? {
@@ -96,6 +111,8 @@ public enum TranscriptionError: Error, LocalizedError {
             return "Transcription runs on iPhone/iPad, not on this device."
         case .audioReadFailed(let url):
             return "Couldn't read audio at \(url.lastPathComponent)."
+        case .audioTooShort:
+            return "That clip is too short to hold anything said."
         case .underlying(let error):
             return error.localizedDescription
         }
