@@ -472,9 +472,9 @@ struct WWInlineEditBox<Content: View, Actions: View>: View {
                 .padding(.top, 10)
                 .padding(.bottom, 8)
             WWHairline()
-            HStack(spacing: 6) {
+            HStack(spacing: 2) {
                 actions
-                Spacer(minLength: 12)
+                Spacer(minLength: 10)
                 if isWorking { ProgressView().controlSize(.small).padding(.trailing, 4) }
                 Button(action: onDone) {
                     Text("Done")
@@ -494,27 +494,31 @@ struct WWInlineEditBox<Content: View, Actions: View>: View {
 
 /// One icon in a `WWInlineEditBox`'s action row: glyph only (the name rides along as its
 /// accessibility label), so several actions fit in the box's bottom-left corner without crowding
-/// Done.
+/// Done. Kept compact — a graph node's editor carries five of these across a 280-point card.
 struct WWInlineEditAction: View {
     let title: String
     let systemImage: String
     var enabled: Bool = true
+    /// The ink. Green by default; a destructive action passes the ember, since a trash can that
+    /// looks like everything beside it is a trash can somebody taps by accident.
+    var tint: Color = WW.moss
     let action: () -> Void
 
-    init(_ title: String, _ systemImage: String, enabled: Bool = true,
+    init(_ title: String, _ systemImage: String, enabled: Bool = true, tint: Color = WW.moss,
          action: @escaping () -> Void) {
         self.title = title
         self.systemImage = systemImage
         self.enabled = enabled
+        self.tint = tint
         self.action = action
     }
 
     var body: some View {
         Button(action: action) {
             Image(systemName: systemImage)
-                .font(.system(size: 17, weight: .regular))
-                .foregroundStyle(WW.moss)
-                .frame(width: 38, height: 32)
+                .font(.system(size: 15, weight: .regular))
+                .foregroundStyle(tint)
+                .frame(width: 32, height: 30)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

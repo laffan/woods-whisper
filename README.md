@@ -122,8 +122,10 @@ the rest of the app depends on.
   finger until it settles (a second in one place is enough), then the canvas slides over to centre
   it, leaving room to strike out in any direction for the next one.
 - **Working with nodes.** Nodes are the same edit blocks as everywhere else, shrunk to
-  cards: **tap twice** to edit one in place, **long-press** for the actions a paragraph gets from a
-  swipe (Edit, Add Child, Revise, Transform, Delete) as a dropdown. **Drag** a node and its children
+  cards: **tap twice** to edit one in place — the row along the bottom of the open card carries
+  **Revise / Transform / Tidy Children / Unlink**, and a red **trash** that deletes the node
+  outright — or **long-press** for the actions a paragraph gets from a swipe (Edit, Add Child,
+  Revise, Transform, Delete) as a dropdown. **Drag** a node and its children
   come with it; **drop it on another node** and the whole branch hangs off that one — settling into
   place beside its new parent, below the children already there and clear of anything else. The
   lines joining them are **smooth curves**, leaving and arriving square-on to the side of the card
@@ -141,18 +143,23 @@ the rest of the app depends on.
   app-wide setting (**Settings → Graphs**) rather than a per-document toggle — so the canvas runs
   all the way to the edge.
 - **Two buttons beside the minimap.** Stacked at the minimap's left, and there whether or not the
-  minimap is: **Auto Tidy**, and an on-screen **⌘**. Both stay on once tapped and fill in to say so.
+  minimap is: **Auto Tidy**, and an on-screen **⌘**. Auto Tidy is a setting — tap it on and it stays
+  on. **⌘ is a key**: hold it down with one thumb and drag with the other, exactly as you'd hold the
+  real one, and it lets go the moment you do. Both fill in while they're on.
 - **Auto Tidy.** With it on, adding a node lines its siblings up around it — **Tidy Children**, run
-  for you rather than asked for, every time a row of children changes. A node with no parent has no
+  for you rather than asked for, every time a row of children changes. Children go out beside their
+  parent at the standard distance, stacked with **30 points of air between the cards** — measured
+  between what's drawn, so a six-line card takes the room it needs and the gap stays the gap you
+  see. A node with no parent has no
   siblings to line up, so a root you hold or double-tap onto the canvas is left exactly where you put
   it; abandoning an empty node closes the row back up. A node made *during* a gesture — a **"+"**
   held down, a chain still being spoken — waits until your finger lifts, so the card being recorded
   into never slides out from under it. The toggle is remembered across graphs, like the minimap.
 - **Picking several nodes out.** The hold belongs to recording, so selecting is asked for. Three ways
-  in: the **⌘** button beside the minimap, **⋯ → Select Nodes**, or — with a keyboard attached —
-  **holding ⌘ and dragging**, which draws the box there and then without switching anything on. In
-  the mode, a drag on the canvas draws a selection box — everything it touches is selected — and a
-  tap on a card takes it in or out. Any one of the selected nodes drags the whole lot, and a bar
+  in: **holding the ⌘ button** beside the minimap while you drag, **holding a real ⌘** and dragging
+  if there's a keyboard attached, or **⋯ → Select Nodes** for a mode that stays on with nothing held.
+  However you get there, a drag on the canvas draws a selection box — everything it touches is
+  selected — and a tap on a card takes it in or out. Any one of the selected nodes drags the whole lot, and a bar
   along the bottom carries what you can do with them; **Done** leaves the mode.
 - **Lining a selection up.** That bar's second row has **Align Left**, **Align Top**, **Distribute
   Horizontal** and **Distribute Vertical**. Aligning puts every selected card's left (or top) edge

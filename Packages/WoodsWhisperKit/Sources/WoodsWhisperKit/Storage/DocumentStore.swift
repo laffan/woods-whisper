@@ -519,7 +519,8 @@ public final class DocumentStore: ObservableObject {
     /// go of it, which is usually right on top of its new parent — the line would say one thing and
     /// the layout another.
     @discardableResult
-    public func attachNode(_ nodeID: UUID, to parentID: UUID, in documentID: UUID) -> Bool {
+    public func attachNode(_ nodeID: UUID, to parentID: UUID, in documentID: UUID,
+                           heights: [UUID: Double] = [:]) -> Bool {
         guard reparentNode(nodeID, to: parentID, in: documentID),
               let docIdx = index(of: documentID),
               let parent = documents[docIdx].node(with: parentID),
@@ -529,21 +530,25 @@ public final class DocumentStore: ObservableObject {
         let moving = Set(documents[docIdx].subtree(of: nodeID))
         let siblings = documents[docIdx].children(of: parentID).filter { !moving.contains($0.id) }
 
-        // Below the branches already hanging there, or level with the parent if it had none.
+        // Below the branches already hanging there, or level with the parent if it had none. The
+        // gap goes between the cards — this branch's own top edge a clear `tidyRowGap` under the
+        // lowest card already there — the same measure a tidy uses.
         var y = parent.position.y
         if !siblings.isEmpty {
             let bottom = siblings
-                .flatMap { documents[docIdx].subtree(of: $0.id) }
-                .compactMap { documents[docIdx].node(with: $0)?.position.y }
+                .map { extent(ofSubtree: $0.id, at: docIdx, heights: heights).bottom }
                 .max()
-            if let bottom { y = bottom + Self.tidyRowGap }
+            if let bottom {
+                let branch = extent(ofSubtree: nodeID, at: docIdx, heights: heights)
+                y = bottom + Self.tidyRowGap + (node.position.y - branch.top)
+            }
         }
 
         let dx = parent.position.x + Self.childColumnOffset - node.position.x
         var dy = y - node.position.y
         for _ in 0..<Self.placementAttempts {
             guard collides(subtree: moving, movedByX: dx, y: dy, at: docIdx) else { break }
-            dy += Self.tidyRowGap
+            dy += Self.standardRowStep
         }
         translate(subtreeOf: nodeID, byX: dx, y: dy, at: docIdx)
         touch(docIdx)
@@ -682,7 +687,8 @@ public final class DocumentStore: ObservableObject {
         let node = GraphNode(text: text,
                              parentID: parentID,
                              position: GraphPoint(x: parent.position.x + Self.childColumnOffset,
-                                                  y: parent.position.y + Double(siblings) * 100))
+                                                  y: parent.position.y
+                                                     + Double(siblings) * Self.standardRowStep))
         documents[docIdx].nodes.append(node)
         touch(docIdx)
         return node
@@ -712,8 +718,14 @@ public final class DocumentStore: ObservableObject {
         let dy = child.position.y - parent.position.y
         let distance = (dx * dx + dy * dy).squareRoot()
         if distance > 0.01 {
-            let pushX = dx / distance * Self.insertedNodeSpacing
-            let pushY = dy / distance * Self.insertedNodeSpacing
+            // A node's worth *along this link's own axis*: sideways that's a card's width and the
+            // standard gap, downwards a card's height and the much smaller vertical one, and a
+            // diagonal link takes the mix between them.
+            let sideways = abs(dx) / distance
+            let spacing = sideways * Self.insertedNodeSpacing
+                + (1 - sideways) * Self.standardRowStep
+            let pushX = dx / distance * spacing
+            let pushY = dy / distance * spacing
             translate(subtreeOf: childID, byX: pushX, y: pushY, at: docIdx)
             // Half of what the branch moved: the midpoint of the gap as it now stands.
             midX += pushX / 2
@@ -735,7 +747,13 @@ public final class DocumentStore: ObservableObject {
     /// gap, so a child with a family of its own doesn't land on top of the next one. Their order is
     /// the order they already read in, top to bottom, so tidying rearranges the spacing and not the
     /// meaning.
-    public func tidyChildren(of parentID: UUID, in documentID: UUID) {
+    ///
+    /// `heights` is what the canvas has measured each card to be. A branch's extent is worked out
+    /// from the **cards**, so what's left between two of them is `tidyRowGap` of visible air —
+    /// spacing centres instead would leave a taller card overlapping its neighbour and a short one
+    /// marooned. Anything not in `heights` falls back to `nodeCardHeight`.
+    public func tidyChildren(of parentID: UUID, in documentID: UUID,
+                             heights: [UUID: Double] = [:]) {
         guard let docIdx = index(of: documentID),
               let parent = documents[docIdx].node(with: parentID) else { return }
         let children = documents[docIdx].children(of: parentID)
@@ -743,12 +761,8 @@ public final class DocumentStore: ObservableObject {
 
         // How far each child's branch reaches above and below the child itself.
         let reaches = children.map { child -> (above: Double, below: Double) in
-            let ys = documents[docIdx].subtree(of: child.id).compactMap { id in
-                documents[docIdx].node(with: id)?.position.y
-            }
-            let top = ys.min() ?? child.position.y
-            let bottom = ys.max() ?? child.position.y
-            return (child.position.y - top, bottom - child.position.y)
+            let box = extent(ofSubtree: child.id, at: docIdx, heights: heights)
+            return (child.position.y - box.top, box.bottom - child.position.y)
         }
 
         let bands = reaches.reduce(0.0) { $0 + $1.above + $1.below }
@@ -765,6 +779,26 @@ public final class DocumentStore: ObservableObject {
             cursor = y + reach.below + Self.tidyRowGap
         }
         touch(docIdx)
+    }
+
+    /// Where a branch starts and stops down the page: the top of its highest card and the bottom of
+    /// its lowest, measured with the heights the canvas handed in (the standard card where it
+    /// hasn't). Cards rather than centres, which is what makes a gap a gap.
+    private func extent(ofSubtree id: UUID, at docIdx: Int,
+                        heights: [UUID: Double]) -> (top: Double, bottom: Double) {
+        var top = Double.greatestFiniteMagnitude
+        var bottom = -Double.greatestFiniteMagnitude
+        for nodeID in documents[docIdx].subtree(of: id) {
+            guard let node = documents[docIdx].node(with: nodeID) else { continue }
+            let half = (heights[nodeID] ?? Self.nodeCardHeight) / 2
+            top = min(top, node.position.y - half)
+            bottom = max(bottom, node.position.y + half)
+        }
+        guard top <= bottom else {
+            let y = documents[docIdx].node(with: id)?.position.y ?? 0
+            return (y - Self.nodeCardHeight / 2, y + Self.nodeCardHeight / 2)
+        }
+        return (top, bottom)
     }
 
     /// Move a node and everything hanging off it, rigidly — the one way this store ever moves a
@@ -787,18 +821,32 @@ public final class DocumentStore: ObservableObject {
     /// arranging does, and a gap between *cards* can't be worked out from centres alone.
     private static let nodeCardWidth: Double = 180
 
+    /// How tall the view draws a card with a line in it. Layout lives here for the same reason the
+    /// width does; it's only ever the fallback, since the canvas hands in the heights it has
+    /// actually measured — a card with six lines in it is a good deal taller than this. Public
+    /// because the canvas draws with the same number where it hasn't measured one either.
+    public static let nodeCardHeight: Double = 56
+
     /// Centre to centre, then: a card's width plus the gap.
     static var childColumnOffset: Double { nodeCardWidth + standardNodeGap }
     /// How far the branch below is pushed out to make room for a node inserted above it — the same
     /// distance, so the two gaps either side of the new node come out standard.
     private static var insertedNodeSpacing: Double { childColumnOffset }
-    /// Air between one child's branch and the next one's.
-    private static var tidyRowGap: Double { standardNodeGap }
+
+    /// Air between one child's branch and the next one's — the *vertical* gap, which is nothing
+    /// like the horizontal one. A column of siblings reads as a list, and a list wants its lines
+    /// close: 150 points between them (what the horizontal gap is) leaves a column you have to
+    /// scroll rather than read. Measured between the **cards**, not their centres, so this is the
+    /// gap you can see whatever height the cards turn out to be.
+    static let tidyRowGap: Double = 30
+    /// One row down: a card, and the air below it.
+    static var standardRowStep: Double { nodeCardHeight + tidyRowGap }
 
     /// Roughly how much canvas a node card takes up, for keeping placed branches off each other:
     /// the card, plus enough margin that "clear of it" means visibly clear.
     private static var nodeFootprintWidth: Double { nodeCardWidth + 30 }
-    private static let nodeFootprintHeight: Double = 96
+    /// The same, downwards: a card and the standard gap, so "clear of it" means the row below it.
+    private static var nodeFootprintHeight: Double { standardRowStep }
     /// How many slots down to try before giving up and dropping the branch where it lands.
     private static let placementAttempts = 12
 

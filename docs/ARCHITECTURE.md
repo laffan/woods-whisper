@@ -188,9 +188,15 @@ transform — `scaleEffect(anchor: .topLeading)` then `offset` — so a canvas p
   flickers between the finger and half way there, and never lands on the node you were aiming at.
 - **Arrangement happens when asked — or, with Auto tidy on, every time a row of children changes**,
   and from one number. `DocumentStore.standardNodeGap` is
-  the clear space this canvas leaves between two nodes; the child column, the push that makes room
-  for an inserted node, and the air between sibling branches are all derived from it, so a tidied
-  child, a new child and a dropped branch all land the same distance out.
+  the clear space this canvas leaves between two nodes *sideways*; the child column and the push
+  that makes room for an inserted node are derived from it, so a tidied child, a new child and a
+  dropped branch all land the same distance out. Down the page it's `tidyRowGap`, which is 30 —
+  a column of siblings reads as a list, and 150 points between them is a column you scroll rather
+  than read. That gap is between the **cards**: `tidyChildren` and `attachNode` take the heights the
+  canvas has measured (`nodeSizes`, handed in as `heights:`) and fall back to `nodeCardHeight`, so a
+  six-line card takes the room it needs instead of overlapping the sibling below it. An insert on an
+  edge pushes by a node's worth *along that link's own axis* — a card's width sideways, a card's
+  height downwards — for the same reason.
   `DocumentStore.tidyChildren(of:in:)` is the one thing that moves nodes the user didn't drag:
   children into a column beside their parent, spaced by the *height of the branch hanging off each*
   so a child with a family doesn't land on its sibling.
@@ -209,12 +215,15 @@ transform — `scaleEffect(anchor: .topLeading)` then `offset` — so a canvas p
   selection box, hold-to-record, tap and double-tap, rather than stacking recognisers that would
   fight over the same touch. A *held* finger is always a recording — a root node under the finger,
   wherever it lands — which is the one gesture the canvas can't afford to make conditional, since
-  it's the record button. Selecting is a **mode** instead (`isSelecting`, entered from the ⌘ button
-  beside the minimap or ⋯ → Select Nodes), where a drag draws the box and a tap picks a card out;
+  it's the record button. Selecting is asked for instead: the ⌘ button beside the minimap held down
+  (`metaHeld`), or the mode from ⋯ → Select Nodes (`isSelecting`) for hands that would rather not
+  hold anything. Either way a drag draws the box and a tap picks a card out;
   the "+" buttons stand down while it's on, so a stray fingertip can't add a node in the middle of
-  choosing them. With a keyboard attached, **holding ⌘ turns a single drag into a selection box**
-  without the mode: `isPickingOut` is the mode *or* the key, and it's read inside the gesture, which
-  is where "as this touch began" is decided. A tap that follows
+  choosing them. With a keyboard attached, **holding a real ⌘ turns a single drag into a selection
+  box** as well. The two are separate predicates on purpose: `isPickingOut` (the mode, or the button
+  held) is view state and so decides what's *drawn*, while `pickingOutThisTouch` adds the hardware
+  key and is read inside the gesture, which is where "as this touch began" is decided — a key press
+  redraws nothing. A tap that follows
   a tap is still recognised on the way **down** rather than on release, because it decides what
   letting go means (a node to type into, versus putting things away).
   The phase is anchored to the gesture's `startLocation`: a gesture the system
@@ -240,6 +249,22 @@ would be missed, and nothing about a key going down should redraw the canvas any
 reading it at touch-down is that ⌘ arms a *drag*, not a tap: ⌘-tapping a card to add it to the
 selection would need the flag to be live in the body, which is what the ⌘ button (a real mode) is
 for.
+
+**Keeping a drag cheap (iOS).** A drag writes its translation to view state on every frame, so the
+whole canvas body re-runs sixty times a second — which is fine only if one pass is linear in the
+size of the graph. It wasn't: `Document.node(with:)` is a scan of the array, and every edge end,
+every ring and every card looked its own nodes up again, so a pass was quadratic. `content(for:)`
+now takes one pass (`cardBoxes`) that gives every node's drawn rectangle, and the edges, the group
+rings and the cards are all handed rectangles out of it; `point(of:)` takes a `GraphNode` wherever
+the caller already has one. The minimap is `Equatable` and drawn through `.equatable()`, since
+dragging a node changes neither the stored positions nor the viewport it draws — comparing is much
+cheaper than repainting every dot. What's left, if it's ever still not smooth, is splitting the node
+card into its own view so SwiftUI can skip the ones a drag isn't touching.
+
+**A gesture on a view that takes no touches never starts.** A group's ring is deliberately deaf
+(`allowsHitTesting(false)`) so it isn't a dead zone over every node inside it, and only four strips
+at its edge take touches. The drag lives on those strips now; attached to the ring as a whole it
+never fired, which is why dragging a group did nothing until the finger came off.
 
 **Lining a selection up.** `GraphArrange` (in the kit) does the arithmetic behind Align Left, Align
 Top and the two Distributes, over `GraphNodeBox` values the view builds from its *measured* card
