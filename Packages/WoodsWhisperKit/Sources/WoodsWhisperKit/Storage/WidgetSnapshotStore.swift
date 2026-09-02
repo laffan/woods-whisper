@@ -52,8 +52,9 @@ public enum WidgetSnapshotStore {
     public static func snapshot(of documents: [Document],
                                 inboxTitle: String,
                                 limit: Int = maxDocuments) -> [WidgetDocument] {
-        documents
-            .filter { $0.title != inboxTitle }
+        let followers = Document.jointFollowerIDs(in: documents)
+        return documents
+            .filter { $0.title != inboxTitle && !followers.contains($0.id) }
             .sorted { lhs, rhs in
                 if lhs.isPinned != rhs.isPinned { return lhs.isPinned }
                 return lhs.updatedAt > rhs.updatedAt

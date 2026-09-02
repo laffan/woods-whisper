@@ -57,6 +57,10 @@ struct DocumentDetailView: View {
     @State private var showingRename = false
     @State private var renameText = ""
 
+    /// Set when "Create Joint Document" has just made the other half: the pair opens straight away
+    /// rather than waiting to be found again from the Documents list.
+    @State private var showingJoint = false
+
     // Reset-with-originals confirmation
     @State private var showingResetConfirm = false
 
@@ -87,6 +91,11 @@ struct DocumentDetailView: View {
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbarContent(for: document) }
+        .navigationDestination(isPresented: $showingJoint) {
+            if let partner = model.documents.jointPartnerID(of: documentID) {
+                JointDocumentView(documentID: documentID, partnerID: partner)
+            }
+        }
         .onAppear { playback.onError = { message in model.setupError = message } }
         // Leaving the document commits an open in-place edit rather than dropping it.
         .onDisappear {
@@ -486,12 +495,34 @@ struct DocumentDetailView: View {
                         Button { shareDocumentFile(document) } label: {
                             Label("Share as Woods Whisper File", systemImage: "arrow.up.doc")
                         }
+                        JointDocumentMenuItem(isJoined: isJoined,
+                                              onCreate: createJointCounterpart,
+                                              onSeparate: separateJoint)
                     } label: {
                         Image(systemName: "ellipsis.circle")
                     }
                 }
             }
         }
+    }
+
+    // MARK: Joint document
+
+    /// Whether this document is half of a pair.
+    private var isJoined: Bool { model.documents.jointPartnerID(of: documentID) != nil }
+
+    /// "Create Joint Document": make the graph half and open the two together. The push lands on
+    /// top of this screen, so Back still leads where it did.
+    private func createJointCounterpart() {
+        guard let counterpart = model.documents.createJointCounterpart(for: documentID) else { return }
+        wwLog("Joined “\(counterpart.title)” to a new graph", .general)
+        showingJoint = true
+    }
+
+    /// "Separate Joint Document": the halves go their own ways, both keeping everything in them.
+    private func separateJoint() {
+        model.documents.separateJoint(documentID)
+        wwLog("Separated a joint document", .general)
     }
 
     /// Export the document (audio + edited transcriptions) as a single `.wwdoc` file and present the
@@ -2555,11 +2586,115 @@ private struct LongPressUnless: ViewModifier {
     }
 }
 
+/// The **⋯** menu's joint-document row, the same in a document as in a graph: make the half this
+/// one hasn't got, or let the pair go. It's one item because it's one idea — whether this document
+/// is open beside its counterpart — and the same words in both places mean it reads the same way
+/// whichever half you happen to be looking at.
+struct JointDocumentMenuItem: View {
+    let isJoined: Bool
+    let onCreate: () -> Void
+    let onSeparate: () -> Void
+
+    var body: some View {
+        if isJoined {
+            Button(role: .destructive, action: onSeparate) {
+                Label("Separate Joint Document", systemImage: "rectangle.split.2x1.slash")
+            }
+        } else {
+            Button(action: onCreate) {
+                Label("Create Joint Document", systemImage: "rectangle.split.2x1")
+            }
+        }
+    }
+}
+
 /// Carries whatever the editor's Share button is handing to the system share sheet — the
 /// transcript's text or the recording's audio file — through one `.sheet(item:)`.
 private struct ShareTarget: Identifiable {
     let id = UUID()
     let items: [Any]
+}
+
+// MARK: - Joint documents
+
+/// A **joint document**: one document and one graph, open at the same time — prose down one side
+/// and a mind map down the other, two ways of holding one subject rather than one container trying
+/// to be both.
+///
+/// The halves are ordinary documents throughout. Each keeps its own recordings, its own Auto
+/// transform, its own backup file and its own `.wwdoc` export; a link on one of them is the whole
+/// of the pairing, and "Separate Joint Document" is nothing but clearing it. That's why each half
+/// is shown here as *itself*, `DocumentDetailView` and `GraphDocumentView` unchanged and each in
+/// its own `NavigationStack` — so each pane keeps the title and the **⋯** menu it has everywhere
+/// else, and neither has to learn that it's in a pair.
+///
+/// Which pane goes where is decided by what the halves *are*, not by which one was made first: the
+/// document reads top-to-bottom so it takes the top (or, with room across, the left), and the graph
+/// takes the half that's left.
+struct JointDocumentView: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
+    /// The half that was open when the pair was made, and the one made for it. Which is which
+    /// doesn't matter past this point — the two are sorted by kind below.
+    let documentID: UUID
+    let partnerID: UUID
+
+    /// The prose half and the canvas half, whichever way round they were handed in.
+    private var halves: (document: UUID, graph: UUID)? {
+        guard let a = model.documents.document(with: documentID),
+              let b = model.documents.document(with: partnerID) else { return nil }
+        if a.isGraph == b.isGraph { return nil }          // two of a kind is not a pair
+        return a.isGraph ? (b.id, a.id) : (a.id, b.id)
+    }
+
+    /// Whether the pair still holds. Separating from inside either pane leaves this screen showing
+    /// something that isn't a pair any more, so it takes itself off the stack instead.
+    private var isStillJoined: Bool {
+        model.documents.jointPartnerID(of: documentID) == partnerID
+    }
+
+    var body: some View {
+        Group {
+            if let halves {
+                if sizeClass == .regular {
+                    HStack(spacing: 0) {
+                        pane { DocumentDetailView(documentID: halves.document) }
+                        Rectangle().fill(WW.hairline).frame(width: 1)
+                        pane { GraphDocumentView(documentID: halves.graph) }
+                    }
+                } else {
+                    VStack(spacing: 0) {
+                        pane { DocumentDetailView(documentID: halves.document) }
+                        WWHairline()
+                        pane { GraphDocumentView(documentID: halves.graph) }
+                    }
+                }
+            } else {
+                WWEmptyState(title: "Joint document not found",
+                             systemImage: "rectangle.split.2x1")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(WW.paper)
+            }
+        }
+        // The pair's own bar carries nothing but the way back: everything you can do to either half
+        // is in that half's own menu, including separating the two.
+        .navigationTitle("")
+        .navigationBarTitleDisplayMode(.inline)
+        .onChange(of: isStillJoined) { _, joined in
+            if !joined { dismiss() }
+        }
+    }
+
+    /// One half, in a navigation stack of its own — which is what gives it the bar its title and
+    /// **⋯** menu live in. Without it both halves' toolbars would pile into the one bar above and
+    /// fight over it.
+    @ViewBuilder
+    private func pane<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        NavigationStack { content() }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
 }
 
 // MARK: - Graph documents
@@ -2715,6 +2850,8 @@ struct GraphDocumentView: View {
     @State private var renameText = ""
     @State private var shareItem: ShareItem?
     @State private var documentFileShare: DocumentFileShareItem?
+    /// Set when "Create Joint Document" has just made the other half — the pair opens straight away.
+    @State private var showingJoint = false
 
     private var document: Document? { model.documents.document(with: documentID) }
 
@@ -2740,6 +2877,11 @@ struct GraphDocumentView: View {
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbarContent(for: document) }
+        .navigationDestination(isPresented: $showingJoint) {
+            if let partner = model.documents.jointPartnerID(of: documentID) {
+                JointDocumentView(documentID: documentID, partnerID: partner)
+            }
+        }
         // No bottom bar here. A graph has no record button — the hold on the canvas is it — and its
         // Auto transform is an app-wide setting ("Auto transform nodes", in Settings → Graphs)
         // rather than a per-document toggle, so the canvas runs all the way down to the edge.
@@ -4648,6 +4790,9 @@ struct GraphDocumentView: View {
                     Button { shareDocumentFile(document) } label: {
                         Label("Share as Woods Whisper File", systemImage: "arrow.up.doc")
                     }
+                    JointDocumentMenuItem(isJoined: isJoined,
+                                          onCreate: createJointCounterpart,
+                                          onSeparate: separateJoint)
                     Divider()
                     Button {
                         if isSelecting { endSelecting() } else { beginSelecting() }
@@ -4675,6 +4820,24 @@ struct GraphDocumentView: View {
                 }
             }
         }
+    }
+
+    // MARK: Joint document
+
+    /// Whether this graph is half of a pair.
+    private var isJoined: Bool { model.documents.jointPartnerID(of: documentID) != nil }
+
+    /// "Create Joint Document": make the prose half and open the two together.
+    private func createJointCounterpart() {
+        guard let counterpart = model.documents.createJointCounterpart(for: documentID) else { return }
+        wwLog("Joined “\(counterpart.title)” to a new document", .general)
+        showingJoint = true
+    }
+
+    /// "Separate Joint Document": the halves go their own ways, both keeping everything in them.
+    private func separateJoint() {
+        model.documents.separateJoint(documentID)
+        wwLog("Separated a joint document", .general)
     }
 
     /// The graph as a Markdown outline — nodes as bullets, indented by depth. It's what a graph

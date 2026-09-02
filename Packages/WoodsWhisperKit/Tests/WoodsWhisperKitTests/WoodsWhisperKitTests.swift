@@ -273,6 +273,43 @@ final class WoodsWhisperKitTests: XCTestCase {
         XCTAssertTrue(Document.paragraphs(fromLinesOf: "   \n\n ").isEmpty)
     }
 
+    // MARK: Joint documents
+
+    /// The half a link points at is the one the lists leave out; the half that points is the row.
+    func testTheJoinedHalfIsTheFollower() {
+        let graph = Document(title: "Field Notes", kind: .graph)
+        let notes = Document(title: "Field Notes", joinedID: graph.id)
+        let loose = Document(title: "Trip Log")
+
+        let followers = Document.jointFollowerIDs(in: [notes, graph, loose])
+
+        XCTAssertEqual(followers, [graph.id])
+    }
+
+    func testNothingIsAFollowerWithoutAJoin() {
+        let a = Document(title: "Field Notes")
+        let b = Document(title: "Trip Log", kind: .graph)
+        XCTAssertTrue(Document.jointFollowerIDs(in: [a, b]).isEmpty)
+    }
+
+    func testTheJoinSurvivesARoundTrip() throws {
+        let partner = UUID()
+        let doc = Document(title: "Field Notes", joinedID: partner)
+        let decoded = try JSONDecoder.iso.decode(Document.self,
+                                                 from: try JSONEncoder.iso.encode(doc))
+        XCTAssertEqual(decoded.joinedID, partner)
+    }
+
+    /// A document saved before joint documents existed reads back as a document on its own.
+    func testDocumentWithoutAJoinKeyDecodesAsUnjoined() throws {
+        let json = """
+        {"id":"\(UUID().uuidString)","title":"Field Notes",\
+        "createdAt":"2026-07-31T14:30:05Z","updatedAt":"2026-07-31T14:30:05Z"}
+        """
+        let decoded = try JSONDecoder.iso.decode(Document.self, from: Data(json.utf8))
+        XCTAssertNil(decoded.joinedID)
+    }
+
     // MARK: Auto transform
 
     func testAutoTransformChoiceRoundTrips() throws {

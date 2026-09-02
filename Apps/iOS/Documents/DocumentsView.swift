@@ -36,7 +36,14 @@ struct DocumentsView: View {
     @State private var selected: Set<UUID> = []
 
     private var allDocuments: [Document] { model.documents.documents }
-    private var userDocuments: [Document] { allDocuments.filter { $0.title != DocumentStore.inboxTitle } }
+    /// Everything the list is *about*: not the Inbox, and not the second half of a joint document —
+    /// that one is reached through the half it was made from, which is the row you see.
+    private var userDocuments: [Document] {
+        let followers = Document.jointFollowerIDs(in: allDocuments)
+        return allDocuments.filter {
+            $0.title != DocumentStore.inboxTitle && !followers.contains($0.id)
+        }
+    }
     private var pinnedDocuments: [Document] { userDocuments.filter { $0.isPinned } }
     private var unpinnedDocuments: [Document] { userDocuments.filter { !$0.isPinned } }
 
@@ -185,8 +192,10 @@ struct DocumentsView: View {
     private func destination(for route: Route) -> some View {
         switch route {
         case .document(let id):
-            let isGraph = model.documents.document(with: id)?.isGraph ?? false
-            if isGraph {
+            // A joint document opens as both halves at once; either half on its own opens as itself.
+            if let partner = model.documents.jointPartnerID(of: id) {
+                JointDocumentView(documentID: id, partnerID: partner)
+            } else if model.documents.document(with: id)?.isGraph ?? false {
                 GraphDocumentView(documentID: id)
             } else {
                 DocumentDetailView(documentID: id)
@@ -223,7 +232,8 @@ struct DocumentsView: View {
                         .font(.system(size: 20, weight: .light))
                         .foregroundStyle(selected.contains(doc.id) ? WW.moss : WW.inkTertiary)
                 }
-                DocumentRow(document: doc, recordingElapsed: recordingElapsed(for: doc))
+                DocumentRow(document: doc, recordingElapsed: recordingElapsed(for: doc),
+                            partner: jointPartner(of: doc))
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .contentShape(Rectangle())
@@ -272,6 +282,12 @@ struct DocumentsView: View {
                 }
             }
         }
+    }
+
+    /// The half this row's document is joined to, if it's half of a joint document.
+    private func jointPartner(of doc: Document) -> Document? {
+        guard let id = model.documents.jointPartnerID(of: doc.id) else { return nil }
+        return model.documents.document(with: id)
     }
 
     /// Push a document onto the stack, unless it's already the top of it. The row, the "+" and the
@@ -505,6 +521,9 @@ private struct DocumentRow: View {
     let document: Document
     /// How long the hold on this row's "+" has been running, if it's the one recording.
     var recordingElapsed: TimeInterval?
+    /// The other half, when this row is a joint document — so the row can say it opens onto two
+    /// things rather than one, and count what's in both.
+    var partner: Document?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -514,8 +533,13 @@ private struct DocumentRow: View {
                         .font(.system(size: 10))
                         .foregroundStyle(WW.moss)
                 }
-                // A graph says so in the list: it opens onto a canvas, not a page.
-                if document.isGraph {
+                // A graph says so in the list: it opens onto a canvas, not a page. A joint document
+                // says so too — it opens onto both at once.
+                if partner != nil {
+                    Image(systemName: "rectangle.split.2x1")
+                        .font(.system(size: 11))
+                        .foregroundStyle(WW.moss)
+                } else if document.isGraph {
                     Image(systemName: "point.3.connected.trianglepath.dotted")
                         .font(.system(size: 11))
                         .foregroundStyle(WW.inkSecondary)
@@ -544,17 +568,22 @@ private struct DocumentRow: View {
         }
     }
     private var subtitle: String {
-        let body: String
-        if document.isGraph {
-            let nodes = document.nodes.count
-            body = "\(nodes) node\(nodes == 1 ? "" : "s")"
-        } else {
-            let paras = document.paragraphs.count
-            body = "\(paras) paragraph\(paras == 1 ? "" : "s")"
-        }
-        let count = document.recordings.count
+        // A joint document reads as what it holds on both sides — "4 paragraphs · 7 nodes" — since
+        // one row stands for the pair.
+        let halves = [document, partner].compactMap { $0 }
+        let body = halves.map(Self.bodyCount).joined(separator: " · ")
+        let count = halves.reduce(0) { $0 + $1.recordings.count }
         let clips = count == 0 ? "" : " · \(count) recording\(count == 1 ? "" : "s")"
         return body + clips
+    }
+
+    private static func bodyCount(of document: Document) -> String {
+        if document.isGraph {
+            let nodes = document.nodes.count
+            return "\(nodes) node\(nodes == 1 ? "" : "s")"
+        }
+        let paras = document.paragraphs.count
+        return "\(paras) paragraph\(paras == 1 ? "" : "s")"
     }
 }
 

@@ -202,6 +202,15 @@ the rest of the app depends on.
   graph. The row shows the counter while you hold. (**Tap** it rather than holding and it simply opens the document.) Record
   before the speech model has finished loading and the clip just waits its turn — it's transcribed
   and filed into the document by itself the moment the model is ready, this launch or the next.
+- **Joint documents.** A document and a graph, open at the same time — prose down one side, a mind
+  map down the other. The **⋯** menu of either one offers **Create Joint Document**: it makes the
+  half you haven't got, under the same title, and opens the two together. On an **iPad** they sit
+  side by side (document left, graph right); on a **phone**, stacked (document above, graph below).
+  Each half stays an ordinary document throughout — its own recordings, its own Auto transform, its
+  own backup file, its own **⋯** menu — so nothing about either of them changes by being paired. The
+  pair takes one row in **Documents**, counting what's in both. **Separate Joint Document**, in
+  either half's menu, ends it: both survive with everything in them, and the second one takes its own
+  place in the list. Deleting either half separates the pair on its way out.
 - **Pin documents.** Swipe a document and tap **Pin** to hold it at the top of the list.
 - **Bulk actions on documents.** **Long-press** a document to enter selection mode, then tap the
   others you want (or **Select All**). The bar along the bottom applies **Delete**, **Copy**,

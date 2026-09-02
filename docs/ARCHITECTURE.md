@@ -145,6 +145,20 @@ screen is showing a placeholder for (recording, paragraph, node, document), so t
 read **Thinking…** until the answer starts and **Transforming…** after. The phase is latched beside
 the stream, so an ordinary token costs a comparison rather than a hop back to the main actor.
 
+**Joint documents (iOS).** A document and a graph shown at once are *two documents and a link*,
+not a third kind of container. `Document.joinedID` is stored on one half only — the one the pair was
+made from — and `DocumentStore.jointPartnerID(of:)` answers from either side, so no caller has to
+know which half it holds. Everything a document has stays where it was: two sets of recordings, two
+Auto transform choices, two backup files, two `.wwdoc` exports. The half that's pointed *at* is left
+out of the Documents list, the Watch's target list and the widget (`Document.jointFollowerIDs(in:)`,
+the one rule all three read), because it's reached through the row of the half that points. So the
+pairing is one optional id, and separating is clearing it — which is also what deleting or trashing
+either half does on its way out, so a survivor never points at something that isn't there.
+`JointDocumentView` puts each half in a `NavigationStack` of its own, which is what lets
+`DocumentDetailView` and `GraphDocumentView` go in unchanged and keep the title and **⋯** menu they
+have everywhere else; without it both toolbars would pile into the one bar above and fight over it.
+Which pane is where is decided by kind, not by which half came first.
+
 **Graph documents (iOS).** A graph is a `Document` with `kind == .graph`; `DocumentsView` routes to
 `GraphDocumentView` (at the bottom of `DocumentDetailView.swift`, alongside the Inbox and the
 recorder, so the app target picks it up without an xcodegen regen) on that flag alone, so every way

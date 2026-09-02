@@ -62,6 +62,63 @@ public final class DocumentStore: ObservableObject {
         return doc
     }
 
+    // MARK: Joint documents
+
+    /// The other half of a joint document, asked from either side.
+    ///
+    /// The link is stored on one half only, so this looks both ways: the id this document points at,
+    /// or the document that points at this one. Callers don't have to know which half they hold.
+    public func jointPartnerID(of documentID: UUID) -> UUID? {
+        if let joined = document(with: documentID)?.joinedID,
+           document(with: joined) != nil { return joined }
+        return documents.first { $0.joinedID == documentID }?.id
+    }
+
+    /// Whether this document is the half that's reached *through* the other one — the one the
+    /// Documents list, the Watch's targets and the widget all leave out.
+    public func isJointFollower(_ documentID: UUID) -> Bool {
+        documents.contains { $0.joinedID == documentID }
+    }
+
+    /// "Create Joint Document": make the half this one hasn't got — a graph for a document, a
+    /// document for a graph — and link the two. Same title: it's one subject held two ways, and the
+    /// new half is only ever met beside the one it was made from.
+    ///
+    /// Returns the new half, or nil when there's nothing to do (already joined, or the Inbox, which
+    /// is a feed rather than a document and has no second half to make).
+    @discardableResult
+    public func createJointCounterpart(for documentID: UUID) -> Document? {
+        guard let doc = document(with: documentID),
+              doc.title != Self.inboxTitle,
+              jointPartnerID(of: documentID) == nil,
+              let idx = index(of: documentID) else { return nil }
+        let counterpart = Document(title: doc.title, kind: doc.isGraph ? .document : .graph)
+        documents.insert(counterpart, at: 0)
+        documents[idx].joinedID = counterpart.id
+        touch(idx)
+        return counterpart
+    }
+
+    /// "Separate Joint Document": drop the link, from either side. Both halves survive as ordinary
+    /// documents — nothing written in either of them is touched — and the one that was reached
+    /// through the other takes its own place in the list.
+    /// Separate the pair a document is part of, if any, on its way out — deleting or trashing half
+    /// of a joint document ends the pairing rather than leaving the survivor pointing at something
+    /// that isn't in the list any more (or reappearing joined when the other half is restored).
+    private func breakJoint(around documentID: UUID) {
+        guard jointPartnerID(of: documentID) != nil else { return }
+        separateJoint(documentID)
+    }
+
+    public func separateJoint(_ documentID: UUID) {
+        let leadID = document(with: documentID)?.joinedID != nil
+            ? documentID
+            : documents.first { $0.joinedID == documentID }?.id
+        guard let leadID, let idx = index(of: leadID) else { return }
+        documents[idx].joinedID = nil
+        touch(idx)
+    }
+
     public func rename(_ document: Document, to title: String) {
         guard let idx = index(of: document.id) else { return }
         documents[idx].title = title
@@ -96,8 +153,9 @@ public final class DocumentStore: ObservableObject {
     /// The pinned-first, most-recent-next document descriptor ordering, as a pure function so callers
     /// observing the `documents` publisher can compute it from a freshly-published array.
     public static func descriptors(from documents: [Document]) -> [DocumentDescriptor] {
-        documents
-            .filter { $0.title != Self.inboxTitle }
+        let followers = Document.jointFollowerIDs(in: documents)
+        return documents
+            .filter { $0.title != Self.inboxTitle && !followers.contains($0.id) }
             .sorted { lhs, rhs in
                 if lhs.isPinned != rhs.isPinned { return lhs.isPinned && !rhs.isPinned }
                 return lhs.updatedAt > rhs.updatedAt
@@ -106,6 +164,7 @@ public final class DocumentStore: ObservableObject {
     }
 
     public func delete(_ document: Document) {
+        breakJoint(around: document.id)
         if let idx = index(of: document.id) {
             for recording in documents[idx].recordings { removeAudio(recording) }
         }
@@ -124,6 +183,7 @@ public final class DocumentStore: ObservableObject {
     // MARK: Trash
 
     public func moveToTrash(_ document: Document) {
+        breakJoint(around: document.id)
         documents.removeAll { $0.id == document.id }
         trash.insert(document, at: 0)
         persistDocuments()
@@ -321,6 +381,7 @@ public final class DocumentStore: ObservableObject {
     /// Move several documents to the trash at once (the Documents list's batch Delete), keeping
     /// their relative order at the top of the trash and persisting once.
     public func moveToTrash(_ ids: Set<UUID>) {
+        for id in ids { breakJoint(around: id) }
         let moving = documents.filter { ids.contains($0.id) }
         guard !moving.isEmpty else { return }
         documents.removeAll { ids.contains($0.id) }

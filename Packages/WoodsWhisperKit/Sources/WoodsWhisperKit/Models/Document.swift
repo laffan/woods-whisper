@@ -48,6 +48,16 @@ public struct Document: Identifiable, Codable, Hashable, Sendable {
     /// clip gives the original words back rather than transforming them a second time.
     public var autoTransformPresetID: UUID?
 
+    /// The other half of a **joint document**, if this one is half of a pair: a document and a graph
+    /// shown side by side, two ways of holding the same subject rather than one container with two
+    /// bodies. The link is stored on one side only — this one, the half the pair was made from —
+    /// and the half it points at is reached through it instead of standing on its own in any list.
+    ///
+    /// Deliberately a link and not a merge: both halves stay ordinary documents, with their own
+    /// recordings, backups, `.wwdoc` exports and Auto transform, and separating the pair is nothing
+    /// more than clearing this.
+    public var joinedID: UUID?
+
     public init(
         id: UUID = UUID(),
         title: String,
@@ -59,7 +69,8 @@ public struct Document: Identifiable, Codable, Hashable, Sendable {
         groups: [GraphGroup] = [],
         recordings: [Recording] = [],
         isPinned: Bool = false,
-        autoTransformPresetID: UUID? = nil
+        autoTransformPresetID: UUID? = nil,
+        joinedID: UUID? = nil
     ) {
         self.id = id
         self.title = title
@@ -72,6 +83,7 @@ public struct Document: Identifiable, Codable, Hashable, Sendable {
         self.recordings = recordings
         self.isPinned = isPinned
         self.autoTransformPresetID = autoTransformPresetID
+        self.joinedID = joinedID
     }
 
     /// Which body this document has.
@@ -102,6 +114,13 @@ public struct Document: Identifiable, Codable, Hashable, Sendable {
         case .document: return paragraphs.contains { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         case .graph:    return nodes.contains { $0.hasText }
         }
+    }
+
+    /// The ids that are the *second* half of a joint pair: another document points at each of them,
+    /// so they're reached through that one rather than standing on their own in the Documents list,
+    /// the Watch's target list or the widget.
+    public static func jointFollowerIDs(in documents: [Document]) -> Set<UUID> {
+        Set(documents.compactMap(\.joinedID))
     }
 
     /// One editable block of the document body.
@@ -152,7 +171,7 @@ public struct Document: Identifiable, Codable, Hashable, Sendable {
     // failing the decode. A document saved before graphs existed reads back as `.document`.
     enum CodingKeys: String, CodingKey {
         case id, title, createdAt, updatedAt, kind, paragraphs, nodes, groups, recordings, isPinned,
-             autoTransformPresetID
+             autoTransformPresetID, joinedID
     }
 
     public init(from decoder: Decoder) throws {
@@ -168,5 +187,6 @@ public struct Document: Identifiable, Codable, Hashable, Sendable {
         recordings = try c.decodeIfPresent([Recording].self, forKey: .recordings) ?? []
         isPinned = try c.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
         autoTransformPresetID = try c.decodeIfPresent(UUID.self, forKey: .autoTransformPresetID)
+        joinedID = try c.decodeIfPresent(UUID.self, forKey: .joinedID)
     }
 }
