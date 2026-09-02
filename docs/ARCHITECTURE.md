@@ -178,7 +178,8 @@ transform — `scaleEffect(anchor: .topLeading)` then `offset` — so a canvas p
   a `DragGesture` measures against the coordinate space of the view it's attached to, and a node
   drag *moves that view*, so a local-space translation comes back halved and oscillating — the card
   flickers between the finger and half way there, and never lands on the node you were aiming at.
-- **Arrangement happens only when asked**, and from one number. `DocumentStore.standardNodeGap` is
+- **Arrangement happens when asked — or, with Auto tidy on, every time a row of children changes**,
+  and from one number. `DocumentStore.standardNodeGap` is
   the clear space this canvas leaves between two nodes; the child column, the push that makes room
   for an inserted node, and the air between sibling branches are all derived from it, so a tidied
   child, a new child and a dropped branch all land the same distance out.
@@ -188,13 +189,24 @@ transform — `scaleEffect(anchor: .topLeading)` then `offset` — so a canvas p
   Inserting a node on an edge is the same idea in miniature — the branch below slides out by a
   node's width and the new node takes the middle of the widened gap, so it has the room the "+" had.
   Both go through one rigid `translate(subtreeOf:)`, which is why nothing below ever gets scrambled.
+  **Auto tidy** (the toggle beside the minimap, stored app-wide as `graphAutoTidy` for the same
+  reason the minimap's own switch is) simply calls that same tidy from every place a node is added
+  with a parent, and from the one place an abandoned empty node is removed again. It has one rule of
+  its own: a node made while a gesture is still running — a "+" held down, a chain still being
+  spoken — puts its tidy in `pendingTidyParents` and it runs when the touch ends, because the card is
+  what's recording and it must not move out from under the finger. The pending parents are then
+  tidied in the order the graph stores them, which is the order they were made, so a chain lines up
+  from the top down rather than each tidy undoing the last.
 - **One press, read five ways.** A single `DragGesture(minimumDistance: 0)` decides between pan,
   selection box, hold-to-record, tap and double-tap, rather than stacking recognisers that would
   fight over the same touch. A *held* finger is always a recording — a root node under the finger,
   wherever it lands — which is the one gesture the canvas can't afford to make conditional, since
-  it's the record button. Selecting is a **mode** instead (`isSelecting`, entered from ⋯ → Select
-  Nodes), where a drag draws the box and a tap picks a card out; the "+" buttons stand down while
-  it's on, so a stray fingertip can't add a node in the middle of choosing them. A tap that follows
+  it's the record button. Selecting is a **mode** instead (`isSelecting`, entered from the ⌘ button
+  beside the minimap or ⋯ → Select Nodes), where a drag draws the box and a tap picks a card out;
+  the "+" buttons stand down while it's on, so a stray fingertip can't add a node in the middle of
+  choosing them. With a keyboard attached, **holding ⌘ turns a single drag into a selection box**
+  without the mode: `isPickingOut` is the mode *or* the key, and it's read inside the gesture, which
+  is where "as this touch began" is decided. A tap that follows
   a tap is still recognised on the way **down** rather than on release, because it decides what
   letting go means (a node to type into, versus putting things away).
   The phase is anchored to the gesture's `startLocation`: a gesture the system
@@ -208,6 +220,18 @@ transform — `scaleEffect(anchor: .topLeading)` then `offset` — so a canvas p
   to a glide that steps `pan` down to a stop by hand rather than through `withAnimation`: an
   animation would set the state to its destination at once and leave the next touch to start from
   there, so grabbing the coasting canvas would jump it. Any finger down cancels the glide.
+
+**Reading the ⌘ key (iOS 17).** SwiftUI's `onModifierKeysChanged` is iOS 18, and the app runs from
+17, so the key is read the way UIKit has always offered it: a `UIEvent` carries the modifier flags
+that were held when it happened. `CommandKeyWatcher` puts one passive `UIGestureRecognizer` on the
+window — it records `event.modifierFlags` in `touchesBegan` and immediately fails itself, with
+`cancelsTouchesInView = false`, so it observes every touch without taking part in one. The flag
+lands in a `ModifierKeys` **class** rather than `@State` on purpose: a SwiftUI gesture closure sees
+the view as it was when the body was last evaluated, so a key pressed between two frames of a drag
+would be missed, and nothing about a key going down should redraw the canvas anyway. The cost of
+reading it at touch-down is that ⌘ arms a *drag*, not a tap: ⌘-tapping a card to add it to the
+selection would need the flag to be live in the body, which is what the ⌘ button (a real mode) is
+for.
 
 **Lining a selection up.** `GraphArrange` (in the kit) does the arithmetic behind Align Left, Align
 Top and the two Distributes, over `GraphNodeBox` values the view builds from its *measured* card

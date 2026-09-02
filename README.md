@@ -128,7 +128,7 @@ the rest of the app depends on.
   place beside its new parent, below the children already there and clear of anything else. Nodes stay
   exactly where you put them — nothing rearranges them behind your back, though **Tidy Children**
   (in a node's edit bar, and in its long-press menu) will line a node's children up beside it on
-  request, each with its own branch in tow. The **"+"** tucked inside a node's right edge adds a child and the
+  request, each with its own branch in tow, and **Auto Tidy** below will do it every time by itself. The **"+"** tucked inside a node's right edge adds a child and the
   one midway along a line drops a node between the two it joins — evenly, with the same room either
   side, pushing the branch below out of the way; **tap** either to type, or **hold** either to
   record into the new node the way the canvas does. Whenever a hold is recording, the elapsed
@@ -137,10 +137,20 @@ the rest of the app depends on.
   There's no bottom bar at all — the hold is the record button, and a graph's auto transform is an
   app-wide setting (**Settings → Graphs**) rather than a per-document toggle — so the canvas runs
   all the way to the edge.
-- **Picking several nodes out.** The hold belongs to recording, so selecting is asked for: **⋯ →
-  Select Nodes**. In that mode a drag on the canvas draws a selection box — everything it touches is
-  selected — and a tap on a card takes it in or out. Any one of the selected nodes drags the whole
-  lot, and a bar along the bottom carries what you can do with them; **Done** leaves the mode.
+- **Two buttons beside the minimap.** Stacked at the minimap's left, and there whether or not the
+  minimap is: **Auto Tidy**, and an on-screen **⌘**. Both stay on once tapped and fill in to say so.
+- **Auto Tidy.** With it on, adding a node lines its siblings up around it — **Tidy Children**, run
+  for you rather than asked for, every time a row of children changes. A node with no parent has no
+  siblings to line up, so a root you hold or double-tap onto the canvas is left exactly where you put
+  it; abandoning an empty node closes the row back up. A node made *during* a gesture — a **"+"**
+  held down, a chain still being spoken — waits until your finger lifts, so the card being recorded
+  into never slides out from under it. The toggle is remembered across graphs, like the minimap.
+- **Picking several nodes out.** The hold belongs to recording, so selecting is asked for. Three ways
+  in: the **⌘** button beside the minimap, **⋯ → Select Nodes**, or — with a keyboard attached —
+  **holding ⌘ and dragging**, which draws the box there and then without switching anything on. In
+  the mode, a drag on the canvas draws a selection box — everything it touches is selected — and a
+  tap on a card takes it in or out. Any one of the selected nodes drags the whole lot, and a bar
+  along the bottom carries what you can do with them; **Done** leaves the mode.
 - **Lining a selection up.** That bar's second row has **Align Left**, **Align Top**, **Distribute
   Horizontal** and **Distribute Vertical**. Aligning puts every selected card's left (or top) edge
   on the leftmost (or topmost) one; distributing holds the two on the ends where they are and evens
@@ -155,8 +165,9 @@ the rest of the app depends on.
 - **Unlink.** A node's edit bar (and its long-press menu) has an **unlink** action: it takes the
   node out of the tree without taking its words with it — its parent and its children are joined to
   each other, so the branch survives, and the node floats free where it stands.
-- **Finding your way around a graph.** A **minimap** sits along the bottom: every node as a dot
-  inside a box showing what's on screen — touch or drag it to go there. The **⋯** menu adds **List
+- **Finding your way around a graph.** A **minimap** sits along the bottom, the two buttons above at
+  its left: every node as a dot inside a box showing what's on screen — touch or drag it to go
+  there. The **⋯** menu adds **List
   Nodes** (the graph as an indented list, in outline order; tap a line to fly to that node),
   **Center Graph**, and a switch for the minimap itself. The same menu's **Copy Outline** / **Share
   Outline** — and the backup folder — hand over the graph as a **Markdown outline**: one bullet per

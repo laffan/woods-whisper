@@ -4,6 +4,9 @@ import UniformTypeIdentifiers
 import WoodsWhisperKit
 #if canImport(UIKit)
 import UIKit
+// The subclass header, for the passive recognizer that reads the ⌘ key off a touch: overriding
+// `touchesBegan` and setting `state` are only visible with it imported.
+import UIKit.UIGestureRecognizerSubclass
 #endif
 
 /// A document: a coherent body of editable paragraphs, with the source recordings kept in a
@@ -2649,6 +2652,11 @@ struct GraphDocumentView: View {
     @State private var selectedNodeIDs: Set<UUID> = []
     @State private var marqueeOrigin: CGPoint?
     @State private var marqueeCurrent: CGPoint?
+    /// The ⌘ key, when there's a keyboard to hold it down with: held as a drag begins, that drag
+    /// draws a selection box too, without the mode being switched on first. The ⌘ button beside the
+    /// minimap is the same thing for a device with no keyboard — it turns the mode on and leaves it
+    /// on, which is what a finger needs.
+    @State private var keys = ModifierKeys()
     /// Whether the touch in progress is the second of a pair — the one that makes a node to type
     /// into, if it's let go rather than held (holding records, wherever the finger is).
     @State private var isSecondTouch = false
@@ -2679,6 +2687,15 @@ struct GraphDocumentView: View {
     /// graphs — it's a preference about how you like to work, not about one document.
     @AppStorage("graphShowsMinimap") private var showsMinimap = true
     @State private var showingNodeList = false
+
+    /// Auto tidy: with it on, adding a node lines its siblings up around it — "Tidy Children" run
+    /// for you, every time, instead of when you ask. Remembered across graphs for the same reason
+    /// the minimap is: it's how you like to work rather than a property of one mind map. Off by
+    /// default, since a graph otherwise never moves a node you placed.
+    @AppStorage("graphAutoTidy") private var autoTidy = false
+    /// Parents whose children a tidy is owed to, held until the finger lifts: a card must not slide
+    /// out from under the touch that's still recording into it.
+    @State private var pendingTidyParents: Set<UUID> = []
 
     // Title, sharing.
     @State private var showingRename = false
@@ -2717,6 +2734,7 @@ struct GraphDocumentView: View {
             isSelecting = false
             marqueeOrigin = nil
             marqueeCurrent = nil
+            pendingTidyParents = []
             finishEditing()
         }
         .sheet(item: $reviseTask) { task in
@@ -2778,6 +2796,8 @@ struct GraphDocumentView: View {
                 .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
                 .background(alignment: .topLeading) { GraphGrid(pan: pan, scale: scale) }
                 .background(WW.paper)
+                // Nothing to see: it watches the window for the ⌘ held as a touch goes down.
+                .background { commandKeyWatcher() }
                 .clipped()
                 .contentShape(Rectangle())
                 // The canvas's own gestures. A touch that lands on a node is the node's — SwiftUI
@@ -2788,7 +2808,7 @@ struct GraphDocumentView: View {
                 .overlay(alignment: .bottom) {
                     VStack(spacing: 8) {
                         selectionBar()
-                        minimap(for: document)
+                        bottomControls(for: document)
                     }
                 }
                 .overlay { chainRing() }
@@ -2842,7 +2862,10 @@ struct GraphDocumentView: View {
                                                                           in: documentID)
                                            }
                                        },
-                                       onRelease: { finishHoldRecording() })
+                                       onRelease: {
+                                           finishHoldRecording()
+                                           flushPendingTidy()
+                                       })
                         .accessibilityLabel("Insert node between")
                         .position(x: edge.midpoint.x + GraphCanvas.center,
                                   y: edge.midpoint.y + GraphCanvas.center)
@@ -2892,7 +2915,10 @@ struct GraphDocumentView: View {
                                                model.documents.addChildNode(to: node.id, in: documentID)
                                            }
                                        },
-                                       onRelease: { finishHoldRecording() })
+                                       onRelease: {
+                                           finishHoldRecording()
+                                           flushPendingTidy()
+                                       })
                         .accessibilityLabel("Add child node")
                         .offset(x: -4)     // tucked into the card's right-hand gutter
                 }
@@ -3117,12 +3143,12 @@ struct GraphDocumentView: View {
                     isSecondTouch = isFollowUpTouch(at: value.startLocation)
                     phase = .pressing
                     lastPanTranslation = value.translation
-                    if !isSelecting { armHold(at: value.startLocation) }
+                    if !isPickingOut { armHold(at: value.startLocation) }
                 } else if phase == .pressing, moved > GraphCanvas.tapSlop {
                     cancelHold()
-                    // While selecting, a drag is the selection box — that's what the mode is for;
-                    // the rest of the time it's a pan.
-                    if isSelecting {
+                    // While selecting — the mode, or ⌘ held as this touch went down — a drag is the
+                    // selection box; the rest of the time it's a pan.
+                    if isPickingOut {
                         beginMarquee(at: value.startLocation)
                     } else {
                         phase = .panning
@@ -3158,6 +3184,8 @@ struct GraphDocumentView: View {
                 case .panning:
                     startGlide(velocity: value.velocity)
                 }
+                // The finger is off the glass: anything Auto tidy put off can happen now.
+                flushPendingTidy()
                 phase = .idle
                 gestureStart = nil
                 isSecondTouch = false
@@ -3282,6 +3310,7 @@ struct GraphDocumentView: View {
             model.documents.deleteNode(node.id, in: documentID)
             return
         }
+        autoTidySiblings(of: node, whenTouchEnds: true)
         recordingNodeID = node.id
         // The "+" is where the finger is, so anchoring to the button anchors to the finger.
         recordingAnchor = viewPoint(for: spot)
@@ -3377,6 +3406,7 @@ struct GraphDocumentView: View {
             return
         }
         model.documents.addNode(node, to: documentID)
+        autoTidySiblings(of: node, whenTouchEnds: true)
         recordingNodeID = node.id
         recordingAnchor = point
         chainRingCenter = nil               // no ring until this one has somewhere to be
@@ -3433,7 +3463,7 @@ struct GraphDocumentView: View {
     /// While selecting, neither tap makes anything: a tap on bare canvas there is "none of these",
     /// which is the one thing a box drawn round the wrong nodes needs.
     private func registerTap(at viewPoint: CGPoint) {
-        if isSecondTouch, !isSelecting {
+        if isSecondTouch, !isPickingOut {
             addTypedNode(at: viewPoint)
             return
         }
@@ -3525,6 +3555,11 @@ struct GraphDocumentView: View {
     }
 
     // MARK: Selecting
+
+    /// Whether a drag on bare canvas draws a selection box rather than panning: the mode is on (the
+    /// ⌘ button beside the minimap, or ⋯ → Select Nodes), or a hardware ⌘ was held as this touch
+    /// began. Read inside the gesture, where "as this touch began" is decided.
+    private var isPickingOut: Bool { isSelecting || keys.isCommandDown }
 
     /// A drag on bare canvas while selecting: out comes the box.
     private func beginMarquee(at viewPoint: CGPoint) {
@@ -3741,12 +3776,14 @@ struct GraphDocumentView: View {
 
     private func addChild(to parent: GraphNode) {
         guard let node = model.documents.addChildNode(to: parent.id, in: documentID) else { return }
+        autoTidySiblings(of: node)
         startEditing(node)
     }
 
     private func insertNode(on edge: GraphEdgeLine) {
         guard let node = model.documents.insertNode(between: edge.parentID, and: edge.id,
                                                     in: documentID) else { return }
+        autoTidySiblings(of: node)
         startEditing(node)
     }
 
@@ -3771,6 +3808,8 @@ struct GraphDocumentView: View {
         guard let document, let node = document.node(with: id) else { return }
         if !node.hasText, node.recordingID == nil, document.children(of: id).isEmpty {
             model.documents.deleteNode(id, in: documentID)
+            // Auto tidy made room for it when it appeared; the row closes back up now it's gone.
+            autoTidySiblings(of: node)
         }
     }
 
@@ -3810,6 +3849,41 @@ struct GraphDocumentView: View {
         model.documents.tidyChildren(of: node.id, in: documentID)
         haptic()
         wwLog("Tidied the children of a graph node", .general)
+    }
+
+    /// Auto tidy: line a node's siblings up around it — the same tidy its own menu offers, run
+    /// without being asked, whenever the row it belongs to has just changed (a node added to it, or
+    /// an empty one abandoned out of it).
+    ///
+    /// Only a node with a parent has siblings to line up, so a root — a hold on bare canvas, a
+    /// double-tap, a clip moved in from the Inbox — is left exactly where it was put. A node made
+    /// mid-gesture (a "+" held down, a chain still growing) has its tidy **held until the finger
+    /// lifts**: the card is what's recording, and it must not slide out from under the touch
+    /// filling it.
+    private func autoTidySiblings(of node: GraphNode?, whenTouchEnds: Bool = false) {
+        guard autoTidy, let parentID = node?.parentID else { return }
+        if whenTouchEnds {
+            pendingTidyParents.insert(parentID)
+        } else {
+            withAnimation(.snappy(duration: 0.25)) {
+                model.documents.tidyChildren(of: parentID, in: documentID)
+            }
+        }
+    }
+
+    /// Run the tidies a gesture put off. Parents are taken in the order the graph stores them —
+    /// which is the order they were made — so a chain spoken in one breath lines up from the top
+    /// down, each tidy moving whole branches that the next one then arranges.
+    private func flushPendingTidy() {
+        guard !pendingTidyParents.isEmpty else { return }
+        let pending = pendingTidyParents
+        pendingTidyParents = []
+        guard let document else { return }
+        withAnimation(.snappy(duration: 0.25)) {
+            for node in document.nodes where pending.contains(node.id) {
+                model.documents.tidyChildren(of: node.id, in: documentID)
+            }
+        }
     }
 
     private func runTransform(_ preset: PromptPreset, nodeID: UUID) {
@@ -4165,20 +4239,91 @@ struct GraphDocumentView: View {
         .accessibilityLabel(title)
     }
 
-    // MARK: Minimap
+    // MARK: The bottom of the canvas — controls and minimap
 
-    /// The whole graph, small, along the bottom — every node a dot, with a box around what's on
-    /// screen. It stands down while a node is open for editing, where the keyboard wants the room.
+    /// What sits along the bottom of the canvas: two controls in a column, and the minimap beside
+    /// them. The whole row stands down while a node is open for editing or a menu is up, where the
+    /// keyboard and the dropdown want the room.
+    ///
+    /// The controls stay whether or not the minimap is shown — they're how the canvas is worked,
+    /// not part of the map — so hiding the map doesn't take Auto tidy and the ⌘ with it.
     @ViewBuilder
-    private func minimap(for document: Document) -> some View {
-        if showsMinimap, !document.nodes.isEmpty, editingNodeID == nil, menuNodeID == nil {
-            GraphMinimap(nodes: document.nodes, viewport: viewportInCanvas) { spot in
-                center(on: spot, animated: false)
+    private func bottomControls(for document: Document) -> some View {
+        if editingNodeID == nil, menuNodeID == nil {
+            HStack(alignment: .bottom, spacing: 8) {
+                canvasControls(for: document)
+                minimap(for: document)
             }
             .padding(.horizontal, 12)
             .padding(.bottom, 10)
+        }
+    }
+
+    /// The two buttons stacked at the minimap's left: **Auto tidy**, and the on-screen **⌘**.
+    ///
+    /// Both are toggles that stay on, and both say so by filling in. ⌘ is the whole point of the
+    /// pair: with a keyboard you hold the key and drag; with nothing but a finger you turn this on
+    /// and drag, and it goes on selecting until you turn it off (or tap Done on the bar).
+    @ViewBuilder
+    private func canvasControls(for document: Document) -> some View {
+        VStack(spacing: 8) {
+            canvasControlButton("Auto Tidy", "rectangle.3.group", isOn: autoTidy) {
+                withAnimation(.snappy(duration: 0.2)) { autoTidy.toggle() }
+                haptic()
+                wwLog("Auto tidy \(autoTidy ? "on" : "off") for graphs", .general)
+            }
+            canvasControlButton("Drag to Select", "command", isOn: isSelecting,
+                                enabled: !document.nodes.isEmpty) {
+                if isSelecting { endSelecting() } else { beginSelecting() }
+                haptic()
+            }
+        }
+    }
+
+    /// One of those buttons: the minimap's own surface and hairline, filled in when it's on.
+    private func canvasControlButton(_ title: String, _ icon: String, isOn: Bool,
+                                     enabled: Bool = true,
+                                     action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(isOn ? WW.paper : WW.moss)
+                .frame(width: 42, height: 34)
+                .background(isOn ? WW.moss : WW.surface.opacity(0.92),
+                            in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(isOn ? WW.moss : WW.hairline, lineWidth: 1))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.35)
+        .shadow(color: .black.opacity(0.10), radius: 12, y: 3)
+        .accessibilityLabel(title)
+        .accessibilityAddTraits(isOn ? [.isSelected] : [])
+    }
+
+    /// The whole graph, small, along the bottom — every node a dot, with a box around what's on
+    /// screen.
+    @ViewBuilder
+    private func minimap(for document: Document) -> some View {
+        if showsMinimap, !document.nodes.isEmpty {
+            GraphMinimap(nodes: document.nodes, viewport: viewportInCanvas) { spot in
+                center(on: spot, animated: false)
+            }
             .transition(.opacity)
         }
+    }
+
+    /// Nothing, drawn: the view exists only to give `ModifierKeys` somewhere to watch from, so a
+    /// drag begun with ⌘ down knows to draw a box instead of panning.
+    @ViewBuilder
+    private func commandKeyWatcher() -> some View {
+        #if canImport(UIKit)
+        CommandKeyWatcher(keys: keys).frame(width: 0, height: 0)
+        #else
+        EmptyView()
+        #endif
     }
 
     /// What the canvas is currently showing, in canvas coordinates.
@@ -4579,6 +4724,88 @@ struct HoldablePlusButton: View {
             )
     }
 }
+
+// MARK: - The ⌘ key
+
+/// Whether a hardware ⌘ was held when the touch in progress began — what turns a drag on the
+/// canvas into a selection box instead of a pan, for anyone working with a keyboard attached.
+///
+/// A class, and read through the reference rather than as `@State`, on purpose: a SwiftUI gesture
+/// closure sees the view as it was when the body was last evaluated, and a modifier pressed between
+/// two frames of the same drag would be missed. Reading it through an object gets the value as it is
+/// now. Nothing here publishes either: the flag is consulted when a gesture starts, never drawn — so
+/// a key going down redraws nothing.
+///
+/// Written and read on the main thread only: UIKit delivers touches there, and so does SwiftUI.
+final class ModifierKeys {
+    /// Set at every touch-down from the event's own modifier flags, so it describes *this* touch.
+    var isCommandDown = false
+}
+
+#if canImport(UIKit)
+/// Reports the modifier keys held at each touch-down into a `ModifierKeys`.
+///
+/// UIKit tells the truth about this and SwiftUI (before iOS 18) doesn't: a `UIEvent` carries the
+/// modifier flags that were down when it happened, so one passive recognizer on the window sees
+/// what the keyboard was doing as each touch begins. The recognizer fails itself immediately and
+/// cancels nothing, so it observes the touch without ever taking part in it — the canvas's own
+/// gestures are untouched.
+struct CommandKeyWatcher: UIViewRepresentable {
+    let keys: ModifierKeys
+
+    func makeUIView(context: Context) -> WatcherView { WatcherView(keys: keys) }
+    func updateUIView(_ view: WatcherView, context: Context) {}
+
+    /// A view of no size that takes no touches: it exists to find the window and hang the probe
+    /// off it, since a recognizer only sees touches that land in its own view. Leaving the
+    /// hierarchy moves it to no window at all, which is where the probe is taken back off.
+    final class WatcherView: UIView {
+        private let probe: Probe
+
+        init(keys: ModifierKeys) {
+            probe = Probe(keys: keys)
+            super.init(frame: .zero)
+            isUserInteractionEnabled = false
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            detach()
+            window?.addGestureRecognizer(probe)
+        }
+
+        func detach() { probe.view?.removeGestureRecognizer(probe) }
+    }
+
+    /// A recognizer that never recognizes. It reads the flags off the event and fails, which leaves
+    /// every other gesture on screen exactly as it was.
+    final class Probe: UIGestureRecognizer, UIGestureRecognizerDelegate {
+        private let keys: ModifierKeys
+
+        init(keys: ModifierKeys) {
+            self.keys = keys
+            super.init(target: nil, action: nil)
+            delegate = self
+            cancelsTouchesInView = false
+            delaysTouchesBegan = false
+            delaysTouchesEnded = false
+        }
+
+        override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+            keys.isCommandDown = event.modifierFlags.contains(.command)
+            state = .failed          // never recognize; never take a touch from anything else
+        }
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                               shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+            true
+        }
+    }
+}
+#endif
 
 // MARK: - Minimap
 
