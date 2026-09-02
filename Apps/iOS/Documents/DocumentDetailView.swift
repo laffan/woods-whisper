@@ -3067,22 +3067,25 @@ struct GraphDocumentView: View {
 
     // MARK: Edges
 
-    /// The line between a parent and a child, drawn between the **edges** of the two cards rather
+    /// The curve between a parent and a child, drawn between the **edges** of the two cards rather
     /// than their centres: each end is the midpoint of whichever side faces the other, so the line
-    /// meets a card square-on and stops at its border instead of disappearing under it.
+    /// meets a card square-on and stops at its border instead of disappearing under it. Which side
+    /// that is comes back with the anchor, since it's also the direction the curve sets off in.
     private func edges(of document: Document) -> [GraphEdgeLine] {
         document.nodes.compactMap { node in
             guard let parentID = node.parentID, document.node(with: parentID) != nil else { return nil }
+            let start = anchor(of: parentID, facing: node.id, in: document)
+            let end = anchor(of: node.id, facing: parentID, in: document)
             return GraphEdgeLine(id: node.id,
                                  parentID: parentID,
-                                 from: anchor(of: parentID, facing: node.id, in: document),
-                                 to: anchor(of: node.id, facing: parentID, in: document))
+                                 from: start.point, facing: start.normal,
+                                 to: end.point, entering: end.normal)
         }
     }
 
-    /// The middle of whichever side of `id`'s card is nearest the other card — each end of a line
-    /// decided on its own, by measuring, rather than inferred from the angle between the two
-    /// centres.
+    /// The middle of whichever side of `id`'s card is nearest the other card, and the way that side
+    /// faces — each end of a line decided on its own, by measuring, rather than inferred from the
+    /// angle between the two centres.
     ///
     /// The angle is the tempting test and it's wrong for cards this shape: a node card is three
     /// times wider than it is tall, so the line out of its centre leaves through the *top* as soon
@@ -3090,17 +3093,20 @@ struct GraphDocumentView: View {
     /// out to the right and a little high ended up joined top-to-bottom. Measuring each side against
     /// the other card's rectangle asks the question the eye is actually asking: which edge is
     /// closest to that node?
-    private func anchor(of id: UUID, facing otherID: UUID, in document: Document) -> CGPoint {
+    private func anchor(of id: UUID, facing otherID: UUID,
+                        in document: Document) -> (point: CGPoint, normal: CGVector) {
         let box = rect(of: id, in: document)
         let target = rect(of: otherID, in: document)
-        let sides = [
-            CGPoint(x: box.maxX, y: box.midY),      // right
-            CGPoint(x: box.minX, y: box.midY),      // left
-            CGPoint(x: box.midX, y: box.minY),      // top
-            CGPoint(x: box.midX, y: box.maxY)       // bottom
+        let sides: [(point: CGPoint, normal: CGVector)] = [
+            (CGPoint(x: box.maxX, y: box.midY), CGVector(dx: 1, dy: 0)),      // right
+            (CGPoint(x: box.minX, y: box.midY), CGVector(dx: -1, dy: 0)),     // left
+            (CGPoint(x: box.midX, y: box.minY), CGVector(dx: 0, dy: -1)),     // top
+            (CGPoint(x: box.midX, y: box.maxY), CGVector(dx: 0, dy: 1))       // bottom
         ]
-        let nearest = sides.min { distance(from: $0, to: target) < distance(from: $1, to: target) }
-        return nearest ?? CGPoint(x: box.midX, y: box.midY)
+        let nearest = sides.min {
+            distance(from: $0.point, to: target) < distance(from: $1.point, to: target)
+        }
+        return nearest ?? (point: CGPoint(x: box.midX, y: box.midY), normal: CGVector(dx: 1, dy: 0))
     }
 
     /// How far a point is from the nearest part of a rectangle — zero inside it.
@@ -4580,15 +4586,50 @@ enum GraphCanvas {
 
 // MARK: - Edges
 
-/// One parent→child line, in canvas coordinates. Named by the child, since that's the node the edge
-/// belongs to: insert a node "on" this edge and the child is what it adopts.
+/// One parent→child curve, in canvas coordinates. Named by the child, since that's the node the
+/// edge belongs to: insert a node "on" this edge and the child is what it adopts.
+///
+/// It's a cubic Bézier rather than a straight line: it leaves each card square-on to the side it's
+/// attached to — the same way the straight line met it — runs that way a little, and only then
+/// bends towards the other end. Two cards side by side are still joined by what looks like a
+/// straight line; one sitting high or low gets an S rather than a diagonal across the gap.
 struct GraphEdgeLine: Identifiable {
     let id: UUID
     let parentID: UUID
     let from: CGPoint
+    /// The way the parent's side faces — the direction the curve sets off in.
+    let facing: CGVector
     let to: CGPoint
+    /// The way the child's side faces, which the curve arrives against.
+    let entering: CGVector
 
-    var midpoint: CGPoint { CGPoint(x: (from.x + to.x) / 2, y: (from.y + to.y) / 2) }
+    /// How far one end holds the line it left on before it turns: half the gap measured **along
+    /// that side's own axis**, so two cards facing each other across the standard 150 points have
+    /// their two controls meet in the middle — a clean S rather than one overshooting the other.
+    /// Held between a nudge and half a card, so a stacked pair still curves and a distant one
+    /// doesn't billow out across the canvas.
+    private func reach(along normal: CGVector) -> CGFloat {
+        let gap = abs(normal.dx) > abs(normal.dy) ? abs(to.x - from.x) : abs(to.y - from.y)
+        return min(max(gap / 2, 16), GraphCanvas.nodeWidth / 2)
+    }
+
+    var fromControl: CGPoint {
+        let out = reach(along: facing)
+        return CGPoint(x: from.x + facing.dx * out, y: from.y + facing.dy * out)
+    }
+
+    var toControl: CGPoint {
+        let out = reach(along: entering)
+        return CGPoint(x: to.x + entering.dx * out, y: to.y + entering.dy * out)
+    }
+
+    /// The middle of the **curve** — `B(0.5)` of the cubic, which reduces to this — where the "+"
+    /// that inserts a node on this edge sits. Half way along the straight line between two cards
+    /// isn't on the curve at all once it bends, and the button would hang off it.
+    var midpoint: CGPoint {
+        CGPoint(x: (from.x + 3 * fromControl.x + 3 * toControl.x + to.x) / 8,
+                y: (from.y + 3 * fromControl.y + 3 * toControl.y + to.y) / 8)
+    }
 }
 
 /// Every edge as one stroked path — cheaper than a view per line, and it can't get out of step with
@@ -4597,12 +4638,17 @@ private struct GraphEdgeShape: Shape {
     let edges: [GraphEdgeLine]
 
     func path(in rect: CGRect) -> Path {
+        // The canvas container is laid out around its own centre, so everything drawn in canvas
+        // coordinates is offset by it.
+        func placed(_ point: CGPoint) -> CGPoint {
+            CGPoint(x: point.x + GraphCanvas.center, y: point.y + GraphCanvas.center)
+        }
         var path = Path()
         for edge in edges {
-            path.move(to: CGPoint(x: edge.from.x + GraphCanvas.center,
-                                  y: edge.from.y + GraphCanvas.center))
-            path.addLine(to: CGPoint(x: edge.to.x + GraphCanvas.center,
-                                     y: edge.to.y + GraphCanvas.center))
+            path.move(to: placed(edge.from))
+            path.addCurve(to: placed(edge.to),
+                          control1: placed(edge.fromControl),
+                          control2: placed(edge.toControl))
         }
         return path
     }

@@ -125,7 +125,10 @@ the rest of the app depends on.
   cards: **tap twice** to edit one in place, **long-press** for the actions a paragraph gets from a
   swipe (Edit, Add Child, Revise, Transform, Delete) as a dropdown. **Drag** a node and its children
   come with it; **drop it on another node** and the whole branch hangs off that one — settling into
-  place beside its new parent, below the children already there and clear of anything else. Nodes stay
+  place beside its new parent, below the children already there and clear of anything else. The
+  lines joining them are **smooth curves**, leaving and arriving square-on to the side of the card
+  they're attached to: a pair side by side reads as a straight line, one sitting high or low as an S
+  rather than a diagonal cut across the gap. Nodes stay
   exactly where you put them — nothing rearranges them behind your back, though **Tidy Children**
   (in a node's edit bar, and in its long-press menu) will line a node's children up beside it on
   request, each with its own branch in tow, and **Auto Tidy** below will do it every time by itself. The **"+"** tucked inside a node's right edge adds a child and the

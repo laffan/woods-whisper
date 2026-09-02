@@ -158,6 +158,14 @@ transform — `scaleEffect(anchor: .topLeading)` then `offset` — so a canvas p
   centre ray exits through — is wrong for cards this shape: a node is three times wider than it is
   tall, so that ray leaves through the *top* as soon as the other node is about 18° above the
   horizontal, and a child sitting out to the right and a little high gets joined top-to-bottom.
+  The line itself is a **cubic Bézier**: the anchor comes back with the direction its side faces,
+  and the control point at each end runs that way before turning, so the curve leaves and arrives
+  square-on to the card exactly where the straight line used to. Each end's control reaches half the
+  gap measured *along its own axis* (clamped to 16…90), so two cards facing each other across the
+  standard 150-point gap have their controls meet in the middle — a clean S, with neither end
+  overshooting the other. The "+" that inserts a node on an edge sits at the curve's own midpoint,
+  `B(0.5)` — which for a cubic is `(P₀ + 3C₁ + 3C₂ + P₃) / 8` — since half way along the straight
+  line between two cards isn't on the curve at all once it bends.
 - **A hold can run on into a chain.** While recording, a ring is drawn round the node being spoken
   into; leaving it files that clip, starts another, and hangs the new node off the last. The new
   node follows the finger until it *settles*, which needs a clock rather than the gesture — a finger
