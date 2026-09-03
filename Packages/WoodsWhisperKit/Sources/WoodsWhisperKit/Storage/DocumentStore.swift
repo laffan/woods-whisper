@@ -550,6 +550,18 @@ public final class DocumentStore: ObservableObject {
         touch(docIdx)
     }
 
+    /// Give a node an ink, or take it away again (`nil`) — the colour dot at the head of its edit
+    /// bar. Like a position, this is how a node is *drawn* rather than what it says, so it doesn't
+    /// bump `updatedAt` and re-sort the Documents list.
+    public func setNodeColor(_ nodeID: UUID, in documentID: UUID, to colorID: String?) {
+        guard let docIdx = index(of: documentID),
+              let nodeIdx = documents[docIdx].nodes.firstIndex(where: { $0.id == nodeID }),
+              documents[docIdx].nodes[nodeIdx].colorID != colorID
+        else { return }
+        documents[docIdx].nodes[nodeIdx].colorID = colorID
+        persistDocuments()
+    }
+
     /// Point a node at the clip it was spoken into — or at nothing (`nil`), which is what "Revise"
     /// does before it records a replacement.
     public func linkNode(_ nodeID: UUID, toRecording recordingID: UUID?, in documentID: UUID) {
@@ -747,6 +759,17 @@ public final class DocumentStore: ObservableObject {
         touch(docIdx)
     }
 
+    /// Give a ring an ink, or take it away again (`nil`) — the colour dot beside its label. Drawing
+    /// rather than content, so like `setNodeColor` it saves without bumping `updatedAt`.
+    public func setGroupColor(_ groupID: UUID, in documentID: UUID, to colorID: String?) {
+        guard let docIdx = index(of: documentID),
+              let idx = documents[docIdx].groups.firstIndex(where: { $0.id == groupID }),
+              documents[docIdx].groups[idx].colorID != colorID
+        else { return }
+        documents[docIdx].groups[idx].colorID = colorID
+        persistDocuments()
+    }
+
     public func removeGroup(_ groupID: UUID, in documentID: UUID) {
         guard let docIdx = index(of: documentID),
               documents[docIdx].groups.contains(where: { $0.id == groupID }) else { return }
@@ -761,6 +784,77 @@ public final class DocumentStore: ObservableObject {
             documents[docIdx].groups[idx].memberIDs.removeAll { removed.contains($0) }
         }
         documents[docIdx].groups.removeAll { $0.memberIDs.count < GraphGroup.minimumMembers }
+    }
+
+    // MARK: Copying nodes (⌥ + drag)
+
+    /// Copy a set of nodes where they stand, and hand back which copy came from which original.
+    ///
+    /// This is what **⌥ + drag** makes: the copies appear on top of the originals and travel with
+    /// the finger, so the gesture reads as pulling a duplicate out of what's there.
+    ///
+    /// Two rules make a copy a copy rather than a second reference:
+    /// • **It's unlinked from the network it came out of.** A parent that's part of the same copied
+    ///   set is followed to its copy — dragging out a cluster keeps the cluster's own shape — but a
+    ///   link *out* of the set is dropped, so nothing is silently hung off a node you didn't copy.
+    /// • **It carries no recording.** A node owns the clip it was spoken into (`deleteNode` takes
+    ///   the audio with it), so a copy pointing at the same clip would delete the original's audio
+    ///   out from under it. The copy keeps the words; the original keeps the tape.
+    @discardableResult
+    public func duplicateNodes(_ ids: Set<UUID>, in documentID: UUID) -> [UUID: UUID] {
+        guard !ids.isEmpty, let docIdx = index(of: documentID) else { return [:] }
+        // In the array's own order, so the copies read the same way the originals do.
+        let originals = documents[docIdx].nodes.filter { ids.contains($0.id) }
+        guard !originals.isEmpty else { return [:] }
+
+        var map: [UUID: UUID] = [:]
+        for node in originals { map[node.id] = UUID() }
+        let copies = originals.compactMap { node -> GraphNode? in
+            guard let id = map[node.id] else { return nil }
+            return GraphNode(id: id,
+                             text: node.text,
+                             parentID: node.parentID.flatMap { map[$0] },
+                             position: node.position,
+                             recordingID: nil,
+                             colorID: node.colorID)
+        }
+        documents[docIdx].nodes.append(contentsOf: copies)
+        touch(docIdx)
+        return map
+    }
+
+    /// The same, for a whole group: its members are copied and a fresh ring — same name, same
+    /// ink — is drawn round the copies, so dragging a ring with ⌥ down hands back the group and
+    /// not just a heap of nodes.
+    @discardableResult
+    public func duplicateGroup(_ groupID: UUID, in documentID: UUID) -> [UUID: UUID] {
+        guard let docIdx = index(of: documentID),
+              let group = documents[docIdx].groups.first(where: { $0.id == groupID })
+        else { return [:] }
+        let map = duplicateNodes(group.members, in: documentID)
+        let members = group.memberIDs.compactMap { map[$0] }
+        guard members.count >= GraphGroup.minimumMembers, let idx = index(of: documentID) else {
+            return map
+        }
+        documents[idx].groups.append(GraphGroup(label: group.label,
+                                                memberIDs: members,
+                                                colorID: group.colorID))
+        touch(idx)
+        return map
+    }
+
+    /// Tidy the whole graph — every node that has children, from the roots down, which is what ⌘T
+    /// does with nothing picked out.
+    ///
+    /// Order is the point: a tidy moves a child's whole branch rigidly, so arranging a parent's row
+    /// before the rows below it means each pass arranges cards its own parent has already placed.
+    /// `nodeEntries` is exactly that order (roots first, depth first).
+    public func tidyGraph(in documentID: UUID, heights: [UUID: Double] = [:]) {
+        guard let docIdx = index(of: documentID) else { return }
+        let parents = documents[docIdx].nodeEntries.map(\.node.id)
+        for id in parents where !documents[docIdx].children(of: id).isEmpty {
+            tidyChildren(of: id, in: documentID, heights: heights)
+        }
     }
 
     /// Add a child to `parentID` — the "+" on a node's right edge. It starts to the right of its

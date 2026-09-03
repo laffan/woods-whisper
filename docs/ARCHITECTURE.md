@@ -60,15 +60,25 @@ storage, and connectivity code without the model dependencies.
   Markdown mirror — is untouched. Both keys decode as absent-friendly, so documents written before
   graphs existed load as `.document` with no nodes.
 - **`GraphNode`** — one node of a graph document: its own `text`, a `parentID` (nil for a root), a
-  `position` on the canvas, and optionally the `recordingID` of the clip it was spoken into. The
+  `position` on the canvas, an optional `colorID` (see `GraphPalette`), and optionally the
+  `recordingID` of the clip it was spoken into. The
   text is the node's own copy — a transcript is *copied* in once, so editing, transforming, or
   re-recording a node never reaches back into the clip. Structure is that single parent pointer, so
   dragging a branch, re-parenting on a drop, the Markdown outline, and the canvas's "List Nodes"
   (`nodeEntries` — every node with its depth, in outline order) all walk the same thing;
   `Document.subtree(of:)` and `isAncestor(_:of:)` (both cycle-safe) are what a drop is checked
   against, since a cycle is a graph no outline could walk out of.
-- **`GraphGroup`** — a ring drawn round a handful of nodes, with an optional label. Deliberately
-  *not* structure: no parent, nothing hangs off it, and the outline walks straight past it — it's the
+- **`GraphStyle`** — the two things about a node that are *drawing* rather than content, kept where
+  they can be tested. **`GraphPalette`** names the inks a node or a ring can be given — the same six
+  ids an Inbox tag uses, since the app should have one vocabulary of colour — and the app maps a name
+  to a light/dark pair in `WW.paletteColor(_:)`, this package drawing nothing itself. **`GraphHeading`**
+  parses the `#` / `##` a node's text may open with: the level (one is bigger than two), the text
+  with the marker taken off, and how many points bigger it's set. The marker stays in the stored
+  text — so editing shows it again, and the exported outline keeps a Markdown heading as a Markdown
+  heading — while `GraphNode.displayText` is what the canvas and the node list draw. Three hashes or
+  more isn't a size the canvas has, so it stays plain text rather than losing a marker to nothing.
+- **`GraphGroup`** — a ring drawn round a handful of nodes, with an optional label and `colorID`.
+  Deliberately *not* structure: no parent, nothing hangs off it, and the outline walks past it — it's the
   mind-map equivalent of circling a cluster in pencil, which is why membership is a plain list of
   ids and a node can be in a group while hanging off a parent somewhere else. The ring's geometry
   isn't stored either; it's the union of the members' cards, so it follows them. Membership is
@@ -251,6 +261,20 @@ transform — `scaleEffect(anchor: .topLeading)` then `offset` — so a canvas p
   a `DragGesture` measures against the coordinate space of the view it's attached to, and a node
   drag *moves that view*, so a local-space translation comes back halved and oscillating — the card
   flickers between the finger and half way there, and never lands on the node you were aiming at.
+- **One drag, three meanings, decided once.** What a card drag *is* — a move, an **unlink** (⌘) or a
+  **copy** (⌥) — is read from the modifiers at the first frame and kept in `dragMode` for the rest of
+  the gesture, so a thumb slipping off a key half way across the canvas can't change what's
+  happening. Only a plain move looks for a drop target: a card being pulled out of the tree, or a
+  copy pulled out of one, shouldn't land straight back in it. An unlink carries the picked cards
+  *without* their branches (unlinking joins each one's parent and children to each other, so the
+  branch stays where it is and stays whole) and runs `unlinkNode` before the positions are
+  committed. A copy is made **at the start** of the drag rather than at the end — `duplicateNodes`
+  appends the copies over their originals and the drag moves *them*, which is what makes the gesture
+  read as pulling a duplicate out. That's also why the drag tracks `dragSourceID` (the card whose
+  gesture is firing) separately from `draggingNodeID` (the card actually moving): under ⌥ they're
+  different nodes. A copy keeps links *inside* the copied set and drops links out of it, and takes
+  no `recordingID` — a node owns its clip (`deleteNode` takes the audio with it), so a copy pointing
+  at the same one would delete the original's audio out from under it.
 - **Arrangement happens when asked — or, with Auto tidy on, every time a row of children changes**,
   and from one number. `DocumentStore.standardNodeGap` is
   the clear space this canvas leaves between two nodes *sideways*; the child column and the push
@@ -291,12 +315,19 @@ transform — `scaleEffect(anchor: .topLeading)` then `offset` — so a canvas p
   cards have to be drawn differently while the key is down and the quick actions appear under a
   pointer with nothing touched at all; that needs the press itself. SwiftUI has nothing for this on
   iOS — `onModifierKeysChanged` is macOS-only — and the responder chain is the wrong shape, since
-  presses go to whatever is first responder (a text view, or nothing). So `CommandKeyMonitor` reads
+  presses go to whatever is first responder (a text view, or nothing). So `ModifierKeyMonitor` reads
   GameController's keyboard, which reports the state of the keys on the device rather than of a
   focused view; one shared instance, since a joint document has two canvases asking about one
-  keyboard. With no hardware keyboard it stays false, which is what the ⌘ button is for. Hover is tracked on every card in every mode rather than only while picking out: a
+  keyboard. It watches `leftAlt`/`rightAlt` alongside `leftGUI`/`rightGUI`, since ⌥ has to be drawn
+  as it's held too — it's what a copy drag reads, and what a document's inter-paragraph "+" reads to
+  become a caret. With no hardware keyboard both stay false, which is what the ⌘ and ⌥ buttons are
+  for. Hover is tracked on every card in every mode rather than only while picking out: a
   pointer already resting on a card has sent its hover event and won't send another when ⌘ goes
-  down. And `registerTap` leaves the selection alone while picking out — a tap on a card reaches
+  down. A card's quick actions **don't** go away the moment the pointer leaves it: the bar floats
+  clear of the card, so reaching it means crossing a few points that belong to neither, and letting
+  go there left a bar you could see and never press. The hover is held for `quickActionsGrace`, and
+  the bar's own `onHover` (or the next card's) calls the clock off.
+  And `registerTap` leaves the selection alone while picking out — a tap on a card reaches
   this gesture too, and clearing there undid the card's own toggle a frame later, which is why
   picking a second node used to leave only the second node. A tap that follows
   a tap is still recognised on the way **down** rather than on release, because it decides what
@@ -313,17 +344,30 @@ transform — `scaleEffect(anchor: .topLeading)` then `offset` — so a canvas p
   animation would set the state to its destination at once and leave the next touch to start from
   there, so grabbing the coasting canvas would jump it. Any finger down cancels the glide.
 
-**Reading the ⌘ key (iOS 17).** SwiftUI's `onModifierKeysChanged` is iOS 18, and the app runs from
-17, so the key is read the way UIKit has always offered it: a `UIEvent` carries the modifier flags
-that were held when it happened. `CommandKeyWatcher` puts one passive `UIGestureRecognizer` on the
+**Reading the ⌘ and ⌥ keys (iOS 17).** SwiftUI's `onModifierKeysChanged` is iOS 18, and the app runs
+from 17, so the keys are read the way UIKit has always offered them: a `UIEvent` carries the
+modifier flags that were held when it happened. `CommandKeyWatcher` puts one passive
+`UIGestureRecognizer` on the
 window — it records `event.modifierFlags` in `touchesBegan` and immediately fails itself, with
-`cancelsTouchesInView = false`, so it observes every touch without taking part in one. The flag
-lands in a `ModifierKeys` **class** rather than `@State` on purpose: a SwiftUI gesture closure sees
+`cancelsTouchesInView = false`, so it observes every touch without taking part in one. The flags
+land in a `ModifierKeys` **class** rather than `@State` on purpose: a SwiftUI gesture closure sees
 the view as it was when the body was last evaluated, so a key pressed between two frames of a drag
 would be missed, and nothing about a key going down should redraw the canvas anyway. The cost of
-reading it at touch-down is that ⌘ arms a *drag*, not a tap: ⌘-tapping a card to add it to the
+reading them at touch-down is that ⌘ arms a *drag*, not a tap: ⌘-tapping a card to add it to the
 selection would need the flag to be live in the body, which is what the ⌘ button (a real mode) is
 for.
+
+**Keyboard shortcuts on the canvas.** Delete, ⌘←, ⌘→ and ⌘T go through `GraphKeyCommands`, a
+zero-sized `UIView` that becomes first responder and answers `keyCommands` — UIKit's mechanism
+rather than SwiftUI's `onKeyPress`, because the responder chain already answers "is the user
+typing?": a text view that takes first responder gets the keys instead, which is exactly right when
+a node is open for editing. `isActive` says the same thing from the other end (no open editor, menu,
+alert or recording sheet, and the canvas still on screen — a pushed-over screen leaves it in the
+hierarchy, and Delete must not take cards off a canvas nobody is looking at), and it's acted on only
+when it *changes* — asserting first responder on every update would drag the keyboard back from the
+document half of a joint document each time the canvas redrew. The delete keys are matched by character (`\u{8}` backspace, `\u{7F}` forward delete)
+rather than by a named constant, and every command sets `wantsPriorityOverSystemBehavior` so the
+system doesn't keep the arrows for focus movement.
 
 **Keeping a drag cheap (iOS).** A drag writes its translation to view state on every frame, so the
 whole canvas body re-runs sixty times a second — which is fine only if one pass is linear in the

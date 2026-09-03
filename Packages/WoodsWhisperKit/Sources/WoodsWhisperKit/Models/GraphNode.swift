@@ -46,6 +46,11 @@ public struct GraphNode: Identifiable, Codable, Hashable, Sendable {
     /// canvas; the clip itself lives in the document's `recordings` like any other.
     public var recordingID: UUID?
 
+    /// The ink this card is drawn in — one of `GraphPalette.colorIDs`, or nil for the canvas's own
+    /// plain card. It colours the border and tints the background; it says nothing about structure,
+    /// exactly like the ring round a group.
+    public var colorID: String?
+
     public let createdAt: Date
 
     public init(
@@ -54,6 +59,7 @@ public struct GraphNode: Identifiable, Codable, Hashable, Sendable {
         parentID: UUID? = nil,
         position: GraphPoint = .zero,
         recordingID: UUID? = nil,
+        colorID: String? = nil,
         createdAt: Date = Date()
     ) {
         self.id = id
@@ -61,6 +67,7 @@ public struct GraphNode: Identifiable, Codable, Hashable, Sendable {
         self.parentID = parentID
         self.position = position
         self.recordingID = recordingID
+        self.colorID = colorID
         self.createdAt = createdAt
     }
 
@@ -69,6 +76,15 @@ public struct GraphNode: Identifiable, Codable, Hashable, Sendable {
     /// Whether this node has anything to say yet. An empty node is a real state — it exists from the
     /// moment a hold starts recording, and only fills in once the words come back.
     public var hasText: Bool { !trimmedText.isEmpty }
+
+    /// The heading this node's text opens with, if it opens with one — `# ` or `## `.
+    public var heading: GraphHeading? { GraphHeading.parse(text) }
+
+    /// What the card shows: the node's words with a heading marker taken off, since the `#` is how
+    /// you *said* "make this a heading" and the size on screen is what it turned into. The stored
+    /// text keeps the marker, so editing the node shows it again — and so does the outline this
+    /// graph exports, where a `#` is a heading in its own right rather than a stray character.
+    public var displayText: String { heading?.text ?? trimmedText }
 }
 
 /// A node and how deep it hangs in the graph — one line of the node list, and the shape the

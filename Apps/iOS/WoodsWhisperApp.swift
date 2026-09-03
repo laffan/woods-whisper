@@ -132,18 +132,28 @@ enum WW {
     static let slate = dynamicColor(light: UIColor(red: 0.353, green: 0.478, blue: 0.553, alpha: 1),
                                     dark: UIColor(red: 0.545, green: 0.655, blue: 0.729, alpha: 1))
 
-    /// The ink an Inbox tag is drawn in, by the id stored with it (`InboxTag.paletteIDs`). The kit
-    /// names these; the palette they name lives here, which is what keeps a tag's colour right in
-    /// both light and dark. An id nothing here answers to falls back to the app's one accent.
-    static func tagColor(_ colorID: String?) -> Color {
+    /// The ink behind a stored colour id — an Inbox tag's (`InboxTag.paletteIDs`), a graph node's or
+    /// a group's (`GraphPalette.colorIDs`, the same set of names). The kit names these; the palette
+    /// they name lives here, which is what keeps a colour right in both light and dark.
+    ///
+    /// Optional, because "no colour" is a real answer: a node without one is drawn as the plain card
+    /// it has always been, rather than a green one.
+    static func paletteColor(_ colorID: String?) -> Color? {
         switch colorID {
+        case "moss":   return moss
         case "violet": return violet
         case "amber":  return amber
         case "slate":  return slate
         case "ember":  return ember
         case "ink":    return inkSecondary
-        default:       return moss
+        default:       return nil
         }
+    }
+
+    /// The same, for an Inbox tag, which always has one: an id nothing answers to falls back to the
+    /// app's one accent.
+    static func tagColor(_ colorID: String?) -> Color {
+        paletteColor(colorID) ?? moss
     }
 
     /// Supporting hue for transform-ish actions and the model log category: muted violet.

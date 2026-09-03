@@ -9,8 +9,8 @@ import UIKit
 import UIKit.UIGestureRecognizerSubclass
 #endif
 #if canImport(GameController)
-// For the hardware ⌘ as it's *held* — see `CommandKeyMonitor`. GameController reports the state of
-// the keys on the device, which is the one place iOS will tell you that.
+// For the hardware ⌘ and ⌥ as they're *held* — see `ModifierKeyMonitor`. GameController reports the
+// state of the keys on the device, which is the one place iOS will tell you that.
 import GameController
 #endif
 
@@ -87,6 +87,13 @@ struct DocumentDetailView: View {
 
     // Playback
     @StateObject private var playback = AudioPlaybackController()
+
+    /// The hardware ⌘ as it's held. Watched here for one thing: it turns the inter-paragraph "+"
+    /// from "record a section here" into "type one here" — the graph canvas's double-tap, on a
+    /// document. Read as *state* rather than off a touch, because the button has to say so before
+    /// it's pressed. (With no keyboard attached it stays false and the "+" is the recorder it has
+    /// always been; a document has no on-screen ⌘ the way the canvas does.)
+    @ObservedObject private var modifierKeys = ModifierKeyMonitor.shared
 
     private var document: Document? { model.documents.document(with: documentID) }
 
@@ -236,14 +243,16 @@ struct DocumentDetailView: View {
                     .font(.callout).foregroundStyle(WW.inkSecondary)
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
-                InsertHereButton(isRecording: recorderTask == .insertBody(at: 0)) {
+                InsertHereButton(isRecording: recorderTask == .insertBody(at: 0),
+                                 makesTextSection: modifierKeys.isCommandDown) {
                     startInsert(at: 0)
                 }
                 .listRowBackground(Color.clear)
                 .listRowSeparator(.hidden)
             } else {
                 if !editMode.isEditing {
-                    InsertHereButton(isRecording: recorderTask == .insertBody(at: 0)) {
+                    InsertHereButton(isRecording: recorderTask == .insertBody(at: 0),
+                                     makesTextSection: modifierKeys.isCommandDown) {
                         startInsert(at: 0)
                     }
                     .listRowBackground(Color.clear)
@@ -281,7 +290,8 @@ struct DocumentDetailView: View {
             // The "+" stays under the paragraph you're editing: adding a section below what you're
             // working on is exactly when you want it.
             if !editMode.isEditing {
-                InsertHereButton(isRecording: recorderTask == .insertBody(at: position)) {
+                InsertHereButton(isRecording: recorderTask == .insertBody(at: position),
+                                 makesTextSection: modifierKeys.isCommandDown) {
                     startInsert(at: position)
                 }
             }
@@ -863,22 +873,33 @@ struct DocumentDetailView: View {
         }
     }
 
-    /// Tap "+": record a clip whose transcript becomes a new section at `position`.
-    ///
-    /// With an editor open, the buffer is committed first — and committing can change how many
-    /// paragraphs sit above the slot (blank lines split it in two; emptying it removes it), so the
-    /// slot is re-reckoned before the recorder is handed it. Only an edit *above* the slot moves it.
+    /// Tap "+": record a clip whose transcript becomes a new section at `position` — or, with **⌘
+    /// held**, put an empty section there and open it for typing, which is the same thought the
+    /// graph canvas answers with a double-tap. Not everything worth adding is worth saying aloud.
     private func startInsert(at position: Int) {
-        if let id = editingParagraphID {
-            let index = document?.paragraphs.firstIndex(where: { $0.id == id })
-            let resulting = Document.paragraphs(from: editingText).count
-            finishEditing()
-            if let index, index < position {
-                recorderTask = .insertBody(at: max(0, position + resulting - 1))
-                return
-            }
+        let slot = slot(for: position)
+        guard modifierKeys.isCommandDown else {
+            recorderTask = .insertBody(at: slot)
+            return
         }
-        recorderTask = .insertBody(at: position)
+        let paragraph = Document.Paragraph(text: "")
+        model.documents.insertParagraphs([paragraph], at: slot, in: documentID)
+        startEditing(paragraph)
+    }
+
+    /// Where a "+" tapped at `position` actually inserts, once whatever was being edited has been
+    /// committed.
+    ///
+    /// Committing can change how many paragraphs sit above the slot (blank lines split one in two;
+    /// emptying it removes it), so the slot is re-reckoned rather than trusted. Only an edit
+    /// *above* the slot moves it.
+    private func slot(for position: Int) -> Int {
+        guard let id = editingParagraphID else { return position }
+        let index = document?.paragraphs.firstIndex(where: { $0.id == id })
+        let resulting = Document.paragraphs(from: editingText).count
+        finishEditing()
+        guard let index, index < position else { return position }
+        return max(0, position + resulting - 1)
     }
 
     /// Open the editor on a paragraph, committing whatever was already open. The caret starts at the
@@ -992,17 +1013,23 @@ struct TextImportItems: View {
 ///
 /// It carries more space below than above, so the rule reads as belonging to the paragraph it sits
 /// under rather than floating midway between two.
+///
+/// With **⌘ held** it becomes a caret instead: the same slot, filled by typing rather than by
+/// speaking. The glyph changes while the key is down so the button says what it will do before it's
+/// pressed — which is the whole reason the document watches the key as state.
 private struct InsertHereButton: View {
     var isRecording: Bool = false
+    /// Whether ⌘ is down right now, so this "+" would make an empty section to type into.
+    var makesTextSection: Bool = false
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 10) {
                 rule
-                Image(systemName: isRecording ? "circle.fill" : "plus")
+                Image(systemName: glyph)
                     .font(.system(size: 12, weight: .light))
-                    .foregroundStyle(isRecording ? WW.ember : WW.inkTertiary)
+                    .foregroundStyle(tint)
                 rule
             }
         }
@@ -1010,6 +1037,17 @@ private struct InsertHereButton: View {
         .disabled(isRecording)
         .padding(.top, 4)
         .padding(.bottom, 16)
+        .accessibilityLabel(makesTextSection ? "Add a section to type into" : "Record a section here")
+    }
+
+    private var glyph: String {
+        if isRecording { return "circle.fill" }
+        return makesTextSection ? "text.cursor" : "plus"
+    }
+
+    private var tint: Color {
+        if isRecording { return WW.ember }
+        return makesTextSection ? WW.moss : WW.inkTertiary
     }
 
     private var rule: some View {
@@ -1245,13 +1283,19 @@ struct InlineTextEditor: View {
     @Binding var selection: NSRange
     /// The type this text is drawn in when it *isn't* being edited.
     let style: InlineTextStyle
+    /// The heading the text opens with, if it opens with one — a graph node's `#` or `##`. Passed
+    /// in so the editor is set in the same type the card was: tapping a heading to edit it shouldn't
+    /// shrink it, and typing a `#` in front of a node should show you what you've just made. (Read
+    /// from the live buffer by the caller, so it follows what's being typed.)
+    var heading: GraphHeading? = nil
     /// The size that text is set in (Settings → Display), so the editor opens at exactly the size
     /// the block was being read at.
     @Environment(\.transcriptTextSize) private var points: Double
 
     var body: some View {
         #if canImport(UIKit)
-        InlineUITextEditor(text: $text, selection: $selection, style: style, points: points)
+        InlineUITextEditor(text: $text, selection: $selection, style: style, points: points,
+                           heading: heading)
         #else
         TextEditor(text: $text).font(style.font(points)).frame(minHeight: 120)
         #endif
@@ -1319,6 +1363,14 @@ struct InlineUITextEditor: UIViewRepresentable {
     /// The chosen transcription text size, in points — passed in rather than read here so it's part
     /// of the value SwiftUI compares when deciding to update the view.
     var points: Double = AppSettings.defaultTranscriptTextSize
+    /// A graph node's heading marker, when the text opens with one — see `InlineTextEditor`.
+    var heading: GraphHeading? = nil
+
+    /// The one type this editor draws in: the style's own, or a heading's bold step up from it.
+    private var uiFont: UIFont {
+        guard let heading else { return style.uiFont(points) }
+        return .boldSystemFont(ofSize: style.pointSize(points) + CGFloat(heading.extraPoints))
+    }
 
     func makeUIView(context: Context) -> UITextView {
         let view = UITextView()
@@ -1333,7 +1385,7 @@ struct InlineUITextEditor: UIViewRepresentable {
         // different moments: `font`/`textColor` for an empty editor (an attributed string with no
         // characters carries no attributes), the attributed text for what's already there, and the
         // typing attributes — set last, since assigning text rewrites them — for what's typed next.
-        view.font = style.uiFont(points)
+        view.font = uiFont
         view.textColor = UIColor(WW.ink)
         view.attributedText = NSAttributedString(string: text, attributes: attributes)
         view.typingAttributes = attributes
@@ -1346,8 +1398,8 @@ struct InlineUITextEditor: UIViewRepresentable {
     func updateUIView(_ uiView: UITextView, context: Context) {
         // The size can change under an open editor (Settings → Display, on another screen), so the
         // font is re-applied whenever it no longer matches rather than only at make-time.
-        if uiView.text != text || uiView.font != style.uiFont(points) {
-            uiView.font = style.uiFont(points)
+        if uiView.text != text || uiView.font != uiFont {
+            uiView.font = uiFont
             uiView.attributedText = NSAttributedString(string: text, attributes: attributes)
             uiView.typingAttributes = attributes           // replacing the text clears these
         }
@@ -1359,7 +1411,7 @@ struct InlineUITextEditor: UIViewRepresentable {
     private var attributes: [NSAttributedString.Key: Any] {
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineSpacing = style.lineSpacing
-        return [.font: style.uiFont(points),
+        return [.font: uiFont,
                 .paragraphStyle: paragraph,
                 .foregroundColor: UIColor(WW.ink)]
     }
@@ -3261,20 +3313,29 @@ struct GraphDocumentView: View {
     /// The ⌘ key, when there's a keyboard to hold it down with: held as a drag begins, that drag
     /// draws a selection box too, without the mode being switched on first.
     @State private var keys = ModifierKeys()
-    /// The ⌘ *button* beside the minimap, for a device with no keyboard: held down with one thumb
-    /// while the other drags. A press rather than a toggle, so it behaves exactly as the key does —
-    /// on while it's down, off the moment it isn't — which is what lets it stand for other
-    /// modifiers later without changing what it means.
+    /// The ⌘ and ⌥ *buttons* beside the minimap, for a device with no keyboard: held down with one
+    /// thumb while the other drags. A press rather than a toggle, so each behaves exactly as its key
+    /// does — on while it's down, off the moment it isn't.
     @State private var metaHeld = false
-    /// The hardware ⌘ as it's held, which is a different thing from `keys` above: that one is read
-    /// off a touch, and a touch is not what a hover or a key press is. See `CommandKeyMonitor`.
-    @ObservedObject private var commandKey = CommandKeyMonitor.shared
+    @State private var optionHeld = false
+    /// The hardware ⌘ / ⌥ as they're held, which is a different thing from `keys` above: that one is
+    /// read off a touch, and a touch is not what a hover or a key press is. See `ModifierKeyMonitor`.
+    @ObservedObject private var modifierKeys = ModifierKeyMonitor.shared
     /// The card the pointer is resting on. Tracked whenever there's a pointer, not only while ⌘ is
     /// engaged — otherwise pressing ⌘ with the pointer already over a card would raise nothing,
     /// since no hover event happens when a key goes down.
     @State private var hoveredNodeID: UUID?
+    /// Whether the pointer is on the quick-action bar itself. The bar floats *above* the card, so
+    /// reaching it means leaving the card — and letting go of the card the instant the pointer
+    /// crosses the gap took the bar away before it could be clicked. See `holdQuickActions`.
+    @State private var hoveringQuickActions = false
+    /// The clock that lets a card's quick actions go once nothing is pointing at either of them.
+    @State private var quickActionsTask: Task<Void, Never>?
     /// The card a *tap* asked for actions on, which is what a finger has instead of a hover.
     @State private var tappedNodeID: UUID?
+    /// Whether this canvas is the screen you're on. Navigating away leaves it in the hierarchy, so
+    /// the keyboard shortcuts ask this before answering — see `acceptsKeyCommands`.
+    @State private var isOnScreen = true
 
     /// Which card's quick actions are showing. The pointer wins when there is one: it's the more
     /// recent statement of intent, and it moves away on its own.
@@ -3286,9 +3347,17 @@ struct GraphDocumentView: View {
     // Dragging a branch. The translation lives here until the finger lifts; only then is it written
     // to the nodes, so a drag is one edit rather than sixty.
     @State private var draggingNodeID: UUID?
+    /// The card whose gesture is driving the drag, which is not always the card being moved: an ⌥
+    /// drag hands the movement to a fresh copy while the events keep arriving from the original.
+    @State private var dragSourceID: UUID?
     @State private var draggingBranch: Set<UUID> = []
     @State private var dragTranslation: CGSize = .zero
     @State private var dropTargetID: UUID?
+    /// What the modifier held as this drag began made of it. A drag is one gesture with one
+    /// meaning, decided when it starts: **⌘** pulls the node out of the network as it moves, **⌥**
+    /// pulls a copy out of it, and neither one changes its mind half way across the canvas because
+    /// a thumb slipped off a key.
+    @State private var dragMode: NodeDragMode = .move
 
     // Node editing, in place, in its own card.
     @State private var editingNodeID: UUID?
@@ -3369,6 +3438,7 @@ struct GraphDocumentView: View {
         // gesture the system cancelled, a screen left mid-recording) — which would otherwise leave
         // the recorder running behind a node that says "Recording" for ever.
         .onDisappear {
+            isOnScreen = false
             cancelHold()
             stopGlide()
             if recordingNodeID != nil { finishHoldRecording() }
@@ -3377,6 +3447,9 @@ struct GraphDocumentView: View {
             gestureStart = nil
             isSelecting = false
             metaHeld = false
+            optionHeld = false
+            quickActionsTask?.cancel()
+            hoveringQuickActions = false
             hoveredNodeID = nil
             tappedNodeID = nil
             marqueeOrigin = nil
@@ -3451,8 +3524,10 @@ struct GraphDocumentView: View {
                 .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
                 .background(alignment: .topLeading) { GraphGrid(pan: pan, scale: scale) }
                 .background(WW.paper)
-                // Nothing to see: it watches the window for the ⌘ held as a touch goes down.
+                // Nothing to see: one watches the window for the modifiers held as a touch goes
+                // down, the other holds the keyboard so Delete, ⌘←/→ and ⌘T reach the canvas.
                 .background { commandKeyWatcher() }
+                .background { keyCommands() }
                 .clipped()
                 .contentShape(Rectangle())
                 // The canvas's own gestures. A touch that lands on a node is the node's — SwiftUI
@@ -3479,6 +3554,7 @@ struct GraphDocumentView: View {
                 }
                 .onAppear {
                     canvasSize = geo.size
+                    isOnScreen = true
                     placeCanvas(in: geo.size, document: document)
                     // Whatever a previous visit left behind, this one starts with nothing in
                     // progress — otherwise a gesture cut short back then would keep the next hold
@@ -3605,13 +3681,12 @@ struct GraphDocumentView: View {
         // Hover is watched in every mode, not only while picking out: a pointer resting on a card
         // when ⌘ goes down has already sent its hover event, and won't send another.
         .onHover { inside in
-            withAnimation(.snappy(duration: 0.15)) {
-                if inside { hoveredNodeID = node.id }
-                else if hoveredNodeID == node.id { hoveredNodeID = nil }
-            }
+            if inside { pointAt(node.id) } else { releaseQuickActions(of: node.id) }
         }
         .position(x: center.x + GraphCanvas.center, y: center.y + GraphCanvas.center)
-        .zIndex(isEditing || draggingNodeID == node.id ? 2 : 1)
+        // Whatever is travelling rides over what isn't — the whole branch, not just the card under
+        // the finger, and a fresh ⌥ copy over the original it came out of.
+        .zIndex(isEditing || draggingBranch.contains(node.id) ? 2 : 1)
     }
 
     /// A node: the same edit block a paragraph or an Inbox entry becomes, shrunk to a card.
@@ -3619,8 +3694,16 @@ struct GraphDocumentView: View {
     private func nodeCard(_ node: GraphNode, in document: Document, isEditing: Bool) -> some View {
         if isEditing {
             WWInlineEditBox(onDone: { finishEditing() }) {
-                InlineTextEditor(text: $editingText, selection: $editingSelection, style: .graphNode)
+                // The heading is read off the buffer rather than the stored node, so the editor is
+                // set the size the card was — and grows the moment you type a `#` in front of it.
+                InlineTextEditor(text: $editingText, selection: $editingSelection, style: .graphNode,
+                                 heading: GraphHeading.parse(editingText))
             } actions: {
+                // The ink first, where the same dot sits on a group's ring: it's what this card
+                // *is* rather than something to do to it, so it leads the row.
+                GraphColorDot(colorID: node.colorID) { colorID in
+                    model.documents.setNodeColor(node.id, in: documentID, to: colorID)
+                }
                 WWInlineEditAction("Revise", "mic.fill") { reviseEditingNode() }
                 WWInlineEditAction("Transform", "wand.and.stars", enabled: model.modelReady) {
                     transformEditingNode()
@@ -3628,9 +3711,6 @@ struct GraphDocumentView: View {
                 WWInlineEditAction("Tidy Children", "rectangle.3.group",
                                    enabled: !document.children(of: node.id).isEmpty) {
                     tidyChildren(of: node)
-                }
-                WWInlineEditAction("Unlink", "scissors", enabled: isLinked(node, in: document)) {
-                    unlink(node)
                 }
                 WWInlineEditAction("Delete", "trash", tint: WW.ember) { deleteEditingNode() }
             }
@@ -3642,11 +3722,22 @@ struct GraphDocumentView: View {
                 .padding(.trailing, 36)
                 .padding(.vertical, 10)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(WW.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .background { nodeBackground(node) }
                 .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .stroke(nodeBorder(node), lineWidth: nodeBorderWidth(node)))
                 .shadow(color: .black.opacity(0.08), radius: 6, y: 2)
         }
+    }
+
+    /// The card's own surface, with the node's ink laid over it as a wash where it has one. Two
+    /// fills rather than one blended colour: the tint has to sit on the card's surface in both
+    /// light and dark, and "the same green, faintly" is exactly what a wash is.
+    private func nodeBackground(_ node: GraphNode) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+        return shape
+            .fill(WW.surface)
+            .overlay(shape.fill(WW.paletteColor(node.colorID)?.opacity(GraphCanvas.tintOpacity)
+                                ?? .clear))
     }
 
     /// What a node says while it isn't being edited: its words, or why it hasn't any yet.
@@ -3671,8 +3762,12 @@ struct GraphDocumentView: View {
                     .foregroundStyle(WW.inkSecondary)
             }
         } else if node.hasText {
-            Text(node.trimmedText)
-                .font(InlineTextStyle.graphNode.font(transcriptTextSize))
+            // A node that opens with `#` or `##` is a heading: bigger, bold, and with the marker
+            // itself left out — you typed it to say "make this a heading", and the size on screen is
+            // what it turned into. Open the node for editing and the marker is back, since that's
+            // the text.
+            Text(node.displayText)
+                .font(nodeFont(node.heading))
                 .foregroundStyle(WW.ink)
                 .lineLimit(6)
                 .multilineTextAlignment(.leading)
@@ -3709,21 +3804,34 @@ struct GraphDocumentView: View {
         return (false, false)
     }
 
-    /// What a card's border says about it. A recording outranks everything — it's the one thing
-    /// happening rather than a state — then the ring the node list leaves behind, which is amber
-    /// precisely because nothing else here is: "this is the one you asked for", not "this is
-    /// selected".
+    /// The type a node's words are set in: the canvas's own size, or a heading's step up from
+    /// it — bold, and as many points bigger as the marker asked for (`#` more than `##`).
+    private func nodeFont(_ heading: GraphHeading?) -> Font {
+        let base = InlineTextStyle.graphNode.pointSize(transcriptTextSize)
+        guard let heading else { return .system(size: base) }
+        return .system(size: base + CGFloat(heading.extraPoints), weight: .bold)
+    }
+
+    /// What a card's border says about it. What's *happening* outranks what it is: a recording, or a
+    /// card being pulled out of the network right now, then the ring the node list leaves behind —
+    /// amber precisely because nothing else here is: "this is the one you asked for", not "this is
+    /// selected" — then the selection, and only then the ink the node was given.
     private func nodeBorder(_ node: GraphNode) -> Color {
         if recordingNodeID == node.id { return WW.ember }
+        if dragMode == .unlink, draggingBranch.contains(node.id) { return WW.ember }
         if highlightedNodeID == node.id { return WW.amber }
         if dropTargetID == node.id || selectedNodeIDs.contains(node.id) { return WW.moss }
-        return WW.hairline
+        return WW.paletteColor(node.colorID) ?? WW.hairline
     }
 
     private func nodeBorderWidth(_ node: GraphNode) -> CGFloat {
         if recordingNodeID == node.id || dropTargetID == node.id { return 2 }
+        if dragMode == .unlink, draggingBranch.contains(node.id) { return 2 }
         if highlightedNodeID == node.id { return 3 }
-        return selectedNodeIDs.contains(node.id) ? 2 : 1
+        if selectedNodeIDs.contains(node.id) { return 2 }
+        // A coloured card is drawn a hair heavier, so the colour is a border rather than a tint on
+        // a hairline nobody can see.
+        return node.colorID == nil ? 1 : 1.5
     }
 
     private func recording(for node: GraphNode, in document: Document) -> Recording? {
@@ -4266,21 +4374,39 @@ struct GraphDocumentView: View {
 
     // MARK: Selecting
 
-    /// Whether the canvas is in picking-out state as far as what's *drawn* is concerned: the mode
-    /// (⋯ → Select Nodes), the ⌘ button held down, or — from iOS 18, where a key press can be
-    /// watched for — a hardware ⌘ held. All three are view state, so the cards, the "+" buttons and
-    /// the quick actions follow them.
-    private var isPickingOut: Bool { isSelecting || metaHeld || commandKey.isDown }
+    /// Whether ⌘ is engaged as far as what's *drawn* is concerned: the on-screen button held down,
+    /// or a hardware ⌘ held. Both are view state, so the cards, the "+" buttons and the quick
+    /// actions follow them.
+    private var isCommandEngaged: Bool { metaHeld || modifierKeys.isCommandDown }
+
+    /// The same for ⌥, which on this canvas means "copy what I drag".
+    private var isOptionEngaged: Bool { optionHeld || modifierKeys.isOptionDown }
+
+    /// Whether the canvas is in picking-out state: ⌘ engaged, or the mode (⋯ → Select Nodes) that
+    /// stays on with nothing held.
+    private var isPickingOut: Bool { isSelecting || isCommandEngaged }
 
     /// The same question at the moment a touch begins, which is where a drag decides whether it's a
     /// selection box or a pan. This one also counts the flags read off the touch itself, which is
-    /// how a hardware ⌘ is known on iOS 17, where nothing publishes a key press.
+    /// how a hardware modifier is known on iOS 17, where nothing publishes a key press.
     private var pickingOutThisTouch: Bool { isPickingOut || keys.isCommandDown }
+
+    /// What a drag beginning this instant means. Read once, as the drag starts — see `dragMode`.
+    ///
+    /// ⌘ wins over ⌥ if somehow both are down: taking a node out of the network is the destructive
+    /// one of the two, and a gesture that might be either should be the one you can see happening.
+    private var dragModeForThisTouch: NodeDragMode {
+        if isCommandEngaged || keys.isCommandDown { return .unlink }
+        if isOptionEngaged || keys.isOptionDown { return .copy }
+        return .move
+    }
 
     /// A drag on bare canvas while selecting: out comes the box.
     private func beginMarquee(at viewPoint: CGPoint) {
         finishEditing()
         menuNodeID = nil
+        quickActionsTask?.cancel()
+        hoveringQuickActions = false
         hoveredNodeID = nil
         tappedNodeID = nil
         let spot = canvasPoint(for: viewPoint)
@@ -4378,18 +4504,29 @@ struct GraphDocumentView: View {
     }
 
     /// The nodes a drag should carry: the whole selection when the node under the finger is part of
-    /// it, otherwise just that node's own branch.
-    private func draggedBranch(from node: GraphNode, in document: Document) -> Set<UUID> {
-        guard selectedNodeIDs.contains(node.id) else {
-            return Set(document.subtree(of: node.id))
-        }
-        return Set(selectedNodeIDs.flatMap { document.subtree(of: $0) })
+    /// it, otherwise just that node — with, for a move or a copy, everything hanging off it.
+    ///
+    /// An **unlink** drag carries the picked nodes alone. Unlinking joins a node's children to its
+    /// parent, so the branch stays where it is and goes on making sense; taking the children along
+    /// would be the plain drag, which is what you get without ⌘ down.
+    private func draggedBranch(from node: GraphNode, in document: Document,
+                               mode: NodeDragMode) -> Set<UUID> {
+        let picked: Set<UUID> = selectedNodeIDs.contains(node.id) ? selectedNodeIDs : [node.id]
+        guard mode != .unlink else { return picked }
+        return Set(picked.flatMap { document.subtree(of: $0) })
     }
 
+    /// Delete what's picked out — the selection bar's trash, and the **Delete key**, which is the
+    /// same thing said with a keyboard. Nothing selected is nothing to delete: the key does nothing
+    /// rather than guessing at what you meant.
     private func deleteSelection() {
         let ids = selectedNodeIDs
-        selectedNodeIDs = []
-        for id in ids { model.documents.deleteNode(id, in: documentID) }
+        guard !ids.isEmpty else { return }
+        withAnimation(.snappy(duration: 0.2)) {
+            selectedNodeIDs = []
+            for id in ids { model.documents.deleteNode(id, in: documentID) }
+        }
+        haptic()
         wwLog("Deleted \(ids.count) graph node\(ids.count == 1 ? "" : "s")", .general)
     }
 
@@ -4410,41 +4547,86 @@ struct GraphDocumentView: View {
     private func nodeDrag(_ node: GraphNode, in document: Document) -> some Gesture {
         DragGesture(minimumDistance: 6, coordinateSpace: .global)
             .onChanged { value in
-                if draggingNodeID != node.id {
-                    finishEditing()
-                    menuNodeID = nil
-                    draggingNodeID = node.id
-                    draggingBranch = draggedBranch(from: node, in: document)
-                }
+                if dragSourceID != node.id { beginDrag(of: node, in: document) }
                 // Translations arrive in view points; the canvas is in canvas points.
                 dragTranslation = CGSize(width: value.translation.width / scale,
                                          height: value.translation.height / scale)
-                // Re-parenting is a single-node idea: a whole selection dropped on one node has no
-                // one answer, so a multi-drag just moves.
-                dropTargetID = isMultiDrag ? nil : dropTarget(for: node, in: document)
+                // Re-parenting is a plain drag's business, and a single-node idea at that: a whole
+                // selection dropped on one node has no one answer, and a node being pulled *out* of
+                // the network (or a copy pulled out of a node) shouldn't land back in it.
+                dropTargetID = dragMode == .move && !isMultiDrag
+                    ? dropTarget(for: node, in: document)
+                    : nil
             }
             .onEnded { _ in
+                let mode = dragMode
+                let dragged = draggingNodeID
                 let target = dropTargetID
                 let branch = draggingBranch
                 let translation = dragTranslation
                 draggingNodeID = nil
+                dragSourceID = nil
                 draggingBranch = []
                 dragTranslation = .zero
                 dropTargetID = nil
+                dragMode = .move
+
+                // Out of the network first, then put down where the finger left it: unlinking joins
+                // this node's parent and children to each other, so the branch is whole again before
+                // anything moves.
+                if mode == .unlink { unlink(branch) }
 
                 if let latest = self.document {
                     commit(branch: branch, movedBy: translation, in: latest)
                     if let settled = self.document {
                         updateGroupMembership(after: branch, in: settled)
                     }
-                    if let target, model.documents.attachNode(node.id, to: target, in: documentID,
-                                                              heights: measuredHeights) {
+                    if mode == .copy {
+                        wwLog("Copied \(branch.count) graph node\(branch.count == 1 ? "" : "s")",
+                              .general)
+                    }
+                    if mode == .move, let dragged, let target,
+                       model.documents.attachNode(dragged, to: target, in: documentID,
+                                                  heights: measuredHeights) {
                         let name = latest.node(with: target)?.trimmedText ?? ""
                         wwLog("Hung a graph branch under “\(name.isEmpty ? "a node" : name)”", .general)
                         haptic()
                     }
                 }
             }
+    }
+
+    /// The first frame of a node drag: work out what the drag *is* — a move, a node pulled out of
+    /// the network (⌘), or a copy pulled out of one (⌥) — and set up what it carries.
+    ///
+    /// A copy is made here rather than when the finger lifts, so the thing you're dragging is on
+    /// screen from the first frame: the copies appear over their originals and travel with the
+    /// touch, which is what makes the gesture read as pulling a duplicate out.
+    private func beginDrag(of node: GraphNode, in document: Document) {
+        finishEditing()
+        menuNodeID = nil
+        dragSourceID = node.id
+        dragTranslation = .zero
+        dragMode = dragModeForThisTouch
+
+        let picked = draggedBranch(from: node, in: document, mode: dragMode)
+        guard dragMode == .copy else {
+            draggingNodeID = node.id
+            draggingBranch = picked
+            if dragMode == .unlink { haptic(strong: true) }
+            return
+        }
+
+        // Nothing copied (a node that vanished under the finger) falls back to an ordinary move
+        // rather than dragging thin air.
+        let copies = model.documents.duplicateNodes(picked, in: documentID)
+        draggingNodeID = copies[node.id] ?? node.id
+        draggingBranch = copies.isEmpty ? picked : Set(copies.values)
+        if copies.isEmpty {
+            dragMode = .move
+        } else {
+            haptic(strong: true)
+        }
     }
 
     /// Write a dragged branch's new positions back — one edit at the end of the drag rather than
@@ -4567,18 +4749,23 @@ struct GraphDocumentView: View {
         transformTargetID = id
     }
 
-    /// Whether this node is joined to anything — the test for whether unlinking would do something.
-    private func isLinked(_ node: GraphNode, in document: Document) -> Bool {
-        node.parentID != nil || !document.children(of: node.id).isEmpty
-    }
-
-    /// "Unlink": take the node out of the tree without taking its words with it. Its parent and its
+    /// Take nodes out of the tree without taking their words with them: each one's parent and
     /// children are joined to each other, so the branch survives, and the node floats free where it
     /// stands.
-    private func unlink(_ node: GraphNode) {
-        model.documents.unlinkNode(node.id, in: documentID)
+    ///
+    /// This is what **⌘ + drag** does — you pull a card out of the network and it comes out, which
+    /// is the gesture the old scissors button was standing in for. Nodes that weren't joined to
+    /// anything are left alone: a loose card dragged with ⌘ down is simply a card being moved.
+    private func unlink(_ ids: Set<UUID>) {
+        guard let document else { return }
+        let linked = ids.filter { id in
+            guard let node = document.node(with: id) else { return false }
+            return node.parentID != nil || !document.children(of: id).isEmpty
+        }
+        guard !linked.isEmpty else { return }
+        for id in linked { model.documents.unlinkNode(id, in: documentID) }
         haptic()
-        wwLog("Unlinked a graph node", .general)
+        wwLog("Unlinked \(linked.count) graph node\(linked.count == 1 ? "" : "s")", .general)
     }
 
     /// "Tidy children": line this node's children up beside it, evenly spaced, each with its own
@@ -4667,13 +4854,6 @@ struct GraphDocumentView: View {
             }
             items.insert(tidy, at: 2)
         }
-        if isLinked(node, in: document) {
-            let unlinkItem = NodeMenuItem(title: "Unlink", icon: "scissors") {
-                menuNodeID = nil
-                unlink(node)
-            }
-            items.insert(unlinkItem, at: items.count - 1)
-        }
         return items
     }
 
@@ -4704,6 +4884,7 @@ struct GraphDocumentView: View {
                     withAnimation(.snappy(duration: 0.2)) {
                         hoveredNodeID = nil
                         tappedNodeID = nil
+                        hoveringQuickActions = false
                         selectedNodeIDs.remove(id)
                         model.documents.deleteNode(id, in: documentID)
                     }
@@ -4721,10 +4902,52 @@ struct GraphDocumentView: View {
             .background(WW.surface.opacity(0.96), in: Capsule())
             .overlay(Capsule().stroke(WW.hairline, lineWidth: 1))
             .shadow(color: .black.opacity(0.12), radius: 10, y: 3)
+            // Pointing at the bar counts as pointing at the card: it's the whole reason the bar is
+            // there, and the pointer has to leave the card to reach it.
+            .onHover { inside in
+                hoveringQuickActions = inside
+                if inside {
+                    quickActionsTask?.cancel()
+                    quickActionsTask = nil
+                } else {
+                    releaseQuickActions(of: nil)
+                }
+            }
             .offset(x: min(max(view.x - width / 2, 8), max(size.width - width - 8, 8)),
-                    y: max(view.y - card / 2 - 42, 8))
+                    y: max(view.y - card / 2 - GraphCanvas.quickActionsLift, 8))
             .transition(.opacity.combined(with: .scale(scale: 0.9, anchor: .bottom)))
             .allowsHitTesting(true)
+        }
+    }
+
+    /// The pointer has come to rest on a card: raise its quick actions, and call off any clock that
+    /// was about to put another card's away.
+    private func pointAt(_ id: UUID) {
+        quickActionsTask?.cancel()
+        quickActionsTask = nil
+        // On a card is not on the bar. Said here as well as in the bar's own `onHover`, because a
+        // bar that's *removed* from under the pointer (a second card picked out, its node deleted)
+        // never sends the "left" event — and a flag stuck on would hold the actions up for good.
+        hoveringQuickActions = false
+        guard hoveredNodeID != id else { return }
+        withAnimation(.snappy(duration: 0.15)) { hoveredNodeID = id }
+    }
+
+    /// The pointer has left a card (`id`), or the bar floating above it (`nil`).
+    ///
+    /// Neither lets go straight away. The bar sits clear of the card, so reaching it means crossing
+    /// a few points where the pointer is on neither — and letting go there took the buttons out from
+    /// under the pointer on its way to them, which is a bar you can see and never press. So the
+    /// hover is held for a moment, and anything the pointer lands on in that moment (the bar, the
+    /// same card, the next one) calls the clock off.
+    private func releaseQuickActions(of id: UUID?) {
+        // Already moved on to another card — that card's own hover has taken over.
+        if let id, hoveredNodeID != id { return }
+        quickActionsTask?.cancel()
+        quickActionsTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(GraphCanvas.quickActionsGrace * 1_000_000_000))
+            guard !Task.isCancelled, !hoveringQuickActions else { return }
+            withAnimation(.snappy(duration: 0.15)) { hoveredNodeID = nil }
         }
     }
 
@@ -4829,14 +5052,22 @@ struct GraphDocumentView: View {
     @ViewBuilder
     private func groupView(_ group: GraphGroup, frame: CGRect) -> some View {
         let grab = GraphCanvas.groupBorderGrab
+        let ink = WW.paletteColor(group.colorID) ?? WW.moss
         Color.clear
             .frame(width: frame.width, height: frame.height)
             // A `Color` takes touches across its whole area, which would put a dead zone over every
             // node inside the ring. The body of the ring is deaf; the strips added after it aren't.
             .allowsHitTesting(false)
+            // The wash inside the ring, drawn under the cards rather than over them (rings are laid
+            // down before the nodes) — and deaf, like the ring itself.
+            .background {
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .fill(ink.opacity(group.colorID == nil ? 0 : GraphCanvas.tintOpacity))
+                    .allowsHitTesting(false)
+            }
             .overlay {
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .stroke(WW.moss.opacity(draggingGroupID == group.id ? 0.9 : 0.5),
+                    .stroke(ink.opacity(draggingGroupID == group.id ? 0.9 : 0.5),
                             style: StrokeStyle(lineWidth: 1.5, dash: [8, 6]))
                     .allowsHitTesting(false)
             }
@@ -4845,7 +5076,8 @@ struct GraphDocumentView: View {
             .overlay(alignment: .leading) { grabStrip(group, width: grab, height: frame.height) }
             .overlay(alignment: .trailing) { grabStrip(group, width: grab, height: frame.height) }
             .overlay(alignment: .topLeading) {
-                groupLabel(group).offset(x: 12, y: -13)
+                // Straddling the ring's top edge: half the chip's own height above the line.
+                groupLabel(group).offset(x: 12, y: -15)
             }
             .position(x: frame.midX + GraphCanvas.center, y: frame.midY + GraphCanvas.center)
             .zIndex(0)
@@ -4859,49 +5091,83 @@ struct GraphDocumentView: View {
             .gesture(groupDrag(group))
     }
 
-    /// The name at the ring's top-left corner — tap it to write one, or to let the group go.
+    /// The name at the ring's top-left corner — tap it to write one, or to let the group go — with
+    /// the group's colour dot in front of it, which is where a colour belongs: at the head of the
+    /// thing it colours, the same as a node's edit bar.
     private func groupLabel(_ group: GraphGroup) -> some View {
-        Button {
-            groupLabelText = group.label
-            labelingGroupID = group.id
-        } label: {
-            Text(group.hasLabel ? group.trimmedLabel : "Label")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(group.hasLabel ? WW.ink : WW.inkTertiary)
-                .lineLimit(1)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 4)
-                .background(WW.surface, in: Capsule())
-                .overlay(Capsule().stroke(WW.hairline, lineWidth: 1))
-                .contentShape(Capsule())
+        HStack(spacing: 0) {
+            GraphColorDot(colorID: group.colorID, diameter: 11) { colorID in
+                model.documents.setGroupColor(group.id, in: documentID, to: colorID)
+            }
+            .padding(.leading, -3)          // the dot brings its own tap target; close the gap up
+            Button {
+                groupLabelText = group.label
+                labelingGroupID = group.id
+            } label: {
+                Text(group.hasLabel ? group.trimmedLabel : "Label")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(group.hasLabel ? WW.ink : WW.inkTertiary)
+                    .lineLimit(1)
+                    .padding(.trailing, 10)
+                    .padding(.vertical, 4)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
         }
-        .buttonStyle(.plain)
+        .background(WW.surface, in: Capsule())
+        .overlay(Capsule().stroke(WW.paletteColor(group.colorID) ?? WW.hairline, lineWidth: 1))
     }
 
     /// Dragging the ring moves what's inside it — the members themselves, which is exactly what the
     /// ring is drawn around. Anything hanging off a member but outside the ring stays where it is.
+    ///
+    /// With **⌥ held** it drags a copy instead: the members are duplicated and a fresh ring, same
+    /// name and same ink, is drawn round the copies — so a cluster you've arranged once can be
+    /// pulled out again as a cluster. (⌘ means nothing here: a ring isn't part of the tree, so
+    /// there's nothing to unlink it from.)
     private func groupDrag(_ group: GraphGroup) -> some Gesture {
         DragGesture(minimumDistance: 4, coordinateSpace: .global)
             .onChanged { value in
-                if draggingGroupID != group.id {
-                    finishEditing()
-                    menuNodeID = nil
-                    draggingGroupID = group.id
-                    draggingBranch = group.members
-                }
+                if draggingGroupID != group.id { beginDrag(of: group) }
                 dragTranslation = CGSize(width: value.translation.width / scale,
                                          height: value.translation.height / scale)
             }
             .onEnded { _ in
                 let members = draggingBranch
                 let translation = dragTranslation
+                let mode = dragMode
                 draggingGroupID = nil
                 draggingBranch = []
                 dragTranslation = .zero
+                dragMode = .move
                 if let latest = self.document {
                     commit(branch: members, movedBy: translation, in: latest)
+                    if mode == .copy {
+                        wwLog("Copied a group of \(members.count) graph nodes", .general)
+                    }
                 }
             }
+    }
+
+    /// The first frame of a ring drag — see `beginDrag(of:in:)`, which does the same job for a card.
+    private func beginDrag(of group: GraphGroup) {
+        finishEditing()
+        menuNodeID = nil
+        draggingGroupID = group.id
+        dragTranslation = .zero
+        dragMode = isOptionEngaged || keys.isOptionDown ? .copy : .move
+
+        guard dragMode == .copy else {
+            draggingBranch = group.members
+            return
+        }
+        let copies = model.documents.duplicateGroup(group.id, in: documentID)
+        draggingBranch = copies.isEmpty ? group.members : Set(copies.values)
+        if copies.isEmpty {
+            dragMode = .move
+        } else {
+            haptic(strong: true)
+        }
     }
 
     /// Membership is a matter of where things are: a node dragged inside a ring joins it, one
@@ -5075,12 +5341,15 @@ struct GraphDocumentView: View {
         }
     }
 
-    /// The two buttons stacked at the minimap's left: **Auto tidy**, and the on-screen **⌘**.
+    /// The three buttons stacked at the minimap's left: **Auto tidy**, and the on-screen **⌘** and
+    /// **⌥**.
     ///
     /// They behave differently on purpose. Auto tidy is a setting, so it's a toggle that stays put.
-    /// ⌘ is a *key*: you hold it down with one thumb and drag with the other, exactly as you'd hold
-    /// the real one, and it lets go the moment you do. That's what keeps it honest as more than a
-    /// selection switch — whatever else ⌘ comes to mean on this canvas, the button will mean it too.
+    /// ⌘ and ⌥ are *keys*: you hold one down with one thumb and drag with the other, exactly as
+    /// you'd hold the real thing, and it lets go the moment you do. That's what keeps them honest as
+    /// more than switches — whatever else these modifiers come to mean on this canvas, the buttons
+    /// mean it too. Today ⌘ picks nodes out and pulls a dragged one out of the network; ⌥ drags a
+    /// copy.
     @ViewBuilder
     private func canvasControls(for document: Document) -> some View {
         VStack(spacing: 8) {
@@ -5095,23 +5364,31 @@ struct GraphDocumentView: View {
             .accessibilityLabel("Auto Tidy")
             .accessibilityAddTraits(autoTidy ? [.isSelected] : [])
 
-            canvasControlFace("command", isOn: metaHeld, enabled: !document.nodes.isEmpty)
-                // A press, not a tap: `onChanged` fires as the finger lands and `onEnded` when it
-                // leaves, so the key is down for exactly as long as the thumb is.
-                .gesture(
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { _ in
-                            guard !metaHeld, !document.nodes.isEmpty else { return }
-                            withAnimation(.snappy(duration: 0.15)) { metaHeld = true }
-                            haptic(strong: true)
-                        }
-                        .onEnded { _ in
-                            withAnimation(.snappy(duration: 0.15)) { metaHeld = false }
-                        }
-                )
-                .accessibilityLabel("Hold to select nodes")
-                .accessibilityAddTraits(metaHeld ? [.isSelected] : [])
+            modifierKey("command", isOn: $metaHeld, enabled: !document.nodes.isEmpty,
+                        label: "Hold to select nodes, or drag a node out of the network")
+            modifierKey("option", isOn: $optionHeld, enabled: !document.nodes.isEmpty,
+                        label: "Hold to drag a copy")
         }
+    }
+
+    /// One of the on-screen modifier keys. A press, not a tap: `onChanged` fires as the finger lands
+    /// and `onEnded` when it leaves, so the key is down for exactly as long as the thumb is.
+    private func modifierKey(_ icon: String, isOn: Binding<Bool>, enabled: Bool,
+                             label: String) -> some View {
+        canvasControlFace(icon, isOn: isOn.wrappedValue, enabled: enabled)
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { _ in
+                        guard !isOn.wrappedValue, enabled else { return }
+                        withAnimation(.snappy(duration: 0.15)) { isOn.wrappedValue = true }
+                        haptic(strong: true)
+                    }
+                    .onEnded { _ in
+                        withAnimation(.snappy(duration: 0.15)) { isOn.wrappedValue = false }
+                    }
+            )
+            .accessibilityLabel(label)
+            .accessibilityAddTraits(isOn.wrappedValue ? [.isSelected] : [])
     }
 
     /// One of those buttons, drawn: the minimap's own surface and hairline, filled in while it's on.
@@ -5143,7 +5420,7 @@ struct GraphDocumentView: View {
     }
 
     /// Nothing, drawn: the view exists only to give `ModifierKeys` somewhere to watch from, so a
-    /// drag begun with ⌘ down knows to draw a box instead of panning.
+    /// drag begun with ⌘ (or ⌥) down knows to draw a box, or pull a copy out, instead of panning.
     @ViewBuilder
     private func commandKeyWatcher() -> some View {
         #if canImport(UIKit)
@@ -5151,6 +5428,52 @@ struct GraphDocumentView: View {
         #else
         EmptyView()
         #endif
+    }
+
+    /// Nothing, drawn, again: the canvas's hardware-keyboard shortcuts — see `GraphKeyCommands`.
+    @ViewBuilder
+    private func keyCommands() -> some View {
+        #if canImport(UIKit)
+        GraphKeyCommands(isActive: acceptsKeyCommands,
+                         onDelete: { deleteSelection() },
+                         onAlignLeft: { arrangeSelection("Align Left", GraphArrange.alignLeft) },
+                         onAlignRight: { arrangeSelection("Align Right", GraphArrange.alignRight) },
+                         onTidy: { tidyFromKeyboard() })
+            .frame(width: 0, height: 0)
+        #else
+        EmptyView()
+        #endif
+    }
+
+    /// Whether the canvas should be holding the keyboard: not while a node is open for editing —
+    /// there the text view wants every key, Delete most of all — not under a menu, an alert or the
+    /// recording sheet, and not once the canvas has been navigated away from. (A pushed-over screen
+    /// leaves this view in the hierarchy, and a Delete pressed there must not quietly take cards off
+    /// a canvas nobody is looking at.)
+    private var acceptsKeyCommands: Bool {
+        isOnScreen && editingNodeID == nil && menuNodeID == nil && labelingGroupID == nil
+            && !showingRename && reviseTask == nil && transformTargetID == nil
+    }
+
+    /// ⌘T. With cards picked out it lines up **their** children — the selection is what you're
+    /// working on — and with nothing picked out it tidies the whole graph, from the roots down.
+    private func tidyFromKeyboard() {
+        guard let document else { return }
+        let heights = measuredHeights
+        let picked = document.nodeEntries.map(\.node.id).filter { selectedNodeIDs.contains($0) }
+        withAnimation(.snappy(duration: 0.25)) {
+            if picked.isEmpty {
+                model.documents.tidyGraph(in: documentID, heights: heights)
+            } else {
+                for id in picked {
+                    model.documents.tidyChildren(of: id, in: documentID, heights: heights)
+                }
+            }
+        }
+        haptic()
+        wwLog(picked.isEmpty ? "Tidied the whole graph"
+                             : "Tidied the children of \(picked.count) graph node\(picked.count == 1 ? "" : "s")",
+              .general)
     }
 
     /// What the canvas is currently showing, in canvas coordinates.
@@ -5273,7 +5596,8 @@ struct GraphDocumentView: View {
                     .font(.system(size: 10))
                     .foregroundStyle(WW.inkTertiary)
             }
-            Text(entry.node.hasText ? entry.node.trimmedText : "Empty node")
+            // The same words the card shows — a heading's marker is invisible here too.
+            Text(entry.node.hasText ? entry.node.displayText : "Empty node")
                 .font(.subheadline)
                 .foregroundStyle(entry.node.hasText ? WW.ink : WW.inkTertiary)
                 .lineLimit(2)
@@ -5476,6 +5800,16 @@ struct GraphDocumentView: View {
         var id: UUID { nodeID }
     }
 
+    /// What a drag on a card turned out to be, decided by what was held when it began.
+    private enum NodeDragMode {
+        /// The card and its branch travel, and a drop on another card re-parents them.
+        case move
+        /// ⌘: the cards come out of the network as they move — the old scissors, as a gesture.
+        case unlink
+        /// ⌥: a copy of the cards comes away, leaving the originals where they are.
+        case copy
+    }
+
     /// One row of the long-press dropdown.
     private struct NodeMenuItem: Identifiable {
         let title: String
@@ -5532,6 +5866,16 @@ enum GraphCanvas {
     /// How still the finger has to be, and for how long, to count as having settled somewhere.
     static let settleSlop: CGFloat = 14
     static let settleDelay: TimeInterval = 1.0
+    /// How far above a card its quick actions float — the bar's own height plus a few points of
+    /// air, so it clears the card without leaving a gulf for the pointer to cross on its way there.
+    static let quickActionsLift: CGFloat = 38
+    /// How long the quick actions stay up once nothing is pointing at them: long enough for a
+    /// pointer to travel from the card to the bar, short enough that a bar nobody wanted goes away
+    /// while you're still looking at it.
+    static let quickActionsGrace: TimeInterval = 0.6
+    /// How strongly a chosen colour washes the inside of a card or a group's ring: enough to tell
+    /// two clusters apart across a canvas, faint enough to read text over in either theme.
+    static let tintOpacity: Double = 0.12
     /// Air between a group's ring and the cards inside it, and how thick its draggable edge is.
     static let groupPadding: CGFloat = 26
     static let groupBorderGrab: CGFloat = 28
@@ -5656,6 +6000,91 @@ private struct GraphGrid: View {
     }
 }
 
+// MARK: - The colour dot
+
+/// The dot that gives a node or a group its ink: a small filled circle that opens the palette.
+///
+/// Two places carry it, and they're the two things on a canvas you'd want to tell apart at a
+/// glance — the head of a node's edit bar, and the corner of a group's ring. Both store the same
+/// kind of id (`GraphPalette.colorIDs`, the names Inbox tags already use), so both get the same
+/// control rather than two that look alike.
+///
+/// The palette opens as a **popover** rather than a menu, on a phone as much as an iPad
+/// (`presentationCompactAdaptation`), because a colour picker that shows no colours is no use: a
+/// menu row can carry the name but not the ink, and a row of dots says it without a word. Picking
+/// one closes it; the crossed-through dot at the end takes the colour off again.
+struct GraphColorDot: View {
+    let colorID: String?
+    var diameter: CGFloat = 14
+    let onPick: (String?) -> Void
+
+    @State private var showingPalette = false
+
+    var body: some View {
+        Button { showingPalette = true } label: {
+            swatch(for: colorID, diameter: diameter)
+                .padding(9)                 // a 14-point dot is not a 14-point target
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Colour")
+        .popover(isPresented: $showingPalette) {
+            HStack(spacing: 10) {
+                ForEach(GraphPalette.colorIDs, id: \.self) { id in
+                    pick(id)
+                }
+                pick(nil)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .presentationCompactAdaptation(.popover)
+        }
+    }
+
+    private func pick(_ id: String?) -> some View {
+        Button {
+            onPick(id)
+            showingPalette = false
+        } label: {
+            swatch(for: id, diameter: 26)
+                .overlay {
+                    if id == colorID {
+                        Circle().stroke(WW.ink, lineWidth: 2).padding(-4)
+                    }
+                }
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(id.map(Self.name) ?? "No colour")
+    }
+
+    /// One dot: the colour filled in, or — for "no colour" — the plain card's own hairline ring with
+    /// a line through it.
+    @ViewBuilder
+    private func swatch(for id: String?, diameter: CGFloat) -> some View {
+        if let color = WW.paletteColor(id) {
+            Circle()
+                .fill(color)
+                .frame(width: diameter, height: diameter)
+                .overlay(Circle().stroke(WW.ink.opacity(0.15), lineWidth: 1))
+        } else {
+            Circle()
+                .fill(WW.surface)
+                .frame(width: diameter, height: diameter)
+                .overlay(Circle().stroke(WW.inkTertiary, lineWidth: 1))
+                .overlay {
+                    Rectangle()
+                        .fill(WW.inkTertiary)
+                        .frame(width: 1, height: diameter)
+                        .rotationEffect(.degrees(45))
+                }
+        }
+    }
+
+    /// "violet" → "Violet". The stored ids are the display names, lowercased.
+    static func name(_ id: String) -> String { id.prefix(1).uppercased() + String(id.dropFirst()) }
+}
+
 // MARK: - The "+" button
 
 /// The small "+" that adds something where it sits — and, held rather than tapped, records into
@@ -5738,30 +6167,33 @@ struct HoldablePlusButton: View {
     }
 }
 
-// MARK: - The ⌘ key
+// MARK: - The ⌘ and ⌥ keys
 
-/// Whether a hardware ⌘ was held when the touch in progress began — what turns a drag on the
-/// canvas into a selection box instead of a pan, for anyone working with a keyboard attached.
+/// Which modifiers were held when the touch in progress began — what turns a drag on the canvas
+/// into a selection box instead of a pan (⌘), or into a copy of what's being dragged (⌥), for
+/// anyone working with a keyboard attached.
 ///
 /// A class, and read through the reference rather than as `@State`, on purpose: a SwiftUI gesture
 /// closure sees the view as it was when the body was last evaluated, and a modifier pressed between
 /// two frames of the same drag would be missed. Reading it through an object gets the value as it is
-/// now. Nothing here publishes either: the flag is consulted when a gesture starts, never drawn — so
-/// a key going down redraws nothing.
+/// now. Nothing here publishes either: the flags are consulted when a gesture starts, never drawn —
+/// so a key going down redraws nothing.
 ///
 /// Written and read on the main thread only: UIKit delivers touches there, and so does SwiftUI.
 final class ModifierKeys {
-    /// Set at every touch-down from the event's own modifier flags, so it describes *this* touch.
+    /// Set at every touch-down from the event's own modifier flags, so they describe *this* touch.
     var isCommandDown = false
+    var isOptionDown = false
 }
 
-/// Whether the hardware ⌘ is down *right now* — as against what was held when a touch began, which
-/// is `ModifierKeys` above and a different question.
+/// Whether a hardware modifier is down *right now* — as against what was held when a touch began,
+/// which is `ModifierKeys` above and a different question.
 ///
 /// Two mechanisms because there are two questions. A drag only needs to know what was held when it
-/// started, and a touch carries that with it. But the canvas has to be *drawn* differently while
-/// the key is down — the cards change what a tap means, and a node's quick actions appear under the
-/// pointer with nothing touched at all — which needs the press itself, as it happens.
+/// started, and a touch carries that with it. But the canvas has to be *drawn* differently while a
+/// key is down — the cards change what a tap means, a node's quick actions appear under the pointer
+/// with nothing touched at all, and a document's "+" says whether it will record or open an
+/// editor — which needs the press itself, as it happens.
 ///
 /// SwiftUI has no answer for that on iOS (`onModifierKeysChanged` is macOS), and the responder
 /// chain is the wrong shape for it: presses go to whatever is first responder, which here is a text
@@ -5769,12 +6201,13 @@ final class ModifierKeys {
 /// on the device, whoever happens to be typing — so that's what this watches. One shared watcher:
 /// a joint document has two canvases in it, and they're asking about the same keyboard.
 ///
-/// With no hardware keyboard there's nothing to report and this stays false, which is exactly the
-/// case the ⌘ button beside the minimap exists for.
-final class CommandKeyMonitor: ObservableObject {
-    static let shared = CommandKeyMonitor()
+/// With no hardware keyboard there's nothing to report and both stay false, which is exactly the
+/// case the ⌘ and ⌥ buttons beside the minimap exist for.
+final class ModifierKeyMonitor: ObservableObject {
+    static let shared = ModifierKeyMonitor()
 
-    @Published private(set) var isDown = false
+    @Published private(set) var isCommandDown = false
+    @Published private(set) var isOptionDown = false
 
     #if canImport(GameController)
     private var observers: [NSObjectProtocol] = []
@@ -5788,25 +6221,30 @@ final class CommandKeyMonitor: ObservableObject {
         })
         observers.append(center.addObserver(forName: .GCKeyboardDidDisconnect,
                                             object: nil, queue: .main) { [weak self] _ in
-            self?.report(false)
+            self?.report(command: false)
+            self?.report(option: false)
         })
     }
 
-    /// Both ⌘ keys, watched separately: either one down means ⌘ is down, and letting one go while
-    /// the other is still held shouldn't read as letting go.
+    /// Each key watched separately: either side down means the modifier is down, and letting one go
+    /// while the other is still held shouldn't read as letting go.
     private func watch(_ keyboard: GCKeyboard?) {
         guard let input = keyboard?.keyboardInput else { return }
         for code in [GCKeyCode.leftGUI, GCKeyCode.rightGUI] {
             input.button(forKeyCode: code)?.pressedChangedHandler = { [weak self] _, _, pressed in
-                self?.report(pressed || Self.eitherIsDown)
+                self?.report(command: pressed || Self.isDown(.leftGUI, .rightGUI))
+            }
+        }
+        for code in [GCKeyCode.leftAlt, GCKeyCode.rightAlt] {
+            input.button(forKeyCode: code)?.pressedChangedHandler = { [weak self] _, _, pressed in
+                self?.report(option: pressed || Self.isDown(.leftAlt, .rightAlt))
             }
         }
     }
 
-    private static var eitherIsDown: Bool {
+    private static func isDown(_ codes: GCKeyCode...) -> Bool {
         guard let input = GCKeyboard.coalesced?.keyboardInput else { return false }
-        return input.button(forKeyCode: .leftGUI)?.isPressed == true
-            || input.button(forKeyCode: .rightGUI)?.isPressed == true
+        return codes.contains { input.button(forKeyCode: $0)?.isPressed == true }
     }
     #else
     private init() {}
@@ -5814,10 +6252,17 @@ final class CommandKeyMonitor: ObservableObject {
 
     /// Handlers arrive on whichever queue GameController feels like; published state has to change
     /// on the main one.
-    private func report(_ down: Bool) {
+    private func report(command down: Bool) {
         DispatchQueue.main.async { [weak self] in
-            guard let self, self.isDown != down else { return }
-            withAnimation(.snappy(duration: 0.15)) { self.isDown = down }
+            guard let self, self.isCommandDown != down else { return }
+            withAnimation(.snappy(duration: 0.15)) { self.isCommandDown = down }
+        }
+    }
+
+    private func report(option down: Bool) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.isOptionDown != down else { return }
+            withAnimation(.snappy(duration: 0.15)) { self.isOptionDown = down }
         }
     }
 }
@@ -5876,6 +6321,7 @@ struct CommandKeyWatcher: UIViewRepresentable {
 
         override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
             keys.isCommandDown = event.modifierFlags.contains(.command)
+            keys.isOptionDown = event.modifierFlags.contains(.alternate)
             state = .failed          // never recognize; never take a touch from anything else
         }
 
@@ -5883,6 +6329,97 @@ struct CommandKeyWatcher: UIViewRepresentable {
                                shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
             true
         }
+    }
+}
+#endif
+
+#if canImport(UIKit)
+/// The canvas's hardware-keyboard shortcuts, for anyone working with a keyboard attached:
+/// **Delete** removes the selected cards, **⌘←** and **⌘→** line them up by their left or right
+/// edges, and **⌘T** tidies — the selection's children, or the whole graph when nothing is picked
+/// out.
+///
+/// UIKit's key commands rather than SwiftUI's `onKeyPress`, for one reason: the responder chain
+/// already answers the question "is the user typing?". A view that's first responder gets the keys;
+/// a text view that takes over gets them instead, and this stands down. `isActive` is the same idea
+/// from the other end — a node open for editing, a menu, an alert — and it's watched for *changes*
+/// rather than asserted on every update, so a keyboard that has moved on to the document half of a
+/// joint document isn't dragged back here every time the canvas redraws.
+struct GraphKeyCommands: UIViewRepresentable {
+    /// Whether the canvas should be holding the keyboard right now.
+    var isActive: Bool
+    let onDelete: () -> Void
+    let onAlignLeft: () -> Void
+    let onAlignRight: () -> Void
+    let onTidy: () -> Void
+
+    func makeUIView(context: Context) -> KeyView {
+        let view = KeyView()
+        configure(view)
+        return view
+    }
+
+    func updateUIView(_ view: KeyView, context: Context) { configure(view) }
+
+    static func dismantleUIView(_ view: KeyView, coordinator: ()) {
+        view.resignFirstResponder()
+    }
+
+    private func configure(_ view: KeyView) {
+        view.onDelete = onDelete
+        view.onAlignLeft = onAlignLeft
+        view.onAlignRight = onAlignRight
+        view.onTidy = onTidy
+        view.wantsKeys(isActive)
+    }
+
+    /// A view of no size whose only job is to be first responder and carry the commands.
+    final class KeyView: UIView {
+        var onDelete: () -> Void = {}
+        var onAlignLeft: () -> Void = {}
+        var onAlignRight: () -> Void = {}
+        var onTidy: () -> Void = {}
+
+        private var holdingKeys = false
+
+        override var canBecomeFirstResponder: Bool { true }
+
+        /// Take the keyboard, or let it go — but only when the answer has changed, so an ordinary
+        /// redraw never snatches focus back from whatever has it now.
+        func wantsKeys(_ wanted: Bool) {
+            guard wanted != holdingKeys else { return }
+            holdingKeys = wanted
+            if wanted { becomeFirstResponder() } else { resignFirstResponder() }
+        }
+
+        /// `makeUIView` runs before the view is in a window, where becoming first responder can't
+        /// work; this is the moment it can.
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            if holdingKeys, window != nil { becomeFirstResponder() }
+        }
+
+        override var keyCommands: [UIKeyCommand]? {
+            // Both delete keys by their characters rather than by name: backspace is what a Mac
+            // keyboard's Delete sends, and DEL is what a full-size keyboard's forward delete does.
+            let commands = [
+                UIKeyCommand(input: "\u{8}", modifierFlags: [], action: #selector(deleteSelection)),
+                UIKeyCommand(input: "\u{7F}", modifierFlags: [], action: #selector(deleteSelection)),
+                UIKeyCommand(input: UIKeyCommand.inputLeftArrow, modifierFlags: .command,
+                             action: #selector(alignLeft)),
+                UIKeyCommand(input: UIKeyCommand.inputRightArrow, modifierFlags: .command,
+                             action: #selector(alignRight)),
+                UIKeyCommand(input: "t", modifierFlags: .command, action: #selector(tidy))
+            ]
+            // Otherwise the system keeps the arrows for itself (focus movement) before this is asked.
+            for command in commands { command.wantsPriorityOverSystemBehavior = true }
+            return commands
+        }
+
+        @objc private func deleteSelection() { onDelete() }
+        @objc private func alignLeft() { onAlignLeft() }
+        @objc private func alignRight() { onAlignRight() }
+        @objc private func tidy() { onTidy() }
     }
 }
 #endif

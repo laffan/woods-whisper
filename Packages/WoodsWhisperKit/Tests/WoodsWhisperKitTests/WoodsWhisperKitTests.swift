@@ -859,6 +859,210 @@ final class WoodsWhisperKitTests: XCTestCase {
         XCTAssertEqual(doc.outline, "- Camp\n  - Firewood\n- Weather")
     }
 
+    // MARK: Node headings
+
+    func testAHashMakesTheBiggerHeadingAndTwoTheSmaller() {
+        let big = GraphHeading.parse("# Camp")
+        XCTAssertEqual(big?.level, 1)
+        XCTAssertEqual(big?.text, "Camp")
+        XCTAssertEqual(big?.extraPoints, 7)
+
+        let small = GraphHeading.parse("## Firewood")
+        XCTAssertEqual(small?.level, 2)
+        XCTAssertEqual(small?.text, "Firewood")
+        XCTAssertEqual(small?.extraPoints, 4)
+    }
+
+    /// Markdown wants a space after the marker; someone typing into a card two inches wide often
+    /// doesn't. Both count.
+    func testAMarkerWithoutASpaceStillReadsAsAHeading() {
+        XCTAssertEqual(GraphHeading.parse("#Camp")?.text, "Camp")
+        XCTAssertEqual(GraphHeading.parse("  ##  Firewood ")?.text, "Firewood")
+    }
+
+    func testWhatIsNotAHeading() {
+        XCTAssertNil(GraphHeading.parse("Camp"))
+        XCTAssertNil(GraphHeading.parse("### Too deep"))   // not one of the two sizes drawn
+        XCTAssertNil(GraphHeading.parse("#"))              // nothing to make large yet
+        XCTAssertNil(GraphHeading.parse("##   "))
+        XCTAssertNil(GraphHeading.parse("Camp # 3"))       // a hash in the middle is a hash
+    }
+
+    /// The marker is invisible on the canvas and still there in the text — which is what lets you
+    /// edit it away again, and what keeps the export a Markdown outline with headings in it.
+    func testAHeadingHidesItsMarkerButKeepsItInTheText() {
+        let node = graphNode("## Firewood by the log")
+        XCTAssertEqual(node.heading?.level, 2)
+        XCTAssertEqual(node.displayText, "Firewood by the log")
+        XCTAssertEqual(node.trimmedText, "## Firewood by the log")
+        XCTAssertEqual(Document(title: "Trip", kind: .graph, nodes: [node]).outline,
+                       "- ## Firewood by the log")
+    }
+
+    func testAHeadingKeepsTheLinesUnderIt() {
+        XCTAssertEqual(GraphHeading.parse("# Camp\nby the creek")?.text, "Camp\nby the creek")
+    }
+
+    func testAnOrdinaryNodeShowsExactlyWhatItSays() {
+        XCTAssertNil(graphNode("Camp").heading)
+        XCTAssertEqual(graphNode("  Camp  ").displayText, "Camp")
+    }
+
+    // MARK: Node and group colour
+
+    func testAColourRoundTripsOnNodesAndGroups() throws {
+        let camp = GraphNode(text: "Camp", colorID: "violet")
+        let firewood = graphNode("Firewood", y: 120)
+        let doc = Document(title: "Trip", kind: .graph,
+                           nodes: [camp, firewood],
+                           groups: [GraphGroup(label: "Overnight",
+                                               memberIDs: [camp.id, firewood.id],
+                                               colorID: "amber")])
+
+        let decoded = try JSONDecoder.iso.decode(Document.self, from: JSONEncoder.iso.encode(doc))
+
+        XCTAssertEqual(decoded.node(with: camp.id)?.colorID, "violet")
+        XCTAssertNil(decoded.node(with: firewood.id)?.colorID)
+        XCTAssertEqual(decoded.groups.first?.colorID, "amber")
+    }
+
+    /// A graph saved before colours existed still loads — everything on the canvas's own ink.
+    func testANodeWithoutAColourKeyDecodesAsUncoloured() throws {
+        let json = """
+        {"id":"\(UUID().uuidString)","text":"Camp","position":{"x":0,"y":0},\
+        "createdAt":"2026-07-31T14:30:05Z"}
+        """
+        let node = try JSONDecoder.iso.decode(GraphNode.self, from: Data(json.utf8))
+        XCTAssertNil(node.colorID)
+        XCTAssertEqual(node.text, "Camp")
+    }
+
+    /// One vocabulary of colour across the app: a node, a group and an Inbox tag name their inks
+    /// from the same list, so "the amber one" means the same thing wherever it's said.
+    func testTheGraphPaletteIsTheAppsOneVocabularyOfColour() {
+        XCTAssertEqual(GraphPalette.colorIDs, InboxTag.paletteIDs)
+        XCTAssertTrue(GraphPalette.isKnown("violet"))
+        XCTAssertFalse(GraphPalette.isKnown(nil))
+        XCTAssertFalse(GraphPalette.isKnown("chartreuse"))
+    }
+
+    // MARK: Copying nodes (⌥ + drag)
+
+    @MainActor
+    func testACopyKeepsTheShapeInsideTheSetAndDropsWhatLeavesIt() {
+        let name = "GraphCopyTests-\(UUID().uuidString)"
+        let store = DocumentStore(directoryName: name)
+        defer { removeStore(named: name) }
+
+        let graph = store.createDocument(title: "Route", kind: .graph)
+        let root = store.addRootNode(in: graph.id, text: "Camp")!
+        let child = store.addChildNode(to: root.id, in: graph.id, text: "Firewood")!
+        let grandchild = store.addChildNode(to: child.id, in: graph.id, text: "By the log")!
+
+        // The child and its own child come away; the root above them doesn't.
+        let map = store.duplicateNodes([child.id, grandchild.id], in: graph.id)
+        let document = store.document(with: graph.id)!
+
+        XCTAssertEqual(map.count, 2)
+        XCTAssertEqual(document.nodes.count, 5)
+        let childCopy = document.node(with: map[child.id]!)!
+        let grandchildCopy = document.node(with: map[grandchild.id]!)!
+        XCTAssertNil(childCopy.parentID)                          // the link out of the set is gone
+        XCTAssertEqual(grandchildCopy.parentID, childCopy.id)     // the one inside it survives
+        XCTAssertEqual(childCopy.text, "Firewood")
+        XCTAssertEqual(childCopy.position, child.position)        // it's dragged from where it stood
+        XCTAssertEqual(document.node(with: child.id)?.parentID, root.id)   // original untouched
+    }
+
+    /// A node owns the clip it was spoken into, so a copy that pointed at the same one would delete
+    /// the original's audio the day it was deleted itself. The copy keeps the words, not the tape.
+    @MainActor
+    func testACopyCarriesTheWordsButNotTheTape() {
+        let name = "GraphCopyTests-\(UUID().uuidString)"
+        let store = DocumentStore(directoryName: name)
+        defer { removeStore(named: name) }
+
+        let graph = store.createDocument(title: "Route", kind: .graph)
+        let node = store.addRootNode(in: graph.id, text: "Elk by the creek")!
+        store.linkNode(node.id, toRecording: UUID(), in: graph.id)
+
+        let map = store.duplicateNodes([node.id], in: graph.id)
+        let document = store.document(with: graph.id)!
+
+        XCTAssertNil(document.node(with: map[node.id]!)?.recordingID)
+        XCTAssertNotNil(document.node(with: node.id)?.recordingID)
+        XCTAssertEqual(document.node(with: map[node.id]!)?.text, "Elk by the creek")
+    }
+
+    @MainActor
+    func testCopyingAGroupDrawsAFreshRingRoundTheCopies() {
+        let name = "GraphCopyTests-\(UUID().uuidString)"
+        let store = DocumentStore(directoryName: name)
+        defer { removeStore(named: name) }
+
+        let graph = store.createDocument(title: "Route", kind: .graph)
+        let camp = store.addRootNode(in: graph.id, text: "Camp")!
+        let firewood = store.addRootNode(in: graph.id, text: "Firewood")!
+        let group = store.addGroup(members: [camp.id, firewood.id], in: graph.id)!
+        store.setGroupLabel(group.id, in: graph.id, to: "Overnight")
+        store.setGroupColor(group.id, in: graph.id, to: "amber")
+
+        let map = store.duplicateGroup(group.id, in: graph.id)
+        let document = store.document(with: graph.id)!
+
+        XCTAssertEqual(document.nodes.count, 4)
+        XCTAssertEqual(document.groups.count, 2)
+        let copy = document.groups.last!
+        XCTAssertEqual(copy.trimmedLabel, "Overnight")
+        XCTAssertEqual(copy.colorID, "amber")
+        XCTAssertEqual(copy.members, Set(map.values))
+        XCTAssertEqual(document.groups.first?.members, [camp.id, firewood.id])
+    }
+
+    @MainActor
+    func testANodesInkIsSetAndTakenOffAgain() {
+        let name = "GraphColourTests-\(UUID().uuidString)"
+        let store = DocumentStore(directoryName: name)
+        defer { removeStore(named: name) }
+
+        let graph = store.createDocument(title: "Route", kind: .graph)
+        let node = store.addRootNode(in: graph.id, text: "Camp")!
+
+        store.setNodeColor(node.id, in: graph.id, to: "slate")
+        XCTAssertEqual(store.document(with: graph.id)?.node(with: node.id)?.colorID, "slate")
+        store.setNodeColor(node.id, in: graph.id, to: nil)
+        XCTAssertNil(store.document(with: graph.id)?.node(with: node.id)?.colorID)
+    }
+
+    /// ⌘T with nothing picked out: every row in the graph, from the roots down — so a row whose
+    /// parent has just been moved is arranged where the parent ended up.
+    @MainActor
+    func testTidyingTheWholeGraphLinesUpEveryRow() {
+        let name = "GraphTidyTests-\(UUID().uuidString)"
+        let store = DocumentStore(directoryName: name)
+        defer { removeStore(named: name) }
+
+        let graph = store.createDocument(title: "Route", kind: .graph)
+        let root = store.addRootNode(in: graph.id, text: "Camp")!
+        let first = store.addChildNode(to: root.id, in: graph.id, text: "Firewood")!
+        let second = store.addChildNode(to: root.id, in: graph.id, text: "Water")!
+        let grandchild = store.addChildNode(to: first.id, in: graph.id, text: "By the log")!
+        // Pile them all on the origin: nothing on this canvas moves by itself.
+        store.moveNodes([first.id: .zero, second.id: .zero, grandchild.id: .zero], in: graph.id)
+
+        store.tidyGraph(in: graph.id)
+        let document = store.document(with: graph.id)!
+
+        let column = root.position.x + DocumentStore.childColumnOffset
+        let children = document.children(of: root.id)
+        XCTAssertEqual(children.count, 2)
+        XCTAssertEqual(children.map(\.position.x), [column, column])
+        XCTAssertNotEqual(children[0].position.y, children[1].position.y)
+        // The row below was arranged too, beside the parent the pass above had just placed.
+        XCTAssertEqual(document.node(with: grandchild.id)?.position.x,
+                       column + DocumentStore.childColumnOffset)
+    }
+
     // MARK: Lining a selection up
 
     /// A card the size the canvas draws them, centred where it's told.
@@ -877,6 +1081,17 @@ final class WoodsWhisperKitTests: XCTestCase {
         // Aligning one edge leaves the other axis alone.
         XCTAssertEqual(moved[boxes[0].id]?.y, 0)
         XCTAssertEqual(moved[boxes[2].id]?.y, 180)
+    }
+
+    /// ⌘→, where ⌘← is align left. Cards differ in width, so this is the right *edges*.
+    func testAlignRightPutsEveryRightEdgeOnTheRightmostOne() {
+        let wide = box(0, 0, width: 300)         // right edge at 150
+        let narrow = box(400, 90, width: 100)    // right edge at 450 — the rightmost
+        let moved = GraphArrange.alignRight([wide, narrow])
+
+        XCTAssertNil(moved[narrow.id])
+        XCTAssertEqual(moved[wide.id]?.x, 300)   // 450 − 300/2
+        XCTAssertEqual(moved[wide.id]?.y, 0)
     }
 
     /// Cards differ in height, so aligning tops is about edges rather than centres.
@@ -919,6 +1134,7 @@ final class WoodsWhisperKitTests: XCTestCase {
         XCTAssertTrue(GraphArrange.distributeHorizontally([box(0, 0), box(400, 0)]).isEmpty)
         XCTAssertTrue(GraphArrange.distributeVertically([box(0, 0), box(0, 400)]).isEmpty)
         XCTAssertTrue(GraphArrange.alignLeft([box(0, 0)]).isEmpty)
+        XCTAssertTrue(GraphArrange.alignRight([box(0, 0)]).isEmpty)
         XCTAssertTrue(GraphArrange.alignTop([box(0, 0)]).isEmpty)
     }
 

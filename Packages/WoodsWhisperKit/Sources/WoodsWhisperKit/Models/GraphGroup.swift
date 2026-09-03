@@ -21,15 +21,22 @@ public struct GraphGroup: Identifiable, Codable, Hashable, Sendable {
     /// `members` is the set you'd want to compute with.
     public var memberIDs: [UUID]
 
+    /// The ink the ring is drawn in — one of `GraphPalette.colorIDs`, or nil for the canvas's own
+    /// moss. Chosen from the dot beside the label, and it tints what's inside the ring as well as
+    /// the ring itself: a group is a thing you pick out at a glance across a canvas.
+    public var colorID: String?
+
     public let createdAt: Date
 
     public init(id: UUID = UUID(),
                 label: String = "",
                 memberIDs: [UUID] = [],
+                colorID: String? = nil,
                 createdAt: Date = Date()) {
         self.id = id
         self.label = label
         self.memberIDs = memberIDs
+        self.colorID = colorID
         self.createdAt = createdAt
     }
 

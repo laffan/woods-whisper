@@ -37,6 +37,13 @@ public enum GraphArrange {
         return moves(boxes) { box in GraphPoint(x: edge + box.width / 2, y: box.center.y) }
     }
 
+    /// Right edges to the rightmost right edge — ⌘→, where ⌘← is `alignLeft`. It isn't in the
+    /// selection bar (four buttons is already a row) but the keyboard has a side for each.
+    public static func alignRight(_ boxes: [GraphNodeBox]) -> [UUID: GraphPoint] {
+        guard boxes.count >= minimumToAlign, let edge = boxes.map(\.maxX).max() else { return [:] }
+        return moves(boxes) { box in GraphPoint(x: edge - box.width / 2, y: box.center.y) }
+    }
+
     /// Top edges to the topmost top edge.
     public static func alignTop(_ boxes: [GraphNodeBox]) -> [UUID: GraphPoint] {
         guard boxes.count >= minimumToAlign, let edge = boxes.map(\.minY).min() else { return [:] }
