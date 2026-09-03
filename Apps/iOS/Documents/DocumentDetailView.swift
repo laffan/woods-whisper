@@ -4640,7 +4640,6 @@ struct GraphDocumentView: View {
         return items
     }
 
-    @ViewBuilder
     /// The two things worth doing to one node while ⌘ is engaged, floating just above its card:
     /// **delete it**, and **tidy its children**.
     ///
@@ -4702,6 +4701,7 @@ struct GraphDocumentView: View {
         .accessibilityLabel(title)
     }
 
+    @ViewBuilder
     private func menuOverlay(for document: Document, in size: CGSize) -> some View {
         if let id = menuNodeID, let node = document.node(with: id) {
             let items = menuItems(for: node, in: document)
