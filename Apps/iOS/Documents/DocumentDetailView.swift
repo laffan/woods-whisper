@@ -3024,9 +3024,11 @@ private struct ShareTarget: Identifiable {
 /// one inside the stack the Documents list drives by a typed path is what ends in
 /// `AnyNavigationPath.Error.comparisonTypeMismatch`, and the framework meets that with a `try!`.
 ///
-/// Which pane goes where is decided by what the halves *are*, not by which one was made first: the
-/// document reads top-to-bottom so it takes the top (or, with room across, the left), and the graph
-/// takes the half that's left.
+/// Which pane goes where is decided by what the halves *are*, not by which one was made first —
+/// and it isn't the same answer on both axes. With room **across**, prose takes the left, where a
+/// column of it reads, and opens at a third of the width, since a canvas needs room to be a canvas.
+/// Stacked **down**, the canvas takes the top — it's panned and pinched with a whole hand — and the
+/// document sits under it, where the keyboard comes up from anyway.
 ///
 /// Nothing pushes this screen. It's what the Documents list's own route resolves to while the
 /// document it names has a partner, so making a pair from inside a half turns that half into this,
@@ -3041,10 +3043,15 @@ struct JointDocumentView: View {
     let documentID: UUID
     let partnerID: UUID
 
-    /// How much of the screen the document half takes, as a fraction — dragged by the divider and
-    /// remembered. Two settings rather than one, because across and down are different questions:
-    /// how you like an iPad's two columns says nothing about how you like a phone's two rows.
-    @AppStorage("jointSplitAcross") private var splitAcross = 0.5
+    /// How much of the screen the **leading** half takes, as a fraction — dragged by the divider and
+    /// remembered. Which half leads depends on the axis (see `body`): across it's the document, down
+    /// it's the graph.
+    ///
+    /// Two settings rather than one, because across and down are different questions — how you like
+    /// an iPad's two columns says nothing about how you like a phone's two rows — and they don't
+    /// even hold the same half. Across, the document opens at a third: prose is a column and reads
+    /// happily in one, while a canvas wants room to be a canvas.
+    @AppStorage("jointSplitAcross") private var splitAcross = 1.0 / 3.0
     @AppStorage("jointSplitDown") private var splitDown = 0.5
     /// Where the fraction stood when the current drag began, so a drag moves *from* there rather
     /// than accumulating over itself.
@@ -3063,10 +3070,11 @@ struct JointDocumentView: View {
             if let halves {
                 GeometryReader { geo in
                     let across = sizeClass == .regular
-                    // The document's share of what's left after the divider takes its own width.
+                    // The leading half's share of what's left after the divider takes its own width.
                     let room = (across ? geo.size.width : geo.size.height) - Self.dividerThickness
                     let first = max(room * split, 0)
                     if across {
+                        // Across, prose leads: a document is a column and reads left to right.
                         HStack(spacing: 0) {
                             DocumentDetailView(documentID: halves.document, isEmbedded: true)
                                 .frame(width: first)
@@ -3075,11 +3083,14 @@ struct JointDocumentView: View {
                                 .frame(maxWidth: .infinity)
                         }
                     } else {
+                        // Down, the canvas leads. A graph is panned and pinched with a whole hand,
+                        // which wants the top of the phone; the document below it is read and typed
+                        // into, which is where the keyboard comes up from anyway.
                         VStack(spacing: 0) {
-                            DocumentDetailView(documentID: halves.document, isEmbedded: true)
+                            GraphDocumentView(documentID: halves.graph, isEmbedded: true)
                                 .frame(height: first)
                             divider(across: false, room: room)
-                            GraphDocumentView(documentID: halves.graph, isEmbedded: true)
+                            DocumentDetailView(documentID: halves.document, isEmbedded: true)
                                 .frame(maxHeight: .infinity)
                         }
                     }
@@ -3102,7 +3113,7 @@ struct JointDocumentView: View {
         .navigationBarTitleDisplayMode(.inline)
     }
 
-    /// How much of the pair the document half takes right now, on whichever axis this is.
+    /// How much of the pair the leading half takes right now, on whichever axis this is.
     private var split: Double {
         min(max(sizeClass == .regular ? splitAcross : splitDown, Self.minimumSplit),
             1 - Self.minimumSplit)
@@ -3250,9 +3261,23 @@ struct GraphDocumentView: View {
     /// on while it's down, off the moment it isn't — which is what lets it stand for other
     /// modifiers later without changing what it means.
     @State private var metaHeld = false
-    /// The node whose quick actions are showing while ⌘ is engaged: pointed at, or touched. Only
-    /// one at a time, and only while picking out.
-    @State private var quickActionNodeID: UUID?
+    /// The hardware ⌘, as *live* state — which is a different thing from `keys`, and needed for a
+    /// different reason. `keys` is read at touch-down, which is all a drag needs; but the cards have
+    /// to be *drawn* differently while the key is down (that's what puts the quick actions under
+    /// the pointer), and nothing about a key press reaches this view unless something watches for
+    /// it. `onModifierKeysChanged` does, from iOS 18; before that this stays false and the ⌘ button
+    /// beside the minimap is the way in.
+    @State private var commandKeyDown = false
+    /// The card the pointer is resting on. Tracked whenever there's a pointer, not only while ⌘ is
+    /// engaged — otherwise pressing ⌘ with the pointer already over a card would raise nothing,
+    /// since no hover event happens when a key goes down.
+    @State private var hoveredNodeID: UUID?
+    /// The card a *tap* asked for actions on, which is what a finger has instead of a hover.
+    @State private var tappedNodeID: UUID?
+
+    /// Which card's quick actions are showing. The pointer wins when there is one: it's the more
+    /// recent statement of intent, and it moves away on its own.
+    private var quickActionNodeID: UUID? { hoveredNodeID ?? tappedNodeID }
     /// Whether the touch in progress is the second of a pair — the one that makes a node to type
     /// into, if it's let go rather than held (holding records, wherever the finger is).
     @State private var isSecondTouch = false
@@ -3351,7 +3376,8 @@ struct GraphDocumentView: View {
             gestureStart = nil
             isSelecting = false
             metaHeld = false
-            quickActionNodeID = nil
+            hoveredNodeID = nil
+            tappedNodeID = nil
             marqueeOrigin = nil
             marqueeCurrent = nil
             pendingTidyParents = []
@@ -3426,6 +3452,8 @@ struct GraphDocumentView: View {
                 .background(WW.paper)
                 // Nothing to see: it watches the window for the ⌘ held as a touch goes down.
                 .background { commandKeyWatcher() }
+                // …and this one watches the key itself, for as long as it's held.
+                .modifier(CommandKeyHeld(isDown: $commandKeyDown))
                 .clipped()
                 .contentShape(Rectangle())
                 // The canvas's own gestures. A touch that lands on a node is the node's — SwiftUI
@@ -3565,13 +3593,7 @@ struct GraphDocumentView: View {
                 card
                     .onTapGesture {
                         toggleSelection(of: node)
-                        withAnimation(.snappy(duration: 0.15)) { quickActionNodeID = node.id }
-                    }
-                    .onHover { inside in
-                        withAnimation(.snappy(duration: 0.15)) {
-                            if inside { quickActionNodeID = node.id }
-                            else if quickActionNodeID == node.id { quickActionNodeID = nil }
-                        }
+                        withAnimation(.snappy(duration: 0.15)) { tappedNodeID = node.id }
                     }
                     .gesture(nodeDrag(node, in: document))
             } else {
@@ -3579,6 +3601,14 @@ struct GraphDocumentView: View {
                     .onTapGesture(count: 2) { startEditing(node) }
                     .onLongPressGesture(minimumDuration: 0.45) { openMenu(for: node) }
                     .gesture(nodeDrag(node, in: document))
+            }
+        }
+        // Hover is watched in every mode, not only while picking out: a pointer resting on a card
+        // when ⌘ goes down has already sent its hover event, and won't send another.
+        .onHover { inside in
+            withAnimation(.snappy(duration: 0.15)) {
+                if inside { hoveredNodeID = node.id }
+                else if hoveredNodeID == node.id { hoveredNodeID = nil }
             }
         }
         .position(x: center.x + GraphCanvas.center, y: center.y + GraphCanvas.center)
@@ -4146,7 +4176,13 @@ struct GraphDocumentView: View {
         finishEditing()
         withAnimation(.snappy(duration: 0.2)) {
             menuNodeID = nil
-            selectedNodeIDs = []
+            // "None of these" — but *not* while picking out. A tap that lands on a card is the
+            // card's, and this gesture can see it too; dropping the selection here would undo the
+            // card's own toggle a fraction of a second after it happened, which is why picking a
+            // second node used to leave only the second node. While ⌘ is engaged the selection is
+            // let go by Done, or by the bar, or by letting ⌘ go — never by a tap that might not
+            // have been meant for the canvas at all.
+            if !pickingOutThisTouch { selectedNodeIDs = [] }
         }
     }
 
@@ -4232,20 +4268,22 @@ struct GraphDocumentView: View {
     // MARK: Selecting
 
     /// Whether the canvas is in picking-out state as far as what's *drawn* is concerned: the mode
-    /// (⋯ → Select Nodes), or the ⌘ button held down. Both are view state, so the cards and the
-    /// "+" buttons follow them.
-    private var isPickingOut: Bool { isSelecting || metaHeld }
+    /// (⋯ → Select Nodes), the ⌘ button held down, or — from iOS 18, where a key press can be
+    /// watched for — a hardware ⌘ held. All three are view state, so the cards, the "+" buttons and
+    /// the quick actions follow them.
+    private var isPickingOut: Bool { isSelecting || metaHeld || commandKeyDown }
 
     /// The same question at the moment a touch begins, which is where a drag decides whether it's a
-    /// selection box or a pan. This one also counts a hardware ⌘ held as the finger went down —
-    /// read here rather than drawn, since a key press redraws nothing.
+    /// selection box or a pan. This one also counts the flags read off the touch itself, which is
+    /// how a hardware ⌘ is known on iOS 17, where nothing publishes a key press.
     private var pickingOutThisTouch: Bool { isPickingOut || keys.isCommandDown }
 
     /// A drag on bare canvas while selecting: out comes the box.
     private func beginMarquee(at viewPoint: CGPoint) {
         finishEditing()
         menuNodeID = nil
-        quickActionNodeID = nil
+        hoveredNodeID = nil
+        tappedNodeID = nil
         let spot = canvasPoint(for: viewPoint)
         marqueeOrigin = spot
         marqueeCurrent = spot
@@ -4653,7 +4691,11 @@ struct GraphDocumentView: View {
     /// card.
     @ViewBuilder
     private func quickActions(for document: Document, in size: CGSize) -> some View {
-        if isPickingOut, let id = quickActionNodeID, let node = document.node(with: id) {
+        // Two or more picked out and this stands down: the bar along the bottom is what a *set* of
+        // nodes is worked with, and a control hovering over one of them would be offering to do
+        // something to that one alone in the middle of choosing several.
+        if isPickingOut, selectedNodeIDs.count < 2,
+           let id = quickActionNodeID, let node = document.node(with: id) {
             let center = point(of: node)
             let card = (nodeSizes[id] ?? GraphCanvas.assumedCardSize).height * scale
             let view = CGPoint(x: center.x * scale + pan.x, y: center.y * scale + pan.y)
@@ -4661,7 +4703,8 @@ struct GraphDocumentView: View {
             HStack(spacing: 2) {
                 quickAction("Delete", "trash", tint: WW.ember) {
                     withAnimation(.snappy(duration: 0.2)) {
-                        quickActionNodeID = nil
+                        hoveredNodeID = nil
+                        tappedNodeID = nil
                         selectedNodeIDs.remove(id)
                         model.documents.deleteNode(id, in: documentID)
                     }
@@ -5711,6 +5754,31 @@ struct HoldablePlusButton: View {
 final class ModifierKeys {
     /// Set at every touch-down from the event's own modifier flags, so it describes *this* touch.
     var isCommandDown = false
+}
+
+/// Watches the hardware ⌘ *while it's held*, rather than at the moment of a touch.
+///
+/// Two mechanisms, because they answer different questions. A drag only needs to know what was held
+/// when it began, which is what `CommandKeyWatcher` reads off the touch itself — and that works
+/// everywhere. But the canvas also has to be *drawn* differently while the key is down: the cards
+/// change what a tap means, and the quick actions appear under the pointer without anything being
+/// touched at all. Nothing about a key press reaches a SwiftUI view unless something watches for it,
+/// and the thing that watches — `onModifierKeysChanged` — arrived in iOS 18. Below that this is
+/// inert and the ⌘ button beside the minimap is the way in, which is what it's there for.
+struct CommandKeyHeld: ViewModifier {
+    @Binding var isDown: Bool
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content.onModifierKeysChanged(mask: .command) { _, held in
+                let down = held.contains(.command)
+                guard isDown != down else { return }
+                withAnimation(.snappy(duration: 0.15)) { isDown = down }
+            }
+        } else {
+            content
+        }
+    }
 }
 
 #if canImport(UIKit)

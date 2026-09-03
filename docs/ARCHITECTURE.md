@@ -285,10 +285,17 @@ transform — `scaleEffect(anchor: .topLeading)` then `offset` — so a canvas p
   hold anything. Either way a drag draws the box and a tap picks a card out;
   the "+" buttons stand down while it's on, so a stray fingertip can't add a node in the middle of
   choosing them. With a keyboard attached, **holding a real ⌘ turns a single drag into a selection
-  box** as well. The two are separate predicates on purpose: `isPickingOut` (the mode, or the button
-  held) is view state and so decides what's *drawn*, while `pickingOutThisTouch` adds the hardware
-  key and is read inside the gesture, which is where "as this touch began" is decided — a key press
-  redraws nothing. A tap that follows
+  box** as well. Two predicates, two mechanisms, because they answer different questions.
+  `pickingOutThisTouch` reads `UIEvent.modifierFlags` off the touch itself (`CommandKeyWatcher`) —
+  enough for a drag, and it works on every version. `isPickingOut` is view *state*, because the
+  cards have to be drawn differently while the key is down and the quick actions appear under a
+  pointer with nothing touched at all; that needs a key press to actually reach the view, which is
+  `onModifierKeysChanged` and iOS 18 (`CommandKeyHeld`). Below 18 it stays false and the ⌘ button is
+  the way in. Hover is tracked on every card in every mode rather than only while picking out: a
+  pointer already resting on a card has sent its hover event and won't send another when ⌘ goes
+  down. And `registerTap` leaves the selection alone while picking out — a tap on a card reaches
+  this gesture too, and clearing there undid the card's own toggle a frame later, which is why
+  picking a second node used to leave only the second node. A tap that follows
   a tap is still recognised on the way **down** rather than on release, because it decides what
   letting go means (a node to type into, versus putting things away).
   The phase is anchored to the gesture's `startLocation`: a gesture the system

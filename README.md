@@ -176,7 +176,9 @@ the rest of the app depends on.
   However you get there, a drag on the canvas draws a selection box — everything it touches is
   selected — and a tap on a card takes it in or out. While ⌘ is engaged, the card you **point at**
   (or tap) also raises a small pair of buttons just above it: **delete** that node, or **tidy its
-  children** — the two things worth doing to one card without leaving the mode. Any one of the
+  children** — the two things worth doing to *one* card. Pick out a second and they stand down: a
+  set of nodes is what the bar along the bottom is for. (Pointing needs a pointer and a real ⌘ needs
+  iOS 18 — below that the ⌘ button beside the minimap is the way in, and a tap does the pointing.) Any one of the
   selected nodes drags the whole lot, and a bar along the bottom carries what you can do with them;
   **Done** leaves the mode.
 - **Lining a selection up.** That bar's second row has **Align Left**, **Align Top**, **Distribute
@@ -223,7 +225,9 @@ the rest of the app depends on.
 - **Joint documents.** A document and a graph, open at the same time — prose down one side, a mind
   map down the other. The **⋯** menu of either one offers **Create Joint Document**: it makes the
   half you haven't got, under the same title, and opens the two together. On an **iPad** they sit
-  side by side (document left, graph right); on a **phone**, stacked (document above, graph below).
+  side by side (document left, graph right, the document opening at a third of the width); on a
+  **phone**, stacked with the **graph on top** — it's panned and pinched with a whole hand — and the
+  document below it, where the keyboard comes up from anyway.
   **Drag the divider** to give one half more room; where you leave it is where it opens next time
   (across and down are remembered separately). Each half stays an ordinary document throughout — its
   own recordings, its own Auto transform, its own backup file, and its own **⋯** menu floating in
