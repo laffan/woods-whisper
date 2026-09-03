@@ -81,9 +81,12 @@ the rest of the app depends on.
   sentence. A transform runs first, so what the entry ends up saying is what files it, and a tag you
   chose by hand is never overruled. Once anything is filed, a row of tags appears across the top of
   the Inbox — tap one to see just those, tap it again for everything. While you're looking at one
-  tag, **Copy All** and **Delete All** appear at the bottom — no plate under them, floating over the
-  page the way the record button does — because everything on screen is then one kind of thing. Entries keep the tag they were filed under even if you later drop it from the
-  Settings list.
+  tag, **Copy All**, **New Document** and **Delete All** appear at the bottom — no plate under them,
+  floating over the page the way the record button does — because everything on screen is then one
+  kind of thing. **New Document** is the one that earns the filter: it names a document after the
+  tag (change it if you like), moves every entry under that tag into it with their audio, and seeds
+  the body with what they said, leaving the Inbox clear of them. Entries keep the tag they were
+  filed under even if you later drop it from the Settings list.
 - **Moving an entry into a document.** Swipe an Inbox entry left → **Move** (or select several and
   tap **Move**) and the pane that slides up leads with **New Document**, *above* the list of existing
   documents — it's the destination that's always there, so it no longer sits below however many
@@ -171,8 +174,11 @@ the rest of the app depends on.
   in: **holding the ⌘ button** beside the minimap while you drag, **holding a real ⌘** and dragging
   if there's a keyboard attached, or **⋯ → Select Nodes** for a mode that stays on with nothing held.
   However you get there, a drag on the canvas draws a selection box — everything it touches is
-  selected — and a tap on a card takes it in or out. Any one of the selected nodes drags the whole lot, and a bar
-  along the bottom carries what you can do with them; **Done** leaves the mode.
+  selected — and a tap on a card takes it in or out. While ⌘ is engaged, the card you **point at**
+  (or tap) also raises a small pair of buttons just above it: **delete** that node, or **tidy its
+  children** — the two things worth doing to one card without leaving the mode. Any one of the
+  selected nodes drags the whole lot, and a bar along the bottom carries what you can do with them;
+  **Done** leaves the mode.
 - **Lining a selection up.** That bar's second row has **Align Left**, **Align Top**, **Distribute
   Horizontal** and **Distribute Vertical**. Aligning puts every selected card's left (or top) edge
   on the leftmost (or topmost) one; distributing holds the two on the ends where they are and evens
@@ -218,9 +224,13 @@ the rest of the app depends on.
   map down the other. The **⋯** menu of either one offers **Create Joint Document**: it makes the
   half you haven't got, under the same title, and opens the two together. On an **iPad** they sit
   side by side (document left, graph right); on a **phone**, stacked (document above, graph below).
-  Each half stays an ordinary document throughout — its own recordings, its own Auto transform, its
-  own backup file, and its own title and **⋯** menu in a slim header across the top of its pane — so
-  nothing about either of them changes by being paired. The **"+"** on a joint document's row
+  **Drag the divider** to give one half more room; where you leave it is where it opens next time
+  (across and down are remembered separately). Each half stays an ordinary document throughout — its
+  own recordings, its own Auto transform, its own backup file, and its own **⋯** menu floating in
+  the top-right corner of its pane (no titles: the row you tapped already said what this is, so
+  **Rename** moves into that menu) — so nothing about either of them changes by being paired. On a
+  **phone**, where two panes share the height, the document half's **Auto transform** strip moves
+  off the bottom and into the list, under the Copy / Share / Edit / Transform row. The **"+"** on a joint document's row
   records into the **document** half: a clip spoken at a list row is a thought to write down, and it
   lands as a paragraph at the end rather than as a node somewhere on the canvas nobody chose. The
   pair takes one row in **Documents**, counting what's in both. **Separate Joint Document**, in
