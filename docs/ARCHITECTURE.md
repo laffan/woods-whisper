@@ -86,8 +86,10 @@ storage, and connectivity code without the model dependencies.
   ring from the members that didn't move (so a node can't hold itself in by its own presence) and
   **adds** the ones that came to rest inside it. Nothing an ordinary drag does removes a node from a
   ring — a branch travelling with its parent, or a card re-settled by a drop, keeps every group it
-  belongs to. Leaving is asked for: a **⌘ drag** clear of the ring, the same gesture that takes a
-  card out of the tree (`updateGroupMembership(after:in:leaving:)`).
+  belongs to. Leaving is asked for, by one of two gestures
+  (`updateGroupMembership(after:in:leaving:)`, driven by `NodeDragMode.leavesGroups`): a **⌘ drag**
+  clear of the ring, which takes the card out of the tree as well, or **⌘⇧**, which takes it out of
+  the ring alone and leaves the tree — and the card's own branch — exactly as it was.
 - **`PromptPreset`** — a named, reusable instruction (`systemPrompt` + `template` with a
   `{{transcript}}` token) plus generation params. Three built-ins ship; users add their own.
 - **`DeviceLink`** — describes the Watch↔host pairing; for the direct-to-iPad path it stores the
@@ -216,8 +218,10 @@ into the menu when embedded, since there's no title there to tap. The divider be
 `jointSplitDown`, two settings because how you like an iPad's columns says nothing about how you
 like a phone's rows — clamped so neither half can be left under a fifth of the screen and
 unrecoverable. Which halves are shown at all is a third remembered setting (`jointViewMode`,
-`JointViewMode`), driven by the three-part toggle the *pair* floats in the top-right corner, clear
-of the pane's own ⋯ by that button's width: document only, split, graph only. A hidden half is not
+`JointViewMode`), driven by a three-part toggle — document only, split, graph only — at the trailing
+end of the pair's own **navigation bar**. It goes in the bar, alongside the way back to Documents,
+rather than floating inset over a pane: it's a statement about the whole screen, and floated into a
+corner it read as belonging to whichever half happened to be filling that corner. A hidden half is not
 rendered rather than sized to nothing, so it isn't holding the keyboard or running a canvas nobody
 is looking at — the cost is that it opens re-centred, which is the right state for a pane that has
 just changed size anyway. On a phone the document half also moves its Auto transform strip off the bottom and
@@ -274,11 +278,12 @@ transform — `scaleEffect(anchor: .topLeading)` then `offset` — so a canvas p
   a `DragGesture` measures against the coordinate space of the view it's attached to, and a node
   drag *moves that view*, so a local-space translation comes back halved and oscillating — the card
   flickers between the finger and half way there, and never lands on the node you were aiming at.
-- **One drag, three meanings, decided once.** What a card drag *is* — a move, an **unlink** (⌘) or a
-  **copy** (⌥) — is read from the modifiers at the first frame and kept in `dragMode` for the rest of
-  the gesture, so a thumb slipping off a key half way across the canvas can't change what's
-  happening. Only a plain move looks for a drop target: a card being pulled out of the tree, or a
-  copy pulled out of one, shouldn't land straight back in it. An unlink carries the picked cards
+- **One drag, four meanings, decided once.** What a card drag *is* — a move, an **unlink** (⌘), a
+  **leave-group** (⌘⇧) or a **copy** (⌥) — is read from the modifiers at the first frame and kept in
+  `dragMode` for the rest of the gesture, so a thumb slipping off a key half way across the canvas
+  can't change what's happening. ⇧ *softens* ⌘ rather than adding to it, which puts the more final
+  of the two behind the smaller gesture. Only a plain move looks for a drop target: the other three
+  all mean "take this out of something", and shouldn't land it straight back in. An unlink carries the picked cards
   *without* their branches (unlinking joins each one's parent and children to each other, so the
   branch stays where it is and stays whole) and runs `unlinkNode` **as the drag begins**, not when
   it ends: the card has to be seen coming away while the finger is still moving, rather than a whole
@@ -403,6 +408,23 @@ dragging a node changes neither the stored positions nor the viewport it draws �
 cheaper than repainting every dot. What's left, if it's ever still not smooth, is splitting the node
 card into its own view so SwiftUI can skip the ones a drag isn't touching.
 
+**A long press has to fail before a drag can begin.** A card carries a double tap (edit), a long
+press (the dropdown) and a drag, and the long press fails on *movement* — so at its default
+`maximumDistance` of 10 points the drag couldn't start until the finger had travelled 10, whatever
+its own `minimumDistance` said. The card sat still for the first stretch of every drag and then
+jumped to catch up, which reads as a hang. The press's `maximumDistance` is now 3 and the drag's
+`minimumDistance` 4, so the press is out of the way before the drag wants to start — and the jump
+when it does start (the translation arrives already accumulated) is 4 points rather than 6.
+
+**Saving is on the path of every gesture, so what it does has to be worth it.** `persistDocuments`
+runs on every committed drag, every edit, and — since a ⌘ drag detaches as it *starts* — on the
+first frame of a gesture. The documents file is written synchronously, which is what durability
+means. The **widget mirror** isn't: `WidgetSnapshotStore.update` builds a preview for the top ten
+documents (a graph's walks its whole outline), encodes them, reads back what's in the shared
+container to compare, and only then writes and reloads the timeline. It's a cache rebuilt from
+`documents` every time, so it's debounced 400 ms and run detached (`scheduleWidgetSync`): a burst of
+edits costs one pass, and none of it on the main thread.
+
 **A gesture on a view that takes no touches never starts.** A group's ring is deliberately deaf
 (`allowsHitTesting(false)`) so it isn't a dead zone over every node inside it, and only four strips
 at its edge take touches. The drag lives on those strips now; attached to the ring as a whole it
@@ -422,7 +444,10 @@ can't quietly change what a group contains. What the rings *do* answer live is t
 `liveMembers(of:boxes:)` counts a dragged card in while its middle is inside the ring, so the ring
 stretches to take it in as you carry it across and letting go confirms what you were looking at
 rather than surprising you. It runs the same test the drop does, which is what keeps the two in
-step.
+step. The ring is also the group's only *handle*, so it reports hover (all four grab strips into
+one `hoveredGroupID`, so the whole ring lights rather than the side the pointer is on) and draws
+itself solid and brighter while a pointer rests on it — "you can take hold of me here", answered
+before you press to find out.
 
 **Two shapes for one list (iOS).** `showingNodeList` is the *request*; how it's answered depends on
 the width. `horizontalSizeClass == .regular` puts the node list in an `HStack` beside the canvas as a

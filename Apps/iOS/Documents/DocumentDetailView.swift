@@ -3204,7 +3204,6 @@ struct JointDocumentView: View {
                         }
                     }
                 }
-                .overlay(alignment: .topTrailing) { viewToggle(across: sizeClass == .regular) }
             } else {
                 WWEmptyState(title: "Joint document not found",
                              systemImage: "rectangle.split.2x1")
@@ -3221,6 +3220,18 @@ struct JointDocumentView: View {
         // arrived. One navigation style, one source of truth, no stack to unwind by hand.
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
+        // The one thing the pair's own bar carries. It goes in the **bar** rather than floating over
+        // the content: it's a statement about the whole screen, and the bar is where the screen's
+        // own controls live — the way back at its left, the system's window control in the middle,
+        // this at its right. Floating it inset put a control about the pair inside one of the
+        // panes, where it read as that pane's.
+        .toolbar {
+            if halves != nil {
+                ToolbarItem(placement: .topBarTrailing) {
+                    viewToggle(across: sizeClass == .regular)
+                }
+            }
+        }
     }
 
     /// How much of the pair the leading half takes right now, on whichever axis this is.
@@ -3276,10 +3287,11 @@ struct JointDocumentView: View {
     /// answer to "which of you am I looking at" as a switch rather than as a divider dragged to the
     /// edge and back.
     ///
-    /// It sits immediately left of the pane's own **⋯** — the corner is where a pane floats its
-    /// menu, and the toggle belongs to the *pair* rather than to whichever half happens to be
-    /// filling that corner, so it goes outside it. In the middle, because it's the setting the two
-    /// ends are named against: one, both, the other, in the order they'd read.
+    /// It lives at the **trailing end of the navigation bar**, which is the pair's own row of
+    /// chrome: the way back to Documents at its left, the system's window control in the middle,
+    /// this at its right. Each *half* floats its **⋯** over its own corner below — a menu about
+    /// that half — so nothing is stacked on anything. Split sits in the middle of the three,
+    /// because it's the setting the two ends are named against: one, both, the other.
     private func viewToggle(across: Bool) -> some View {
         HStack(spacing: 0) {
             viewToggleSegment(.document, "doc.text", "Document only")
@@ -3287,13 +3299,8 @@ struct JointDocumentView: View {
                               "Document and graph")
             viewToggleSegment(.graph, "point.3.connected.trianglepath.dotted", "Graph only")
         }
-        .frame(height: 34)
-        .background(WW.surface.opacity(0.94), in: Capsule())
-        .overlay(Capsule().stroke(WW.hairline, lineWidth: 1))
-        .shadow(color: .black.opacity(0.10), radius: 10, y: 2)
-        .padding(.top, 8)
-        // Clear of the pane's ⋯ in the same corner: its own width and trailing padding, plus air.
-        .padding(.trailing, 12 + 34 + 8)
+        .padding(2)
+        .background(WW.hairline.opacity(0.5), in: Capsule())
         .accessibilityElement(children: .contain)
     }
 
@@ -3308,14 +3315,13 @@ struct JointDocumentView: View {
             WWHaptics.light()
         } label: {
             Image(systemName: icon)
-                .font(.system(size: 14, weight: .medium))
+                .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(isOn ? WW.paper : WW.moss)
-                .frame(width: 38, height: 28)
+                .frame(width: 34, height: 26)
                 .background(isOn ? WW.moss : Color.clear, in: Capsule())
                 .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .padding(.horizontal, 3)
         .accessibilityLabel(label)
         .accessibilityAddTraits(isOn ? [.isSelected] : [])
     }
@@ -3413,8 +3419,12 @@ struct GraphDocumentView: View {
     /// The canvas coasting to a stop after a flick.
     @State private var glideTask: Task<Void, Never>?
 
-    // Groups: the ring being dragged, and the one having its label edited.
+    // Groups: the ring being dragged, the one under the pointer, and the one having its label
+    // edited. The ring's *edge* is the only handle a group has — its middle is deliberately deaf,
+    // so the cards inside stay reachable — which makes "where can I take hold of this" a real
+    // question. Hovering one answers it before you press.
     @State private var draggingGroupID: UUID?
+    @State private var hoveredGroupID: UUID?
     @State private var labelingGroupID: UUID?
     @State private var groupLabelText = ""
 
@@ -3493,8 +3503,10 @@ struct GraphDocumentView: View {
     @State private var nodeSizes: [UUID: CGSize] = [:]
 
     /// The minimap along the bottom, and the list of nodes. The minimap is remembered across
-    /// graphs — it's a preference about how you like to work, not about one document.
-    @AppStorage("graphShowsMinimap") private var showsMinimap = true
+    /// graphs — it's a preference about how you like to work, not about one document — and starts
+    /// **off**: the canvas's whole point is that it runs to the edge, and a map of a graph you can
+    /// already see is a strip of screen spent on nothing. ⋯ → Show Minimap when you want it.
+    @AppStorage("graphShowsMinimap") private var showsMinimap = false
     @State private var showingNodeList = false
     /// The node the list has just sent you to, ringed for a moment so the eye can find it among
     /// however many cards the canvas slid across, and the clock that lets go of it again.
@@ -3566,9 +3578,12 @@ struct GraphDocumentView: View {
             isSelecting = false
             modifierKeys.virtualCommand = false
             modifierKeys.virtualOption = false
+            modifierKeys.virtualShift = false
             quickActionsTask?.cancel()
             hoveringQuickActions = false
             hoveredNodeID = nil
+            hoveredGroupID = nil
+            draggingGroupID = nil
             tappedNodeID = nil
             marqueeOrigin = nil
             marqueeCurrent = nil
@@ -3790,7 +3805,15 @@ struct GraphDocumentView: View {
             } else {
                 card
                     .onTapGesture(count: 2) { startEditing(node) }
-                    .onLongPressGesture(minimumDuration: 0.45) { openMenu(for: node) }
+                    // `maximumDistance` deliberately *under* the drag's `minimumDistance` below.
+                    // A long press has to fail before a drag on the same card can begin, and it
+                    // fails on movement — so with the default 10 points, a drag couldn't start
+                    // until the finger had travelled 10, however small its own threshold was. The
+                    // card sat still for the first stretch of every drag and then jumped to catch
+                    // up. At 3 the press is out of the way before the drag wants to start.
+                    .onLongPressGesture(minimumDuration: 0.45, maximumDistance: 3) {
+                        openMenu(for: node)
+                    }
                     .gesture(nodeDrag(node, in: document))
             }
         }
@@ -3943,7 +3966,7 @@ struct GraphDocumentView: View {
     /// selected" — then the selection, and only then the ink the node was given.
     private func nodeBorder(_ node: GraphNode) -> Color {
         if recordingNodeID == node.id { return WW.ember }
-        if dragMode == .unlink, draggingBranch.contains(node.id) { return WW.ember }
+        if dragMode.leavesGroups, draggingBranch.contains(node.id) { return WW.ember }
         if highlightedNodeID == node.id { return WW.amber }
         if dropTargetID == node.id || selectedNodeIDs.contains(node.id) { return WW.moss }
         return WW.paletteColor(node.colorID) ?? WW.hairline
@@ -3951,7 +3974,7 @@ struct GraphDocumentView: View {
 
     private func nodeBorderWidth(_ node: GraphNode) -> CGFloat {
         if recordingNodeID == node.id || dropTargetID == node.id { return 2 }
-        if dragMode == .unlink, draggingBranch.contains(node.id) { return 2 }
+        if dragMode.leavesGroups, draggingBranch.contains(node.id) { return 2 }
         if highlightedNodeID == node.id { return 3 }
         if selectedNodeIDs.contains(node.id) { return 2 }
         // A coloured card is drawn a hair heavier, so the colour is a border rather than a tint on
@@ -4507,6 +4530,10 @@ struct GraphDocumentView: View {
     /// The same for ⌥, which on this canvas means "copy what I drag".
     private var isOptionEngaged: Bool { modifierKeys.optionDown }
 
+    /// And ⇧, which means nothing on its own here — it only ever qualifies ⌘, turning "out of the
+    /// network" into "out of the ring".
+    private var isShiftEngaged: Bool { modifierKeys.shiftDown }
+
     /// Whether the canvas is in picking-out state: ⌘ engaged, or the mode (⋯ → Select Nodes) that
     /// stays on with nothing held.
     private var isPickingOut: Bool { isSelecting || isCommandEngaged }
@@ -4520,8 +4547,12 @@ struct GraphDocumentView: View {
     ///
     /// ⌘ wins over ⌥ if somehow both are down: taking a node out of the network is the destructive
     /// one of the two, and a gesture that might be either should be the one you can see happening.
+    /// **⇧ softens ⌘** rather than adding to it — ⌘⇧ takes the card out of its ring and leaves the
+    /// tree alone — so the more destructive reading is the one you get by holding *less*.
     private var dragModeForThisTouch: NodeDragMode {
-        if isCommandEngaged || keys.isCommandDown { return .unlink }
+        if isCommandEngaged || keys.isCommandDown {
+            return isShiftEngaged || keys.isShiftDown ? .leaveGroup : .unlink
+        }
         if isOptionEngaged || keys.isOptionDown { return .copy }
         return .move
     }
@@ -4633,7 +4664,9 @@ struct GraphDocumentView: View {
     ///
     /// An **unlink** drag carries the picked nodes alone. Unlinking joins a node's children to its
     /// parent, so the branch stays where it is and goes on making sense; taking the children along
-    /// would be the plain drag, which is what you get without ⌘ down.
+    /// would be the plain drag, which is what you get without ⌘ down. **⌘⇧** isn't an unlink —
+    /// the node stays in the tree — so it carries its branch like any other move, and the children
+    /// that were in the ring with it come out with it.
     private func draggedBranch(from node: GraphNode, in document: Document,
                                mode: NodeDragMode) -> Set<UUID> {
         let picked: Set<UUID> = selectedNodeIDs.contains(node.id) ? selectedNodeIDs : [node.id]
@@ -4670,7 +4703,12 @@ struct GraphDocumentView: View {
     /// were trying to drop it on. The global space doesn't move, so the translation is the honest
     /// distance the finger has travelled; dividing by `scale` puts it in canvas points.
     private func nodeDrag(_ node: GraphNode, in document: Document) -> some Gesture {
-        DragGesture(minimumDistance: 6, coordinateSpace: .global)
+        // Four points, not six: the card is under the finger and should leave with it. The whole
+        // threshold is also the distance the card jumps when the drag does begin — the translation
+        // arrives already accumulated — so a smaller one is a smaller lurch as well. It stays above
+        // the long press's `maximumDistance` (3), so the two can't both be waiting on each other,
+        // and comfortably above the drift of a double tap.
+        DragGesture(minimumDistance: 4, coordinateSpace: .global)
             .onChanged { value in
                 if dragSourceID != node.id { beginDrag(of: node, in: document) }
                 // Translations arrive in view points; the canvas is in canvas points.
@@ -4681,7 +4719,7 @@ struct GraphDocumentView: View {
                 // the network (or a copy pulled out of a node) shouldn't land back in it.
                 dropTargetID = dragMode == .move && !isMultiDrag
                     ? dropTarget(for: node, in: document)
-                    : nil
+                    : nil          // ⌘, ⌘⇧ and ⌥ are all "take this out of something", not "put it in"
             }
             .onEnded { _ in
                 let mode = dragMode
@@ -4711,7 +4749,7 @@ struct GraphDocumentView: View {
                 // opinion about who's in the group: a card that joined stays joined, and its new
                 // ring simply stretches to reach wherever the branch settles.
                 if let settled = self.document {
-                    updateGroupMembership(after: branch, in: settled, leaving: mode == .unlink)
+                    updateGroupMembership(after: branch, in: settled, leaving: mode.leavesGroups)
                 }
                 if mode == .move, let dragged, let target,
                    model.documents.attachNode(dragged, to: target, in: documentID,
@@ -4748,7 +4786,11 @@ struct GraphDocumentView: View {
             // has to be seen leaving, its parent and children joined up behind it, while the finger
             // is still moving. Doing it on release meant a whole drag that looked like an ordinary
             // move and only turned out to be a detachment once it was over.
+            //
+            // ⌘⇧ has nothing to do up front — a group is left by being carried out of the ring, and
+            // the ring shows that happening — so it only announces itself.
             if dragMode == .unlink { unlink(picked) }
+            if dragMode == .leaveGroup { haptic(strong: true) }
             return
         }
 
@@ -5234,7 +5276,7 @@ struct GraphDocumentView: View {
         guard !draggingBranch.isEmpty, draggingGroupID == nil else { return group.members }
         let settled = group.members.subtracting(draggingBranch)
         guard let frame = boundingBox(of: settled, boxes: boxes) else { return group.members }
-        var members = dragMode == .unlink ? settled : group.members
+        var members = dragMode.leavesGroups ? settled : group.members
         for id in draggingBranch {
             guard let box = boxes[id],
                   frame.contains(CGPoint(x: box.midX, y: box.midY)) else { continue }
@@ -5281,9 +5323,16 @@ struct GraphDocumentView: View {
                 }
             }
             .overlay {
+                // The edge is the group's only handle, so it says when it's under the pointer: the
+                // dashes draw together into a solid line and the ink comes up, the same brightness
+                // a drag gets. Held, rather than a step between two states, because the pointer is
+                // *on* the thing it would move — and the ring being drawn solid is the difference
+                // between "a ring round these cards" and "a ring you can take hold of".
+                let active = draggingGroupID == group.id || hoveredGroupID == group.id
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .stroke(ink.opacity(draggingGroupID == group.id ? 0.9 : 0.5),
-                            style: StrokeStyle(lineWidth: 1.5, dash: [8, 6]))
+                    .stroke(ink.opacity(active ? 0.9 : 0.5),
+                            style: StrokeStyle(lineWidth: active ? 2.5 : 1.5,
+                                               dash: active ? [] : [8, 6]))
                     .allowsHitTesting(false)
             }
             .overlay(alignment: .top) { grabStrip(group, width: frame.width, height: grab) }
@@ -5299,10 +5348,23 @@ struct GraphDocumentView: View {
     }
 
     /// One side of the ring's edge: what you actually take hold of to move a group.
+    ///
+    /// All four strips report the same hover, so the whole ring lights rather than the side the
+    /// pointer happens to be on — you're taking hold of the group, not of its left edge. A pointer
+    /// crossing from one strip to the next would otherwise flicker the ring off and on.
     private func grabStrip(_ group: GraphGroup, width: CGFloat, height: CGFloat) -> some View {
         Color.clear
             .frame(width: width, height: height)
             .contentShape(Rectangle())
+            .onHover { inside in
+                withAnimation(.snappy(duration: 0.15)) {
+                    if inside {
+                        hoveredGroupID = group.id
+                    } else if hoveredGroupID == group.id {
+                        hoveredGroupID = nil
+                    }
+                }
+            }
             .gesture(groupDrag(group))
     }
 
@@ -5692,20 +5754,30 @@ struct GraphDocumentView: View {
         }
     }
 
-    /// The two on-screen keys, stacked at the minimap's left: **⌘** and **⌥**.
+    /// The on-screen keys, stacked at the minimap's left: **⇧**, **⌘** and **⌥**.
     ///
     /// They're *keys*, not switches: you hold one down with one thumb and drag with the other,
     /// exactly as you'd hold the real thing, and it lets go the moment you do. That's what keeps
     /// them honest — whatever else these modifiers come to mean on this canvas, the buttons mean it
     /// too. Today ⌘ picks nodes out, pulls a dragged card out of the network and out of any ring it
-    /// leaves, and — in a joint document — turns the other half's "+" into a caret; ⌥ drags a copy.
+    /// leaves, and — in a joint document — turns the other half's "+" into a caret; ⌥ drags a copy;
+    /// ⇧ qualifies ⌘, so ⌘⇧ takes a card out of its ring and leaves the tree alone.
+    ///
+    /// ⇧ sits at the top and is **live only while ⌘ is**, because that's all it means here — on its
+    /// own it would be a key that does nothing, and a key that does nothing is a key you press to
+    /// find out. It's drawn either way rather than appearing and vanishing: a button that moves out
+    /// from under a thumb is worse than one that's greyed.
     private func modifierKeyColumn(for document: Document) -> some View {
-        VStack(spacing: 8) {
+        let hasNodes = !document.nodes.isEmpty
+        return VStack(spacing: 8) {
+            modifierKey("shift", isOn: $modifierKeys.virtualShift,
+                        enabled: hasNodes && isCommandEngaged,
+                        label: "Hold with ⌘ to drag a node out of its group but not out of the network")
             modifierKey("command", isOn: $modifierKeys.virtualCommand,
-                        enabled: !document.nodes.isEmpty,
+                        enabled: hasNodes,
                         label: "Hold to select nodes, or drag a node out of the network and its groups")
             modifierKey("option", isOn: $modifierKeys.virtualOption,
-                        enabled: !document.nodes.isEmpty,
+                        enabled: hasNodes,
                         label: "Hold to drag a copy")
         }
     }
@@ -5730,6 +5802,11 @@ struct GraphDocumentView: View {
     private func modifierKey(_ icon: String, isOn: Binding<Bool>, enabled: Bool,
                              label: String) -> some View {
         canvasControlFace(icon, isOn: isOn.wrappedValue, enabled: enabled)
+            // A key that stops being live lets go of itself: releasing ⌘ with ⇧ still held under
+            // the other thumb would otherwise leave ⇧ down with nothing to qualify.
+            .onChange(of: enabled) { _, live in
+                if !live, isOn.wrappedValue { isOn.wrappedValue = false }
+            }
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { _ in
@@ -6182,8 +6259,17 @@ struct GraphDocumentView: View {
         /// ⌘: the cards come out of the network the moment the drag starts — the old scissors, as
         /// a gesture — and out of any group's ring they're dragged clear of.
         case unlink
+        /// ⌘⇧: out of the **ring** only. The card keeps its parent and its children and carries its
+        /// branch like an ordinary move; all it loses is a group it's dragged clear of. Two ways to
+        /// belong, and this is the gesture for shedding one of them without the other.
+        case leaveGroup
         /// ⌥: a copy of the cards comes away, leaving the originals where they are.
         case copy
+
+        /// Whether this drag takes its cards out of the rings they're carried clear of. The two
+        /// gestures that mean "out of something" do; a move and a copy never remove a node from a
+        /// group (see `updateGroupMembership`).
+        var leavesGroups: Bool { self == .unlink || self == .leaveGroup }
     }
 
     /// One row of the long-press dropdown.
@@ -6587,6 +6673,7 @@ final class ModifierKeys {
     /// Set at every touch-down from the event's own modifier flags, so they describe *this* touch.
     var isCommandDown = false
     var isOptionDown = false
+    var isShiftDown = false
 }
 
 /// Whether a hardware modifier is down *right now* — as against what was held when a touch began,
@@ -6623,10 +6710,15 @@ final class ModifierKeyMonitor: ObservableObject {
     /// hardware key does. One shared pair of soft keys, read wherever a modifier is read.
     @Published var virtualCommand = false
     @Published var virtualOption = false
+    @Published var virtualShift = false
 
     /// ⌘ as anything on screen should read it: the key, or the button standing in for it.
     var commandDown: Bool { isCommandDown || virtualCommand }
     var optionDown: Bool { isOptionDown || virtualOption }
+    /// ⇧ the same way — for the gestures. **Return** asks `isShiftDown` instead: whether a line
+    /// break was meant is a question about the keyboard that typed it, and a canvas button held
+    /// under a thumb has nothing to say about that.
+    var shiftDown: Bool { isShiftDown || virtualShift }
 
     #if canImport(GameController)
     private var observers: [NSObjectProtocol] = []
@@ -6756,6 +6848,7 @@ struct CommandKeyWatcher: UIViewRepresentable {
         override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
             keys.isCommandDown = event.modifierFlags.contains(.command)
             keys.isOptionDown = event.modifierFlags.contains(.alternate)
+            keys.isShiftDown = event.modifierFlags.contains(.shift)
             state = .failed          // never recognize; never take a touch from anything else
         }
 

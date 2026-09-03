@@ -12,6 +12,12 @@ public final class DocumentStore: ObservableObject {
     /// a folder is chosen; every save below schedules a sync through it.
     public let backup = LocalBackupStore()
 
+    /// The widget mirror waiting to be written — see `scheduleWidgetSync`.
+    private var widgetSyncTask: Task<Void, Never>?
+    /// Long enough that a drag or a burst of typing is one pass, short enough that a widget looked
+    /// at straight after an edit is already right.
+    private static let widgetSyncDebounce: Duration = .milliseconds(400)
+
     private let baseURL: URL
     private let audioDirURL: URL
     private let documentsURL: URL
@@ -1214,7 +1220,31 @@ public final class DocumentStore: ObservableObject {
             try? data.write(to: documentsURL, options: .atomic)
         }
         backup.scheduleSync(documents: documents, inboxTitle: Self.inboxTitle)
-        WidgetSnapshotStore.update(documents: documents, inboxTitle: Self.inboxTitle)
+        scheduleWidgetSync()
+    }
+
+    /// Mirror the document list for the Home Screen widget — **later, and off the main thread**.
+    ///
+    /// `WidgetSnapshotStore.update` is not cheap: it builds a one-line preview for the top ten
+    /// documents (a graph's means walking its whole outline), encodes them, reads back what's
+    /// already in the shared container to see whether any of it moved, and only then writes and
+    /// reloads the timeline. `persistDocuments` runs on every committed drag, every edit, and — now
+    /// that a ⌘ drag detaches as it *starts* — on the first frame of a gesture, where a few
+    /// milliseconds spent on the main thread is a frame the finger doesn't get back.
+    ///
+    /// So it's debounced and detached. Nothing is lost by being late: the snapshot is a cache the
+    /// widget reads, rebuilt from `documents` every time, and a Home Screen widget is showing the
+    /// state of a moment ago regardless. Each call supersedes the one before it, so a burst of
+    /// edits — a drag, a paragraph being typed — costs one pass rather than one per change.
+    private func scheduleWidgetSync() {
+        let snapshot = documents
+        let inboxTitle = Self.inboxTitle
+        widgetSyncTask?.cancel()
+        widgetSyncTask = Task.detached(priority: .utility) {
+            try? await Task.sleep(for: Self.widgetSyncDebounce)
+            guard !Task.isCancelled else { return }
+            WidgetSnapshotStore.update(documents: snapshot, inboxTitle: inboxTitle)
+        }
     }
 
     private func persistTrash() {
