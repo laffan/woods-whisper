@@ -194,10 +194,17 @@ which is the same mismatch by another route.
 So: nothing pushes the pair and nothing nests. `Route.document(id)` asks the store, each time it
 resolves, whether that document has a partner, so making a pair from inside a half turns that half
 into the split view and separating turns it back. And a pane is told it's `isEmbedded`, which makes
-it draw the title and **⋯** menu it would have put in a navigation bar as a plain header of its own
-(`paneHeader(for:)`) and put *nothing* in the bar above — which is also what keeps the two halves
-from fighting over that bar. Both halves' menus come out of one `menuContent(for:)` either way, so
-the header and the toolbar can't drift apart.
+it float the **⋯** menu it would have put in a navigation bar over its own top-right corner
+(`paneMenu(for:)`) and put *nothing* in the bar above — which is also what keeps the two halves from
+fighting over that bar. Both halves' menus come out of one `menuContent(for:)` either way, so the
+floating menu and the toolbar can't drift apart; the rename that lived in the tappable title moves
+into the menu when embedded, since there's no title there to tap. The divider between the panes is a
+16-point grab strip whose drag writes a fraction to `@AppStorage` — `jointSplitAcross` and
+`jointSplitDown`, two settings because how you like an iPad's columns says nothing about how you
+like a phone's rows — clamped so neither half can be left under a fifth of the screen and
+unrecoverable. On a phone the document half also moves its Auto transform strip off the bottom and
+into the list (`AutoTransformBar`, split out of `CaptureBar` for exactly this), where it scrolls
+away instead of spending a shared screen on furniture.
 
 **Graph documents (iOS).** A graph is a `Document` with `kind == .graph`; `DocumentsView` routes to
 `GraphDocumentView` (at the bottom of `DocumentDetailView.swift`, alongside the Inbox and the

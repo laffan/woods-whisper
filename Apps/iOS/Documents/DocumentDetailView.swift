@@ -27,6 +27,13 @@ struct DocumentDetailView: View {
     /// own header instead of filling in a navigation bar it doesn't have, and puts nothing in the
     /// bar the pair sits under (which the other half would be fighting it for).
     var isEmbedded = false
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
+    /// Where the Auto transform strip goes. Pinned to the bottom everywhere except one place: half
+    /// of a joint document on a phone, where two panes are sharing the height and a strip pinned to
+    /// each takes more of it than the writing does. There it sits in the list under the document's
+    /// own actions and scrolls away with them.
+    private var showsInlineAutoTransform: Bool { isEmbedded && sizeClass == .compact }
 
     // Body & recordings reorder (long-press → drag to rearrange)
     @State private var editMode: EditMode = .inactive
@@ -88,8 +95,8 @@ struct DocumentDetailView: View {
                     .background(WW.paper)
             }
         }
-        .safeAreaInset(edge: .top, spacing: 0) {
-            if isEmbedded { paneHeader(for: document) }
+        .overlay(alignment: .topTrailing) {
+            if isEmbedded { paneMenu(for: document) }
         }
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
@@ -159,6 +166,19 @@ struct DocumentDetailView: View {
         List {
             bodySection(for: document)
             documentActionsSection(for: document)
+            // On a phone, half of a joint document carries its Auto transform strip here — under
+            // the row of actions it belongs beside — rather than pinned to the bottom of a pane
+            // that's only half a screen tall.
+            if showsInlineAutoTransform {
+                Section {
+                    AutoTransformBar(presets: model.documents.presets,
+                                     selected: model.autoTransformPreset(for: documentID),
+                                     onSelect: { model.setAutoTransform($0, for: documentID) })
+                        .listRowInsets(EdgeInsets())
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                }
+            }
             recordingsSection(for: document)
         }
         .wwList()
@@ -171,7 +191,8 @@ struct DocumentDetailView: View {
                 CaptureBar(presets: model.documents.presets,
                            selected: model.autoTransformPreset(for: documentID),
                            onSelect: { model.setAutoTransform($0, for: documentID) },
-                           onRecord: { recorderTask = .addToRecordings })
+                           onRecord: { recorderTask = .addToRecordings },
+                           showsAutoTransform: !showsInlineAutoTransform)
             }
         }
         .overlay(alignment: .top) {
@@ -489,36 +510,53 @@ struct DocumentDetailView: View {
         JointDocumentMenuItem(isJoined: isJoined,
                               onCreate: createJointCounterpart,
                               onSeparate: separateJoint)
-    }
-
-    /// The bar a pane draws across its own top when it's half of a joint document.
-    ///
-    /// Half of a pair has no navigation bar to put its title and menu in: it isn't a screen of its
-    /// own, and it can't be given a `NavigationStack` to make one (nesting one inside the stack the
-    /// Documents list drives by a typed path is what SwiftUI ends with `comparisonTypeMismatch`).
-    /// So the pane draws the bar itself, with exactly what the navigation bar would have carried.
-    @ViewBuilder
-    private func paneHeader(for document: Document?) -> some View {
-        HStack(spacing: 12) {
-            titleButton(for: document)
-            Spacer(minLength: 8)
-            if editMode.isEditing {
-                Button("Done") { withAnimation { editMode = .inactive } }
-                    .foregroundStyle(WW.moss)
-            } else if let document {
-                Menu { menuContent(for: document) } label: {
-                    Image(systemName: "ellipsis.circle")
-                        .font(.system(size: 17))
-                        .foregroundStyle(WW.moss)
-                        .frame(width: 36, height: 30)
-                        .contentShape(Rectangle())
-                }
+        // Half of a pair has no title to tap, so the rename lives here instead.
+        if isEmbedded {
+            Divider()
+            Button {
+                renameText = document.title
+                showingRename = true
+            } label: {
+                Label("Rename", systemImage: "pencil")
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 6)
-        .background(WW.surface)
-        .overlay(alignment: .bottom) { WWHairline() }
+    }
+
+    /// The **⋯** a pane floats in its own top-right corner when it's half of a joint document.
+    ///
+    /// No title and no strip across the top: a pane is half a screen, and a title bar on each would
+    /// spend a good part of that saying what the row you tapped already said. So the menu goes where
+    /// the navigation bar's would be — a plate over the corner of the content, the way the canvas
+    /// floats its own controls — and the rename that used to live in the title moves *into* it,
+    /// since that's now the only place it could be.
+    @ViewBuilder
+    private func paneMenu(for document: Document?) -> some View {
+        Group {
+            if editMode.isEditing {
+                Button("Done") { withAnimation { editMode = .inactive } }
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(WW.moss)
+                    .padding(.horizontal, 12)
+                    .frame(height: 34)
+                    .background(WW.surface.opacity(0.94), in: Capsule())
+                    .overlay(Capsule().stroke(WW.hairline, lineWidth: 1))
+            } else if let document {
+                Menu { menuContent(for: document) } label: { paneMenuGlyph }
+            }
+        }
+        .shadow(color: .black.opacity(0.10), radius: 10, y: 2)
+        .padding(.top, 8)
+        .padding(.trailing, 12)
+    }
+
+    private var paneMenuGlyph: some View {
+        Image(systemName: "ellipsis")
+            .font(.system(size: 16, weight: .semibold))
+            .foregroundStyle(WW.moss)
+            .frame(width: 34, height: 34)
+            .background(WW.surface.opacity(0.94), in: Circle())
+            .overlay(Circle().stroke(WW.hairline, lineWidth: 1))
+            .contentShape(Circle())
     }
 
     @ToolbarContentBuilder
@@ -1047,11 +1085,11 @@ struct CaptureBar: View {
     let onSelect: (PromptPreset?) -> Void
     let onRecord: () -> Void
 
-    /// Whether the toggle reads as on. Held locally as well as in the store because "on, but no
-    /// transform picked yet" is a real state: it's what you see between flipping the switch and
-    /// choosing from the list.
-    @State private var isOn = false
-    @State private var showingList = false
+    /// Whether the Auto transform strip rides along underneath. It doesn't in one place: a document
+    /// that's half of a joint document on a *phone*, where two panes share the height and a strip
+    /// pinned to the bottom of each is more furniture than screen. There it goes into the list
+    /// instead, under the document's own actions, where it scrolls away with everything else.
+    var showsAutoTransform = true
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1059,20 +1097,43 @@ struct CaptureBar: View {
             // lopsided on purpose: it lifts the dot clear of the bar without changing the height
             // this inset takes from the list.
             WWRecordButton(action: onRecord)
-                .padding(.bottom, 20)
+                .padding(.bottom, showsAutoTransform ? 20 : 12)
 
-            // The strip runs the full width; what's written on it is held to the content column, so
-            // an iPad doesn't put the label and its switch a hand-span apart.
-            VStack(spacing: 0) {
-                WWHairline()
-                if isOn && showingList {
-                    presetList.wwContentWidth()
-                    WWHairline()
-                }
-                toggleRow.wwContentWidth()
+            if showsAutoTransform {
+                AutoTransformBar(presets: presets, selected: selected, onSelect: onSelect)
             }
-            .background(WW.surface)
         }
+    }
+}
+
+/// The "Auto transform" strip: the toggle, the transform it's set to, and the list to change it.
+///
+/// Its own view because it has two homes — pinned under the record button at the bottom of the
+/// Inbox and of a document, and (on a phone, in half of a joint document) sitting in the list
+/// itself, under the document's actions. Same control, same state, either way up.
+struct AutoTransformBar: View {
+    let presets: [PromptPreset]
+    let selected: PromptPreset?
+    let onSelect: (PromptPreset?) -> Void
+
+    /// Whether the toggle reads as on. Held locally as well as in the store because "on, but no
+    /// transform picked yet" is a real state: it's what you see between flipping the switch and
+    /// choosing from the list.
+    @State private var isOn = false
+    @State private var showingList = false
+
+    var body: some View {
+        // The strip runs the full width; what's written on it is held to the content column, so
+        // an iPad doesn't put the label and its switch a hand-span apart.
+        VStack(spacing: 0) {
+            WWHairline()
+            if isOn && showingList {
+                presetList.wwContentWidth()
+                WWHairline()
+            }
+            toggleRow.wwContentWidth()
+        }
+        .background(WW.surface)
         .onAppear {
             isOn = selected != nil
             showingList = false
@@ -2459,28 +2520,24 @@ struct InboxView: View {
         .buttonStyle(.plain)
     }
 
-    /// What a filtered Inbox can do to the whole of what it's showing: take it all, or be rid of it
-    /// all. It only stands up while a filter is on, because "all of it" only means something when
-    /// what's on screen is one kind of thing.
+    /// What a filtered Inbox can do to the whole of what it's showing: take it all, make a document
+    /// of it, or be rid of it all. It only stands up while a filter is on, because "all of it" only
+    /// means something when what's on screen is one kind of thing.
+    ///
+    /// **New Document** is the one that earns the filter: a tag is usually a pile that turns into
+    /// something — every Question you had on the trail becomes the list you take to someone — and it
+    /// goes through the same step a Move does, so the document is named, the entries move across
+    /// with their audio, and the body is seeded with what they said.
     @ViewBuilder
     private func filteredActionsBar() -> some View {
         HStack(spacing: 0) {
-            Button { copyFiltered() } label: {
-                Label("Copy All", systemImage: "doc.on.doc")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(WW.moss)
-                    .frame(maxWidth: .infinity)
-                    .contentShape(Rectangle())
+            filteredAction("Copy All", "doc.on.doc", tint: WW.moss) { copyFiltered() }
+            filteredAction("New Document", "doc.badge.plus", tint: WW.moss) {
+                startNewDocument(for: Set(visibleRecordings.map(\.id)), titled: filterTag)
             }
-            .buttonStyle(.plain)
-            Button { showingFilteredDeleteConfirm = true } label: {
-                Label("Delete All", systemImage: "trash")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(WW.ember)
-                    .frame(maxWidth: .infinity)
-                    .contentShape(Rectangle())
+            filteredAction("Delete All", "trash", tint: WW.ember) {
+                showingFilteredDeleteConfirm = true
             }
-            .buttonStyle(.plain)
         }
         .padding(.vertical, 10)
         .frame(maxWidth: WW.contentMaxWidth)
@@ -2490,6 +2547,19 @@ struct InboxView: View {
         .disabled(visibleRecordings.isEmpty)
         .opacity(visibleRecordings.isEmpty ? 0.35 : 1)
         .transition(.move(edge: .bottom).combined(with: .opacity))
+    }
+
+    private func filteredAction(_ title: String, _ icon: String, tint: Color,
+                                action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: icon)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(tint)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     /// Every entry the filter is showing, as one piece of text — the same shape a batch Copy hands
@@ -2683,9 +2753,12 @@ struct InboxView: View {
 
     /// Open the "Rename document" step, pre-filling the title with a suggested name drawn from the
     /// recordings being filed away.
-    private func startNewDocument(for ids: Set<UUID>) {
+    /// `titled` is the name to open the rename step with when there's a better one than the entries
+    /// themselves can suggest — the tag, when a whole filter is being made into a document, since
+    /// that's the word you'd have written yourself.
+    private func startNewDocument(for ids: Set<UUID>, titled: String? = nil) {
         guard let seed = recordings.first(where: { ids.contains($0.id) }) else { return }
-        newDocTitle = suggestedDocumentTitle(for: seed)
+        newDocTitle = titled ?? suggestedDocumentTitle(for: seed)
         pendingNewDocIDs = ids
     }
 
@@ -2944,8 +3017,10 @@ private struct ShareTarget: Identifiable {
 /// transform, its own backup file and its own `.wwdoc` export; a link on one of them is the whole
 /// of the pairing, and "Separate Joint Document" is nothing but clearing it. That's why each half
 /// is shown here as *itself* — `DocumentDetailView` and `GraphDocumentView`, told only that they're
-/// embedded, which makes each draw the title and **⋯** menu it would have put in a navigation bar
-/// as a header of its own instead. Neither is given a `NavigationStack` to hold that bar: nesting
+/// embedded, which makes each float the **⋯** menu it would have put in a navigation bar over its
+/// own top-right corner instead. (No titles: the row you tapped said what this is, and two title
+/// bars would spend a good part of a shared screen saying it again.) Neither half is given a
+/// `NavigationStack` to hold a bar of its own: nesting
 /// one inside the stack the Documents list drives by a typed path is what ends in
 /// `AnyNavigationPath.Error.comparisonTypeMismatch`, and the framework meets that with a `try!`.
 ///
@@ -2966,6 +3041,15 @@ struct JointDocumentView: View {
     let documentID: UUID
     let partnerID: UUID
 
+    /// How much of the screen the document half takes, as a fraction — dragged by the divider and
+    /// remembered. Two settings rather than one, because across and down are different questions:
+    /// how you like an iPad's two columns says nothing about how you like a phone's two rows.
+    @AppStorage("jointSplitAcross") private var splitAcross = 0.5
+    @AppStorage("jointSplitDown") private var splitDown = 0.5
+    /// Where the fraction stood when the current drag began, so a drag moves *from* there rather
+    /// than accumulating over itself.
+    @State private var splitAtDragStart: Double?
+
     /// The prose half and the canvas half, whichever way round they were handed in.
     private var halves: (document: UUID, graph: UUID)? {
         guard let a = model.documents.document(with: documentID),
@@ -2977,17 +3061,27 @@ struct JointDocumentView: View {
     var body: some View {
         Group {
             if let halves {
-                if sizeClass == .regular {
-                    HStack(spacing: 0) {
-                        pane { DocumentDetailView(documentID: halves.document, isEmbedded: true) }
-                        Rectangle().fill(WW.hairline).frame(width: 1)
-                        pane { GraphDocumentView(documentID: halves.graph, isEmbedded: true) }
-                    }
-                } else {
-                    VStack(spacing: 0) {
-                        pane { DocumentDetailView(documentID: halves.document, isEmbedded: true) }
-                        WWHairline()
-                        pane { GraphDocumentView(documentID: halves.graph, isEmbedded: true) }
+                GeometryReader { geo in
+                    let across = sizeClass == .regular
+                    // The document's share of what's left after the divider takes its own width.
+                    let room = (across ? geo.size.width : geo.size.height) - Self.dividerThickness
+                    let first = max(room * split, 0)
+                    if across {
+                        HStack(spacing: 0) {
+                            DocumentDetailView(documentID: halves.document, isEmbedded: true)
+                                .frame(width: first)
+                            divider(across: true, room: room)
+                            GraphDocumentView(documentID: halves.graph, isEmbedded: true)
+                                .frame(maxWidth: .infinity)
+                        }
+                    } else {
+                        VStack(spacing: 0) {
+                            DocumentDetailView(documentID: halves.document, isEmbedded: true)
+                                .frame(height: first)
+                            divider(across: false, room: room)
+                            GraphDocumentView(documentID: halves.graph, isEmbedded: true)
+                                .frame(maxHeight: .infinity)
+                        }
                     }
                 }
             } else {
@@ -3008,13 +3102,52 @@ struct JointDocumentView: View {
         .navigationBarTitleDisplayMode(.inline)
     }
 
-    /// One half, taking its share of the screen. Nothing wraps it: an embedded half puts nothing in
-    /// the navigation bar above (so the two can't fight over it) and carries its own header instead.
-    @ViewBuilder
-    private func pane<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
-        content()
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+    /// How much of the pair the document half takes right now, on whichever axis this is.
+    private var split: Double {
+        min(max(sizeClass == .regular ? splitAcross : splitDown, Self.minimumSplit),
+            1 - Self.minimumSplit)
     }
+
+    /// The line between the halves, and the thing you take hold of to move it: a hairline with a
+    /// grip on it, in a strip wide enough for a fingertip. Dragging it re-sizes both panes at once
+    /// and the fraction is kept, so the way you like to split them is how they open next time.
+    ///
+    /// Neither half is allowed below a fifth of the screen — a pane too small to read is a pane you
+    /// have to drag back out again, and the divider is the only way to do it.
+    @ViewBuilder
+    private func divider(across: Bool, room: CGFloat) -> some View {
+        ZStack {
+            Rectangle()
+                .fill(WW.hairline)
+                .frame(width: across ? 1 : nil, height: across ? nil : 1)
+            Capsule()
+                .fill(WW.inkTertiary.opacity(0.7))
+                .frame(width: across ? 4 : 40, height: across ? 40 : 4)
+        }
+        .frame(width: across ? Self.dividerThickness : nil,
+               height: across ? nil : Self.dividerThickness)
+        .frame(maxWidth: across ? nil : .infinity, maxHeight: across ? .infinity : nil)
+        .background(WW.paper)
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(coordinateSpace: .global)
+                .onChanged { value in
+                    guard room > 0 else { return }
+                    let start = splitAtDragStart ?? split
+                    splitAtDragStart = start
+                    let moved = across ? value.translation.width : value.translation.height
+                    let next = min(max(start + moved / room, Self.minimumSplit),
+                                   1 - Self.minimumSplit)
+                    if sizeClass == .regular { splitAcross = next } else { splitDown = next }
+                }
+                .onEnded { _ in splitAtDragStart = nil }
+        )
+        .accessibilityLabel("Resize the two halves")
+    }
+
+    /// How wide the grab strip is, and how little of the screen a half may be left with.
+    private static let dividerThickness: CGFloat = 16
+    private static let minimumSplit: Double = 0.2
 }
 
 // MARK: - Graph documents
@@ -3117,6 +3250,9 @@ struct GraphDocumentView: View {
     /// on while it's down, off the moment it isn't — which is what lets it stand for other
     /// modifiers later without changing what it means.
     @State private var metaHeld = false
+    /// The node whose quick actions are showing while ⌘ is engaged: pointed at, or touched. Only
+    /// one at a time, and only while picking out.
+    @State private var quickActionNodeID: UUID?
     /// Whether the touch in progress is the second of a pair — the one that makes a node to type
     /// into, if it's let go rather than held (holding records, wherever the finger is).
     @State private var isSecondTouch = false
@@ -3194,8 +3330,8 @@ struct GraphDocumentView: View {
                     .background(WW.paper)
             }
         }
-        .safeAreaInset(edge: .top, spacing: 0) {
-            if isEmbedded { paneHeader(for: document) }
+        .overlay(alignment: .topTrailing) {
+            if isEmbedded { paneMenu(for: document) }
         }
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
@@ -3215,6 +3351,7 @@ struct GraphDocumentView: View {
             gestureStart = nil
             isSelecting = false
             metaHeld = false
+            quickActionNodeID = nil
             marqueeOrigin = nil
             marqueeCurrent = nil
             pendingTidyParents = []
@@ -3305,6 +3442,7 @@ struct GraphDocumentView: View {
                 .overlay { chainRing() }
                 .overlay { recordingReadout(in: geo.size) }
                 .overlay(alignment: .topLeading) { menuOverlay(for: document, in: geo.size) }
+                .overlay(alignment: .topLeading) { quickActions(for: document, in: geo.size) }
                 .overlay {
                     if document.nodes.isEmpty {
                         WWEmptyState(title: "An empty canvas",
@@ -3421,10 +3559,20 @@ struct GraphDocumentView: View {
                 card
             } else if isPickingOut {
                 // While selecting — the mode, or the ⌘ button held — a card is something to pick
-                // rather than something to open: one tap takes it in or out of the selection.
-                // Dragging still moves the lot.
+                // rather than something to open: one tap takes it in or out of the selection, and
+                // brings up the two things worth doing to one node without leaving the mode.
+                // With a pointer, pointing at the card is enough. Dragging still moves the lot.
                 card
-                    .onTapGesture { toggleSelection(of: node) }
+                    .onTapGesture {
+                        toggleSelection(of: node)
+                        withAnimation(.snappy(duration: 0.15)) { quickActionNodeID = node.id }
+                    }
+                    .onHover { inside in
+                        withAnimation(.snappy(duration: 0.15)) {
+                            if inside { quickActionNodeID = node.id }
+                            else if quickActionNodeID == node.id { quickActionNodeID = nil }
+                        }
+                    }
                     .gesture(nodeDrag(node, in: document))
             } else {
                 card
@@ -4097,6 +4245,7 @@ struct GraphDocumentView: View {
     private func beginMarquee(at viewPoint: CGPoint) {
         finishEditing()
         menuNodeID = nil
+        quickActionNodeID = nil
         let spot = canvasPoint(for: viewPoint)
         marqueeOrigin = spot
         marqueeCurrent = spot
@@ -4492,6 +4641,67 @@ struct GraphDocumentView: View {
     }
 
     @ViewBuilder
+    /// The two things worth doing to one node while ⌘ is engaged, floating just above its card:
+    /// **delete it**, and **tidy its children**.
+    ///
+    /// It's there because ⌘ is: with a pointer, pointing at a card is enough; with a finger, a tap
+    /// brings it up (and takes the card in or out of the selection at the same time, which is what a
+    /// tap already did). Two actions, not a menu — the long press already opens the full list, and
+    /// the point of this one is that it's *there* while your other hand holds the key.
+    ///
+    /// It acts on the card it's attached to, never on the selection: the selection bar along the
+    /// bottom is where "all of these" lives, and a control this close to one card should mean that
+    /// card.
+    @ViewBuilder
+    private func quickActions(for document: Document, in size: CGSize) -> some View {
+        if isPickingOut, let id = quickActionNodeID, let node = document.node(with: id) {
+            let center = point(of: node)
+            let card = (nodeSizes[id] ?? GraphCanvas.assumedCardSize).height * scale
+            let view = CGPoint(x: center.x * scale + pan.x, y: center.y * scale + pan.y)
+            let width: CGFloat = 92
+            HStack(spacing: 2) {
+                quickAction("Delete", "trash", tint: WW.ember) {
+                    withAnimation(.snappy(duration: 0.2)) {
+                        quickActionNodeID = nil
+                        selectedNodeIDs.remove(id)
+                        model.documents.deleteNode(id, in: documentID)
+                    }
+                    autoTidySiblings(of: node)
+                    haptic()
+                    wwLog("Deleted a graph node", .general)
+                }
+                quickAction("Tidy Children", "rectangle.3.group", tint: WW.moss,
+                            enabled: !document.children(of: id).isEmpty) {
+                    withAnimation(.snappy(duration: 0.25)) { tidyChildren(of: node) }
+                }
+            }
+            .padding(.horizontal, 4)
+            .frame(height: 34)
+            .background(WW.surface.opacity(0.96), in: Capsule())
+            .overlay(Capsule().stroke(WW.hairline, lineWidth: 1))
+            .shadow(color: .black.opacity(0.12), radius: 10, y: 3)
+            .offset(x: min(max(view.x - width / 2, 8), max(size.width - width - 8, 8)),
+                    y: max(view.y - card / 2 - 42, 8))
+            .transition(.opacity.combined(with: .scale(scale: 0.9, anchor: .bottom)))
+            .allowsHitTesting(true)
+        }
+    }
+
+    private func quickAction(_ title: String, _ icon: String, tint: Color, enabled: Bool = true,
+                             action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(tint)
+                .frame(width: 42, height: 30)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.35)
+        .accessibilityLabel(title)
+    }
+
     private func menuOverlay(for document: Document, in size: CGSize) -> some View {
         if let id = menuNodeID, let node = document.node(with: id) {
             let items = menuItems(for: node, in: document)
@@ -5096,27 +5306,24 @@ struct GraphDocumentView: View {
         }
     }
 
-    /// The bar a pane draws across its own top when it's half of a joint document — see the same
-    /// method on `DocumentDetailView` for why a pane can't simply be given a navigation bar.
+    /// The **⋯** this canvas floats in its own top-right corner when it's half of a joint
+    /// document — see the same method on `DocumentDetailView`.
     @ViewBuilder
-    private func paneHeader(for document: Document?) -> some View {
-        HStack(spacing: 12) {
-            titleButton(for: document)
-            Spacer(minLength: 8)
-            if let document {
-                Menu { menuContent(for: document) } label: {
-                    Image(systemName: "ellipsis.circle")
-                        .font(.system(size: 17))
-                        .foregroundStyle(WW.moss)
-                        .frame(width: 36, height: 30)
-                        .contentShape(Rectangle())
-                }
+    private func paneMenu(for document: Document?) -> some View {
+        if let document {
+            Menu { menuContent(for: document) } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(WW.moss)
+                    .frame(width: 34, height: 34)
+                    .background(WW.surface.opacity(0.94), in: Circle())
+                    .overlay(Circle().stroke(WW.hairline, lineWidth: 1))
+                    .contentShape(Circle())
             }
+            .shadow(color: .black.opacity(0.10), radius: 10, y: 2)
+            .padding(.top, 8)
+            .padding(.trailing, 12)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 6)
-        .background(WW.surface)
-        .overlay(alignment: .bottom) { WWHairline() }
     }
 
     @ToolbarContentBuilder
@@ -5173,6 +5380,16 @@ struct GraphDocumentView: View {
             withAnimation(.snappy(duration: 0.2)) { showsMinimap.toggle() }
         } label: {
             Label(showsMinimap ? "Hide Minimap" : "Show Minimap", systemImage: "map")
+        }
+        // Half of a pair has no title to tap, so the rename lives here instead.
+        if isEmbedded {
+            Divider()
+            Button {
+                renameText = document.title
+                showingRename = true
+            } label: {
+                Label("Rename", systemImage: "pencil")
+            }
         }
     }
 
