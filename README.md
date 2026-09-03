@@ -153,7 +153,10 @@ the rest of the app depends on.
   rather than a diagonal cut across the gap. Nodes stay
   exactly where you put them — nothing rearranges them behind your back, though **Tidy Children**
   (in a node's edit bar, and in its long-press menu) will line a node's children up beside it on
-  request, each with its own branch in tow, and **Auto Tidy** below will do it every time by itself. The **"+"** tucked inside a node's right edge adds a child and the
+  request, each with its own branch in tow, and **Auto Tidy** below will do it every time by itself.
+  A card is never truncated: it's as tall as what was said into it, since a transcript cut off at
+  six lines is a node you have to open to read. The **"+"** centred on a node's right edge — half in,
+  half out, sitting on the seam a child grows from — adds a child, and the
   one midway along a line drops a node between the two it joins — evenly, with the same room either
   side, pushing the branch below out of the way; **tap** either to type, or **hold** either to
   record into the new node the way the canvas does. Whenever a hold is recording, the elapsed
@@ -162,21 +165,23 @@ the rest of the app depends on.
   There's no bottom bar at all — the hold is the record button, and a graph's auto transform is an
   app-wide setting (**Settings → Graphs**) rather than a per-document toggle — so the canvas runs
   all the way to the edge.
-- **A colour for a card, and for a ring.** A **coloured dot** opens the palette: first in a node's
-  edit bar, and in front of a group's name at the corner of its ring. Pick one and the card (or the
-  ring) takes that colour for its border and a wash of it behind — enough to tell two clusters apart
-  across a canvas, faint enough to read over. The dot at the end of the row, crossed through, takes
-  the colour off again. They're the same six inks an Inbox tag wears, so a colour means the same
-  thing wherever you meet it.
+- **A colour for a card, and for a ring.** A **coloured dot** opens the palette in four places: at
+  the head of a node's edit bar, in front of a group's name at the corner of its ring, in the
+  **selection bar** (where it colours everything picked out at once), and in the group sheet, which
+  lays the row of dots out inline. Pick one and the card (or the ring) takes that colour for its
+  border and a wash of it behind — enough to tell two clusters apart across a canvas, faint enough
+  to read over. The dot at the end of the row, crossed through, takes the colour off again. They're
+  the same six inks an Inbox tag wears, so a colour means the same thing wherever you meet it.
 - **Headings.** A node whose words begin with **#** is drawn large and bold, and one beginning with
   **##** a size under it. The marker itself is invisible on the canvas — you typed it to say "make
   this a heading", and the size is what it turned into — and comes back the moment you open the node
   to edit it. (Three hashes or more isn't a size the canvas draws, so it stays ordinary text with
   the hashes showing.)
-- **Three buttons beside the minimap.** Stacked at the minimap's left, and there whether or not the
-  minimap is: **Auto Tidy**, and an on-screen **⌘** and **⌥**. Auto Tidy is a setting — tap it on and
-  it stays on. **⌘ and ⌥ are keys**: hold one down with one thumb and drag with the other, exactly as
-  you'd hold the real thing, and it lets go the moment you do. All three fill in while they're on.
+- **Two keys and a toggle, around the minimap.** An on-screen **⌘** and **⌥** stacked at the
+  minimap's left, and **Auto Tidy** at its right — all three there whether or not the minimap is.
+  Auto Tidy is a setting: tap it on and it stays on, which is why it sits apart from the other two.
+  **⌘ and ⌥ are keys**: hold one down with one thumb and drag with the other, exactly as you'd hold
+  the real thing, and it lets go the moment you do. All three fill in while they're on.
 - **Auto Tidy.** With it on, adding a node lines its siblings up around it — **Tidy Children**, run
   for you rather than asked for, every time a row of children changes. Children go out beside their
   parent at the standard distance, stacked with **30 points of air between the cards** — measured
@@ -211,10 +216,13 @@ the rest of the app depends on.
   or, with nothing picked out, every row in the graph from the roots down. None of them fire while
   you're typing into a node — the keys belong to the text then.
 - **Groups.** Select a few nodes and tap **Group**: a dashed ring is drawn round them, and it
-  follows them wherever they go. Tap the corner to name it (or to ungroup), tap the **dot** beside
-  the name to colour it, drag the ring's **edge** to move everything inside, and drag a node **in or
-  out** of the ring to change what's in the group — membership is a matter of where things are, not
-  a list to manage. A ring left with fewer than two nodes dissolves itself.
+  follows them wherever they go. A sheet opens on the new ring — its **name**, its **colour**, and
+  **Ungroup** — and tapping the name at a ring's corner opens the same one again. The **dot** beside
+  the name colours it without opening anything. Drag the ring's **edge** to move everything inside,
+  and drag a node **in or out** of the ring to change what's in the group — membership is a matter
+  of where things are, not a list to manage. A ring left with fewer than two nodes dissolves itself.
+  A group **nested** inside another is drawn with 10 points of air between the two rings, so one
+  reads as being inside the other rather than the pair reading as one thick line.
 - **⌘ + drag takes a node out of the network.** Hold ⌘ (the real one, or the button beside the
   minimap) and drag a card: it comes away from the tree as it moves — its parent and its children
   are joined to each other, so the branch survives — and it floats free where you drop it, still
@@ -225,8 +233,8 @@ the rest of the app depends on.
   with your finger. The copy is unlinked from what it came out of, though links *inside* what you
   copied survive, so a cluster keeps its shape. It carries the words but not the recording behind
   them: the clip stays with the node that was spoken into.
-- **Finding your way around a graph.** A **minimap** sits along the bottom, the buttons above at
-  its left: every node as a dot, every parent-to-child link as a hairline between two of them, all
+- **Finding your way around a graph.** A **minimap** sits along the bottom, the two keys at its
+  left and Auto Tidy at its right: every node as a dot, every parent-to-child link as a hairline between two of them, all
   inside a box showing what's on screen — the same curves the canvas draws, so the map carries the
   shape of the graph and not just where the nodes happen to have fallen. Touch or drag it to go there. The **⋯** menu adds **List
   Nodes** (the graph as an indented list, in outline order), **Center Graph**, and a switch for the

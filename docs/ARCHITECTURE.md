@@ -292,7 +292,7 @@ transform — `scaleEffect(anchor: .topLeading)` then `offset` — so a canvas p
   Inserting a node on an edge is the same idea in miniature — the branch below slides out by a
   node's width and the new node takes the middle of the widened gap, so it has the room the "+" had.
   Both go through one rigid `translate(subtreeOf:)`, which is why nothing below ever gets scrambled.
-  **Auto tidy** (the toggle beside the minimap, stored app-wide as `graphAutoTidy` for the same
+  **Auto tidy** (the toggle at the minimap's right, stored app-wide as `graphAutoTidy` for the same
   reason the minimap's own switch is) simply calls that same tidy from every place a node is added
   with a parent, and from the one place an abandoned empty node is removed again. It has one rule of
   its own: a node made while a gesture is still running — a "+" held down, a chain still being
@@ -383,7 +383,19 @@ card into its own view so SwiftUI can skip the ones a drag isn't touching.
 **A gesture on a view that takes no touches never starts.** A group's ring is deliberately deaf
 (`allowsHitTesting(false)`) so it isn't a dead zone over every node inside it, and only four strips
 at its edge take touches. The drag lives on those strips now; attached to the ring as a whole it
-never fired, which is why dragging a group did nothing until the finger came off.
+never fired, which is why dragging a group did nothing until the finger came off. The ring's colour
+wash is deaf in the same way, and — like a node card's — it's a view that comes and goes rather than
+one always present at zero opacity, so taking a colour off actually takes the wash away.
+
+**Rings are measured together, not one at a time.** `groupRings(in:boxes:)` returns every ring's
+rectangle *and* the order to draw them in, because a **nested** group changes the ring around it:
+two groups measured from the same outermost cards would otherwise land exactly on top of each other.
+Rings are worked out innermost first (fewest members first — a strict subset is nested by
+definition) and each is pushed out to clear the rings inside it by `nestedGroupGap`; they're then
+drawn widest first, so an inner ring's edge and label sit above the outer one's rather than under
+it. Membership is deliberately *not* judged against these frames: a node dragged in or out is still
+tested against the plain bounding box of the members that didn't move, so a buffer drawn for the eye
+can't quietly change what a group contains.
 
 **Two shapes for one list (iOS).** `showingNodeList` is the *request*; how it's answered depends on
 the width. `horizontalSizeClass == .regular` puts the node list in an `HStack` beside the canvas as a

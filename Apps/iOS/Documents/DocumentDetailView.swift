@@ -3475,18 +3475,9 @@ struct GraphDocumentView: View {
         .sheet(item: $documentFileShare) { item in
             ActivityView(activityItems: [item.url])
         }
-        .alert("Group label", isPresented: Binding(get: { labelingGroupID != nil },
-                                                   set: { if !$0 { labelingGroupID = nil } })) {
-            TextField("Label", text: $groupLabelText)
-            Button("Save") {
-                if let id = labelingGroupID {
-                    model.documents.setGroupLabel(id, in: documentID, to: groupLabelText)
-                }
-            }
-            Button("Ungroup", role: .destructive) {
-                if let id = labelingGroupID { model.documents.removeGroup(id, in: documentID) }
-            }
-            Button("Cancel", role: .cancel) { }
+        .sheet(isPresented: Binding(get: { labelingGroupID != nil },
+                                    set: { if !$0 { labelingGroupID = nil } })) {
+            groupSheet()
         }
         .alert("Rename graph", isPresented: $showingRename) {
             TextField("Title", text: $renameText)
@@ -3573,9 +3564,12 @@ struct GraphDocumentView: View {
     private func content(for document: Document, boxes: [UUID: CGRect],
                          lines: [GraphEdgeLine]) -> some View {
         ZStack(alignment: .topLeading) {
-            // Rings first, so they sit behind the cards they're drawn around.
-            ForEach(document.groups) { group in
-                if let frame = boundingBox(of: group.members, boxes: boxes) {
+            // Rings first, so they sit behind the cards they're drawn around — and widest first, so
+            // a ring nested inside another has its own edge (and its label) on top of the one
+            // around it rather than underneath.
+            let rings = groupRings(in: document, boxes: boxes)
+            ForEach(rings.order) { group in
+                if let frame = rings.frames[group.id] {
                     groupView(group, frame: frame)
                 }
             }
@@ -3641,7 +3635,7 @@ struct GraphDocumentView: View {
                 if !isEditing, !isPickingOut {
                     HoldablePlusButton(onTap: { addChild(to: node) },
                                        onHold: {
-                                           holdRecord(at: CGPoint(x: center.x + GraphCanvas.nodeWidth / 2 - 25,
+                                           holdRecord(at: CGPoint(x: center.x + GraphCanvas.nodeWidth / 2,
                                                                   y: center.y)) {
                                                model.documents.addChildNode(to: node.id, in: documentID)
                                            }
@@ -3651,7 +3645,11 @@ struct GraphDocumentView: View {
                                            flushPendingTidy()
                                        })
                         .accessibilityLabel("Add child node")
-                        .offset(x: -4)     // tucked into the card's right-hand gutter
+                        // Centred on the card's right edge, half in and half out: it's the seam a
+                        // child grows from, and it reads that way sitting *on* it rather than
+                        // tucked inside. Half the button's target width does it, the overlay
+                        // having put its trailing edge on the card's.
+                        .offset(x: HoldablePlusButton.target / 2)
                 }
             }
 
@@ -3717,9 +3715,9 @@ struct GraphDocumentView: View {
         } else {
             nodeLabel(node, in: document)
                 .padding(.leading, 12)
-                // Room down the right-hand side for the "+", which sits inside the card's border
-                // rather than hanging off it — so the text never runs underneath it.
-                .padding(.trailing, 36)
+                // The "+" straddles the right edge now, so the text only has to clear the half of
+                // it that's inside the card — 11 points of dot, and a little air.
+                .padding(.trailing, 20)
                 .padding(.vertical, 10)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background { nodeBackground(node) }
@@ -3731,13 +3729,18 @@ struct GraphDocumentView: View {
 
     /// The card's own surface, with the node's ink laid over it as a wash where it has one. Two
     /// fills rather than one blended colour: the tint has to sit on the card's surface in both
-    /// light and dark, and "the same green, faintly" is exactly what a wash is.
+    /// light and dark, and "the same green, faintly" is exactly what a wash is. The wash is a view
+    /// that comes and goes, so taking a colour off takes the wash with it.
+    @ViewBuilder
     private func nodeBackground(_ node: GraphNode) -> some View {
         let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
-        return shape
+        shape
             .fill(WW.surface)
-            .overlay(shape.fill(WW.paletteColor(node.colorID)?.opacity(GraphCanvas.tintOpacity)
-                                ?? .clear))
+            .overlay {
+                if let wash = WW.paletteColor(node.colorID) {
+                    shape.fill(wash.opacity(GraphCanvas.tintOpacity))
+                }
+            }
     }
 
     /// What a node says while it isn't being edited: its words, or why it hasn't any yet.
@@ -3766,10 +3769,13 @@ struct GraphDocumentView: View {
             // itself left out — you typed it to say "make this a heading", and the size on screen is
             // what it turned into. Open the node for editing and the marker is back, since that's
             // the text.
+            // Never truncated: a card is as tall as what was said into it. A transcript cut off at
+            // six lines is a node you have to open to read, which is a node that no longer says
+            // what it says — and the canvas has room in every direction to hold the whole thing.
             Text(node.displayText)
                 .font(nodeFont(node.heading))
                 .foregroundStyle(WW.ink)
-                .lineLimit(6)
+                .fixedSize(horizontal: false, vertical: true)
                 .multilineTextAlignment(.leading)
         } else {
             switch recording(for: node, in: document)?.status {
@@ -5034,6 +5040,40 @@ struct GraphDocumentView: View {
         return box.insetBy(dx: -GraphCanvas.groupPadding, dy: -GraphCanvas.groupPadding)
     }
 
+    /// Every ring the canvas is about to draw: the rectangle for each, and the order to draw them
+    /// in. One pass for the lot, because a **nested** ring changes the one around it.
+    ///
+    /// A group whose members are all inside another group's is drawn inside it, and two rings that
+    /// happen to be measured from the same outermost cards would land exactly on top of each other.
+    /// So the rings are worked out innermost first, and each one is pushed out to clear every ring
+    /// nested inside it by `nestedGroupGap` — the ring you can see between two rings.
+    ///
+    /// Membership itself is untouched by this: a node dragged in or out is still judged against the
+    /// plain bounding box of the members that didn't move (`boundingBox(ofMembers:in:)`), so a
+    /// buffer drawn for the eye can't quietly change what a group contains.
+    private func groupRings(in document: Document,
+                            boxes: [UUID: CGRect]) -> (order: [GraphGroup], frames: [UUID: CGRect]) {
+        // Fewest members first: a ring is only ever pushed out by rings already worked out. The
+        // member sets are built once here rather than per comparison — this runs on every frame of
+        // a drag.
+        let inward = document.groups
+            .map { (group: $0, members: $0.members) }
+            .sorted { $0.members.count < $1.members.count }
+        var frames: [UUID: CGRect] = [:]
+        for entry in inward {
+            guard var frame = boundingBox(of: entry.members, boxes: boxes) else { continue }
+            for other in inward where other.group.id != entry.group.id {
+                guard let inner = frames[other.group.id],
+                      other.members.isStrictSubset(of: entry.members) else { continue }
+                frame = frame.union(inner.insetBy(dx: -GraphCanvas.nestedGroupGap,
+                                                  dy: -GraphCanvas.nestedGroupGap))
+            }
+            frames[entry.group.id] = frame
+        }
+        // Widest first for drawing, so an inner ring's edge and label sit on top of the outer one's.
+        return (inward.reversed().map { $0.group }, frames)
+    }
+
     /// The same, for the places outside the drawing pass that have a document but no prepared
     /// boxes — deciding what a drop left inside a ring, once the move is committed.
     private func boundingBox(ofMembers ids: Set<UUID>, in document: Document) -> CGRect? {
@@ -5060,10 +5100,16 @@ struct GraphDocumentView: View {
             .allowsHitTesting(false)
             // The wash inside the ring, drawn under the cards rather than over them (rings are laid
             // down before the nodes) — and deaf, like the ring itself.
+            //
+            // Present only while there *is* a colour, rather than always there at zero opacity:
+            // "no colour" has to take the wash away, and a view that comes and goes is the one
+            // thing SwiftUI can't leave behind.
             .background {
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .fill(ink.opacity(group.colorID == nil ? 0 : GraphCanvas.tintOpacity))
-                    .allowsHitTesting(false)
+                if let wash = WW.paletteColor(group.colorID) {
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .fill(wash.opacity(GraphCanvas.tintOpacity))
+                        .allowsHitTesting(false)
+                }
             }
             .overlay {
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
@@ -5192,6 +5238,79 @@ struct GraphDocumentView: View {
         }
     }
 
+    /// The group modal: what a ring is called, and what colour it is. The same sheet whether the
+    /// ring has just been drawn (**Group** in the selection bar, which opens it straight away) or is
+    /// being renamed (tapping its name at the corner).
+    ///
+    /// It's a sheet rather than the alert it used to be for one reason: an alert holds a text field
+    /// and buttons and nothing else, and a colour is a row of dots. The colour applies as it's
+    /// picked — the ring changes behind the sheet — while the name waits for **Save**, which is the
+    /// honest difference between a thing you're still typing and a thing you chose.
+    @ViewBuilder
+    private func groupSheet() -> some View {
+        if let id = labelingGroupID, let group = document?.groups.first(where: { $0.id == id }) {
+            NavigationStack {
+                Form {
+                    Section {
+                        // Return saves and closes, the way the alert's Save did.
+                        TextField("Label", text: $groupLabelText)
+                            .submitLabel(.done)
+                            .onSubmit { saveGroupLabel(id) }
+                    } header: {
+                        WWSectionHeader("Name")
+                    }
+                    .listRowBackground(WW.surface)
+
+                    Section {
+                        GraphColorRow(colorID: group.colorID) { picked in
+                            model.documents.setGroupColor(id, in: documentID, to: picked)
+                            haptic()
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 4)
+                    } header: {
+                        WWSectionHeader("Colour")
+                    } footer: {
+                        WWFooter("The ring's own line, and a wash of the same colour behind what's inside it.")
+                    }
+                    .listRowBackground(WW.surface)
+
+                    Section {
+                        Button(role: .destructive) {
+                            model.documents.removeGroup(id, in: documentID)
+                            labelingGroupID = nil
+                            wwLog("Ungrouped graph nodes", .general)
+                        } label: {
+                            Label("Ungroup", systemImage: "square.dashed")
+                                .foregroundStyle(WW.ember)
+                                .frame(maxWidth: .infinity)
+                        }
+                    }
+                    .listRowBackground(WW.surface)
+                }
+                .wwForm()
+                .navigationTitle("Group")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") { labelingGroupID = nil }
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Save") { saveGroupLabel(id) }
+                    }
+                }
+            }
+            .presentationDetents([.medium, .large])
+        }
+    }
+
+    /// Write the name back and close the sheet. The colour is already saved — it applies as it's
+    /// picked — so this is only ever about the label.
+    private func saveGroupLabel(_ groupID: UUID) {
+        model.documents.setGroupLabel(groupID, in: documentID, to: groupLabelText)
+        labelingGroupID = nil
+    }
+
     /// "Group" in the selection bar: ring the selection, then offer to name it straight away.
     private func groupSelection() {
         guard let group = model.documents.addGroup(members: selectedNodeIDs, in: documentID) else { return }
@@ -5212,7 +5331,9 @@ struct GraphDocumentView: View {
     private func selectionBar() -> some View {
         if isSelecting || !selectedNodeIDs.isEmpty {
             VStack(spacing: 10) {
-                HStack(spacing: 14) {
+                // Tighter than it was: the colour dot makes four controls in this row, and the dot
+                // brings 9 points of its own padding, so the gaps still read as gaps on a phone.
+                HStack(spacing: 10) {
                     VStack(alignment: .leading, spacing: 1) {
                         Text(selectedNodeIDs.isEmpty ? "Select nodes"
                                                      : "\(selectedNodeIDs.count) selected")
@@ -5225,6 +5346,14 @@ struct GraphDocumentView: View {
                             .lineLimit(1)
                     }
                     Spacer(minLength: 8)
+                    // The ink for everything picked out — the same dot a single card carries in its
+                    // edit bar, doing the same thing to a set of them. It leads the actions here for
+                    // the same reason it leads that row: it's what these cards *are*.
+                    if !selectedNodeIDs.isEmpty {
+                        GraphColorDot(colorID: selectionColor, diameter: 16) { colorID in
+                            colorSelection(colorID)
+                        }
+                    }
                     if selectedNodeIDs.count >= GraphGroup.minimumMembers {
                         Button { groupSelection() } label: {
                             Label("Group", systemImage: "square.dashed")
@@ -5305,6 +5434,30 @@ struct GraphDocumentView: View {
         selectedNodeIDs.count >= GraphArrange.minimumToDistribute
     }
 
+    /// The ink the selection is wearing, if they all wear the same one — what the bar's dot shows.
+    /// A set that disagrees shows "no colour", since there's no one answer to show and picking one
+    /// is how you make them agree.
+    private var selectionColor: String? {
+        guard let document else { return nil }
+        // Nils kept, so a set where only some cards are coloured disagrees rather than reading as
+        // the colour the coloured ones happen to share.
+        let inks = selectedNodeIDs.map { document.node(with: $0)?.colorID }
+        guard let ink = inks.first, inks.allSatisfy({ $0 == ink }) else { return nil }
+        return ink
+    }
+
+    /// Give every selected card the same ink, or take it off the lot of them.
+    private func colorSelection(_ colorID: String?) {
+        let ids = selectedNodeIDs
+        guard !ids.isEmpty else { return }
+        withAnimation(.snappy(duration: 0.2)) {
+            for id in ids { model.documents.setNodeColor(id, in: documentID, to: colorID) }
+        }
+        haptic()
+        wwLog("Coloured \(ids.count) graph node\(ids.count == 1 ? "" : "s") \(colorID ?? "plain")",
+              .general)
+    }
+
     private func arrangeButton(_ title: String, _ icon: String, enabled: Bool = true,
                                action: @escaping () -> Void) -> some View {
         Button(action: action) {
@@ -5323,52 +5476,58 @@ struct GraphDocumentView: View {
 
     // MARK: The bottom of the canvas — controls and minimap
 
-    /// What sits along the bottom of the canvas: two controls in a column, and the minimap beside
-    /// them. The whole row stands down while a node is open for editing or a menu is up, where the
-    /// keyboard and the dropdown want the room.
+    /// What sits along the bottom of the canvas: the two on-screen modifier keys at the left, the
+    /// minimap across the middle, and **Auto tidy** at the right. The whole row stands down while a
+    /// node is open for editing or a menu is up, where the keyboard and the dropdown want the room.
     ///
     /// The controls stay whether or not the minimap is shown — they're how the canvas is worked,
-    /// not part of the map — so hiding the map doesn't take Auto tidy and the ⌘ with it.
+    /// not part of the map — so hiding the map doesn't take Auto tidy and the modifiers with it. It
+    /// only takes the map, and the row keeps its shape: the keys stay left, Auto tidy stays right.
     @ViewBuilder
     private func bottomControls(for document: Document, edges: [GraphEdgeLine]) -> some View {
         if editingNodeID == nil, menuNodeID == nil {
             HStack(alignment: .bottom, spacing: 8) {
-                canvasControls(for: document)
-                minimap(for: document, edges: edges)
+                modifierKeyColumn(for: document)
+                if showsMinimap, !document.nodes.isEmpty {
+                    minimap(for: document, edges: edges)
+                } else {
+                    Spacer(minLength: 0)
+                }
+                autoTidyButton()
             }
             .padding(.horizontal, 12)
             .padding(.bottom, 10)
         }
     }
 
-    /// The three buttons stacked at the minimap's left: **Auto tidy**, and the on-screen **⌘** and
-    /// **⌥**.
+    /// The two on-screen keys, stacked at the minimap's left: **⌘** and **⌥**.
     ///
-    /// They behave differently on purpose. Auto tidy is a setting, so it's a toggle that stays put.
-    /// ⌘ and ⌥ are *keys*: you hold one down with one thumb and drag with the other, exactly as
-    /// you'd hold the real thing, and it lets go the moment you do. That's what keeps them honest as
-    /// more than switches — whatever else these modifiers come to mean on this canvas, the buttons
-    /// mean it too. Today ⌘ picks nodes out and pulls a dragged one out of the network; ⌥ drags a
-    /// copy.
-    @ViewBuilder
-    private func canvasControls(for document: Document) -> some View {
+    /// They're *keys*, not switches: you hold one down with one thumb and drag with the other,
+    /// exactly as you'd hold the real thing, and it lets go the moment you do. That's what keeps
+    /// them honest — whatever else these modifiers come to mean on this canvas, the buttons mean it
+    /// too. Today ⌘ picks nodes out and pulls a dragged one out of the network; ⌥ drags a copy.
+    private func modifierKeyColumn(for document: Document) -> some View {
         VStack(spacing: 8) {
-            Button {
-                withAnimation(.snappy(duration: 0.2)) { autoTidy.toggle() }
-                haptic()
-                wwLog("Auto tidy \(autoTidy ? "on" : "off") for graphs", .general)
-            } label: {
-                canvasControlFace("rectangle.3.group", isOn: autoTidy)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Auto Tidy")
-            .accessibilityAddTraits(autoTidy ? [.isSelected] : [])
-
             modifierKey("command", isOn: $metaHeld, enabled: !document.nodes.isEmpty,
                         label: "Hold to select nodes, or drag a node out of the network")
             modifierKey("option", isOn: $optionHeld, enabled: !document.nodes.isEmpty,
                         label: "Hold to drag a copy")
         }
+    }
+
+    /// **Auto tidy**, at the minimap's right — a setting rather than a key, so unlike its
+    /// neighbours across the map it's a toggle that stays where you put it.
+    private func autoTidyButton() -> some View {
+        Button {
+            withAnimation(.snappy(duration: 0.2)) { autoTidy.toggle() }
+            haptic()
+            wwLog("Auto tidy \(autoTidy ? "on" : "off") for graphs", .general)
+        } label: {
+            canvasControlFace("rectangle.3.group", isOn: autoTidy)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Auto Tidy")
+        .accessibilityAddTraits(autoTidy ? [.isSelected] : [])
     }
 
     /// One of the on-screen modifier keys. A press, not a tap: `onChanged` fires as the finger lands
@@ -5407,16 +5566,14 @@ struct GraphDocumentView: View {
     }
 
     /// The whole graph, small, along the bottom — every node a dot, with a box around what's on
-    /// screen.
-    @ViewBuilder
+    /// screen. Whether it's shown at all is `bottomControls`' business, since the row it sits in
+    /// has to keep its shape without it.
     private func minimap(for document: Document, edges: [GraphEdgeLine]) -> some View {
-        if showsMinimap, !document.nodes.isEmpty {
-            GraphMinimap(nodes: document.nodes, edges: edges, viewport: viewportInCanvas) { spot in
-                center(on: spot, animated: false)
-            }
-            .equatable()
-            .transition(.opacity)
+        GraphMinimap(nodes: document.nodes, edges: edges, viewport: viewportInCanvas) { spot in
+            center(on: spot, animated: false)
         }
+        .equatable()
+        .transition(.opacity)
     }
 
     /// Nothing, drawn: the view exists only to give `ModifierKeys` somewhere to watch from, so a
@@ -5878,6 +6035,9 @@ enum GraphCanvas {
     static let tintOpacity: Double = 0.12
     /// Air between a group's ring and the cards inside it, and how thick its draggable edge is.
     static let groupPadding: CGFloat = 26
+    /// Air between a ring and a ring nested inside it, so the two read as one inside the other
+    /// rather than as a single thick line.
+    static let nestedGroupGap: CGFloat = 10
     static let groupBorderGrab: CGFloat = 28
     /// How far a touch may drift and still count as a press rather than a pan.
     static let tapSlop: CGFloat = 12
@@ -6013,6 +6173,10 @@ private struct GraphGrid: View {
 /// (`presentationCompactAdaptation`), because a colour picker that shows no colours is no use: a
 /// menu row can carry the name but not the ink, and a row of dots says it without a word. Picking
 /// one closes it; the crossed-through dot at the end takes the colour off again.
+///
+/// Four places carry the dot now — a node's edit bar, a ring's corner, the selection bar (where it
+/// colours everything picked out) and the group sheet, which shows the row itself rather than a dot
+/// that opens one, having the room.
 struct GraphColorDot: View {
     let colorID: String?
     var diameter: CGFloat = 14
@@ -6022,31 +6186,41 @@ struct GraphColorDot: View {
 
     var body: some View {
         Button { showingPalette = true } label: {
-            swatch(for: colorID, diameter: diameter)
+            GraphColorSwatch(colorID: colorID, diameter: diameter)
                 .padding(9)                 // a 14-point dot is not a 14-point target
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Colour")
         .popover(isPresented: $showingPalette) {
-            HStack(spacing: 10) {
-                ForEach(GraphPalette.colorIDs, id: \.self) { id in
-                    pick(id)
-                }
-                pick(nil)
+            GraphColorRow(colorID: colorID) { picked in
+                onPick(picked)
+                showingPalette = false
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
             .presentationCompactAdaptation(.popover)
         }
     }
+}
+
+/// The palette itself: every ink as a dot, and "no colour" at the end. What the dot's popover
+/// shows, and what the group sheet lays out inline.
+struct GraphColorRow: View {
+    let colorID: String?
+    var diameter: CGFloat = 26
+    let onPick: (String?) -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ForEach(GraphPalette.colorIDs, id: \.self) { pick($0) }
+            pick(nil)
+        }
+    }
 
     private func pick(_ id: String?) -> some View {
-        Button {
-            onPick(id)
-            showingPalette = false
-        } label: {
-            swatch(for: id, diameter: 26)
+        Button { onPick(id) } label: {
+            GraphColorSwatch(colorID: id, diameter: diameter)
                 .overlay {
                     if id == colorID {
                         Circle().stroke(WW.ink, lineWidth: 2).padding(-4)
@@ -6056,13 +6230,21 @@ struct GraphColorDot: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(id.map(Self.name) ?? "No colour")
+        .accessibilityAddTraits(id == colorID ? [.isSelected] : [])
     }
 
-    /// One dot: the colour filled in, or — for "no colour" — the plain card's own hairline ring with
-    /// a line through it.
-    @ViewBuilder
-    private func swatch(for id: String?, diameter: CGFloat) -> some View {
-        if let color = WW.paletteColor(id) {
+    /// "violet" → "Violet". The stored ids are the display names, lowercased.
+    static func name(_ id: String) -> String { id.prefix(1).uppercased() + String(id.dropFirst()) }
+}
+
+/// One dot: the colour filled in, or — for "no colour" — the plain card's own hairline ring with a
+/// line through it.
+struct GraphColorSwatch: View {
+    let colorID: String?
+    var diameter: CGFloat = 14
+
+    var body: some View {
+        if let color = WW.paletteColor(colorID) {
             Circle()
                 .fill(color)
                 .frame(width: diameter, height: diameter)
@@ -6080,9 +6262,6 @@ struct GraphColorDot: View {
                 }
         }
     }
-
-    /// "violet" → "Violet". The stored ids are the display names, lowercased.
-    static func name(_ id: String) -> String { id.prefix(1).uppercased() + String(id.dropFirst()) }
 }
 
 // MARK: - The "+" button
@@ -6100,6 +6279,11 @@ struct GraphColorDot: View {
 /// infer that from, and its gesture reaches the shared haptics.
 @MainActor
 struct HoldablePlusButton: View {
+    /// The whole button, padding and all. A 22-point dot is half of what a finger needs, so it
+    /// carries a fixed 44-point target whatever size the dot is drawn at — and a caller lining the
+    /// dot up on something (a node's right edge) can work from one number.
+    static let target: CGFloat = 42
+
     var diameter: CGFloat = 22
     let onTap: () -> Void
     let onHold: () -> Void
@@ -6125,7 +6309,7 @@ struct HoldablePlusButton: View {
             // A 22-point dot is a 22-point target, which is half of what a finger needs. The
             // padding gives it a proper one without drawing anything bigger; it grows evenly, so
             // wherever the dot was centred it stays.
-            .padding(10)
+            .padding((Self.target - diameter) / 2)
             .contentShape(Circle())
             .gesture(
                 DragGesture(minimumDistance: 0)
