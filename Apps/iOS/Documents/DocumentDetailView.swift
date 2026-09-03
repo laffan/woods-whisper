@@ -244,7 +244,7 @@ struct DocumentDetailView: View {
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
                 InsertHereButton(isRecording: recorderTask == .insertBody(at: 0),
-                                 makesTextSection: modifierKeys.isCommandDown) {
+                                 makesTextSection: modifierKeys.commandDown) {
                     startInsert(at: 0)
                 }
                 .listRowBackground(Color.clear)
@@ -252,7 +252,7 @@ struct DocumentDetailView: View {
             } else {
                 if !editMode.isEditing {
                     InsertHereButton(isRecording: recorderTask == .insertBody(at: 0),
-                                     makesTextSection: modifierKeys.isCommandDown) {
+                                     makesTextSection: modifierKeys.commandDown) {
                         startInsert(at: 0)
                     }
                     .listRowBackground(Color.clear)
@@ -291,7 +291,7 @@ struct DocumentDetailView: View {
             // working on is exactly when you want it.
             if !editMode.isEditing {
                 InsertHereButton(isRecording: recorderTask == .insertBody(at: position),
-                                 makesTextSection: modifierKeys.isCommandDown) {
+                                 makesTextSection: modifierKeys.commandDown) {
                     startInsert(at: position)
                 }
             }
@@ -876,9 +876,13 @@ struct DocumentDetailView: View {
     /// Tap "+": record a clip whose transcript becomes a new section at `position` — or, with **⌘
     /// held**, put an empty section there and open it for typing, which is the same thought the
     /// graph canvas answers with a double-tap. Not everything worth adding is worth saying aloud.
+    ///
+    /// "⌘ held" means the key *or* the ⌘ button beside a canvas's minimap: in a joint document the
+    /// canvas's soft keys are the only ⌘ a device without a keyboard has, and they reach this half
+    /// of the screen too (`ModifierKeyMonitor.commandDown`).
     private func startInsert(at position: Int) {
         let slot = slot(for: position)
-        guard modifierKeys.isCommandDown else {
+        guard modifierKeys.commandDown else {
             recorderTask = .insertBody(at: slot)
             return
         }
@@ -1288,6 +1292,10 @@ struct InlineTextEditor: View {
     /// shrink it, and typing a `#` in front of a node should show you what you've just made. (Read
     /// from the live buffer by the caller, so it follows what's being typed.)
     var heading: GraphHeading? = nil
+    /// What **Return** does, where Return is worth something other than a line break — a graph
+    /// node, where it's the Done button said with the keyboard. Nil leaves Return alone, which is
+    /// what a paragraph and an Inbox entry want: a blank line there splits the block in two.
+    var onSubmit: (() -> Void)? = nil
     /// The size that text is set in (Settings → Display), so the editor opens at exactly the size
     /// the block was being read at.
     @Environment(\.transcriptTextSize) private var points: Double
@@ -1295,7 +1303,7 @@ struct InlineTextEditor: View {
     var body: some View {
         #if canImport(UIKit)
         InlineUITextEditor(text: $text, selection: $selection, style: style, points: points,
-                           heading: heading)
+                           heading: heading, onSubmit: onSubmit)
         #else
         TextEditor(text: $text).font(style.font(points)).frame(minHeight: 120)
         #endif
@@ -1365,6 +1373,9 @@ struct InlineUITextEditor: UIViewRepresentable {
     var points: Double = AppSettings.defaultTranscriptTextSize
     /// A graph node's heading marker, when the text opens with one — see `InlineTextEditor`.
     var heading: GraphHeading? = nil
+    /// What Return means here, when it means something other than a line break — see
+    /// `InlineTextEditor.onSubmit` and `Coordinator.textView(_:shouldChangeTextIn:replacementText:)`.
+    var onSubmit: (() -> Void)? = nil
 
     /// The one type this editor draws in: the style's own, or a heading's bold step up from it.
     private var uiFont: UIFont {
@@ -1390,12 +1401,18 @@ struct InlineUITextEditor: UIViewRepresentable {
         view.attributedText = NSAttributedString(string: text, attributes: attributes)
         view.typingAttributes = attributes
         view.selectedRange = clamp(selection, to: text as NSString)
+        // Where Return commits, the on-screen keyboard's return key says **Done** — the same word
+        // as the button in the edit box's action row, which is the same thing it does.
+        if onSubmit != nil { view.returnKeyType = .done }
         // Focus on the next runloop pass: the view isn't in the window hierarchy yet during make.
         DispatchQueue.main.async { view.becomeFirstResponder() }
         return view
     }
 
     func updateUIView(_ uiView: UITextView, context: Context) {
+        // The coordinator answers UIKit out of whatever it was handed at make-time; hand it this
+        // pass's view so the callbacks (Return most of all) are the ones the caller means now.
+        context.coordinator.parent = self
         // The size can change under an open editor (Settings → Display, on another screen), so the
         // font is re-applied whenever it no longer matches rather than only at make-time.
         if uiView.text != text || uiView.font != uiFont {
@@ -1435,6 +1452,24 @@ struct InlineUITextEditor: UIViewRepresentable {
     final class Coordinator: NSObject, UITextViewDelegate {
         var parent: InlineUITextEditor
         init(_ parent: InlineUITextEditor) { self.parent = parent }
+
+        /// **Return commits**, where the editor has said what committing means (a graph node: the
+        /// same thing its **Done** does). **Shift + Return** still puts a line break in, for the
+        /// times a card really does want two lines.
+        ///
+        /// Shift is read off `ModifierKeyMonitor` rather than the text view, which is handed the
+        /// same "\n" either way and can't tell you which one you pressed. With no hardware
+        /// keyboard nothing reports shift, so Return simply commits — which is why the soft
+        /// keyboard's return key is relabelled **Done** to say so before it's pressed.
+        func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange,
+                      replacementText text: String) -> Bool {
+            guard let onSubmit = parent.onSubmit, text == "\n",
+                  !ModifierKeyMonitor.shared.isShiftDown else { return true }
+            // Out of the delegate callback first: committing tears this view down, and doing that
+            // while UIKit is still asking it about an edit is asking for trouble.
+            DispatchQueue.main.async { onSubmit() }
+            return false
+        }
 
         func textViewDidChange(_ textView: UITextView) {
             parent.text = textView.text
@@ -3114,6 +3149,14 @@ struct JointDocumentView: View {
     /// than accumulating over itself.
     @State private var splitAtDragStart: Double?
 
+    /// Which halves are on screen: both, or one of them filling the pair's place.
+    ///
+    /// Remembered across documents, like the divider — it's a statement about how you're working
+    /// right now ("I'm writing", "I'm mapping") rather than a property of one pair, and the toggle
+    /// that changed it is sitting in the corner of whatever you open next.
+    @AppStorage("jointViewMode") private var viewModeID = JointViewMode.split.rawValue
+    private var viewMode: JointViewMode { JointViewMode(rawValue: viewModeID) ?? .split }
+
     /// The prose half and the canvas half, whichever way round they were handed in.
     private var halves: (document: UUID, graph: UUID)? {
         guard let a = model.documents.document(with: documentID),
@@ -3130,28 +3173,38 @@ struct JointDocumentView: View {
                     // The leading half's share of what's left after the divider takes its own width.
                     let room = (across ? geo.size.width : geo.size.height) - Self.dividerThickness
                     let first = max(room * split, 0)
-                    if across {
-                        // Across, prose leads: a document is a column and reads left to right.
-                        HStack(spacing: 0) {
-                            DocumentDetailView(documentID: halves.document, isEmbedded: true)
-                                .frame(width: first)
-                            divider(across: true, room: room)
-                            GraphDocumentView(documentID: halves.graph, isEmbedded: true)
-                                .frame(maxWidth: .infinity)
-                        }
-                    } else {
-                        // Down, the canvas leads. A graph is panned and pinched with a whole hand,
-                        // which wants the top of the phone; the document below it is read and typed
-                        // into, which is where the keyboard comes up from anyway.
-                        VStack(spacing: 0) {
-                            GraphDocumentView(documentID: halves.graph, isEmbedded: true)
-                                .frame(height: first)
-                            divider(across: false, room: room)
-                            DocumentDetailView(documentID: halves.document, isEmbedded: true)
-                                .frame(maxHeight: .infinity)
+                    switch viewMode {
+                    case .document:
+                        DocumentDetailView(documentID: halves.document, isEmbedded: true)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    case .graph:
+                        GraphDocumentView(documentID: halves.graph, isEmbedded: true)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    case .split:
+                        if across {
+                            // Across, prose leads: a document is a column and reads left to right.
+                            HStack(spacing: 0) {
+                                DocumentDetailView(documentID: halves.document, isEmbedded: true)
+                                    .frame(width: first)
+                                divider(across: true, room: room)
+                                GraphDocumentView(documentID: halves.graph, isEmbedded: true)
+                                    .frame(maxWidth: .infinity)
+                            }
+                        } else {
+                            // Down, the canvas leads. A graph is panned and pinched with a whole
+                            // hand, which wants the top of the phone; the document below it is read
+                            // and typed into, which is where the keyboard comes up from anyway.
+                            VStack(spacing: 0) {
+                                GraphDocumentView(documentID: halves.graph, isEmbedded: true)
+                                    .frame(height: first)
+                                divider(across: false, room: room)
+                                DocumentDetailView(documentID: halves.document, isEmbedded: true)
+                                    .frame(maxHeight: .infinity)
+                            }
                         }
                     }
                 }
+                .overlay(alignment: .topTrailing) { viewToggle(across: sizeClass == .regular) }
             } else {
                 WWEmptyState(title: "Joint document not found",
                              systemImage: "rectangle.split.2x1")
@@ -3213,9 +3266,72 @@ struct JointDocumentView: View {
         .accessibilityLabel("Resize the two halves")
     }
 
+    // MARK: The view toggle
+
+    /// **Document · Split · Graph**, in the pair's top-right corner: one half, both, or the other.
+    ///
+    /// A joint document is two things open at once, which is the point of it — but not every moment
+    /// wants both. Writing wants the page; mapping wants the canvas; and on a phone, where the two
+    /// share the height, either one alone is most of what's worth having. So the pair keeps the
+    /// answer to "which of you am I looking at" as a switch rather than as a divider dragged to the
+    /// edge and back.
+    ///
+    /// It sits immediately left of the pane's own **⋯** — the corner is where a pane floats its
+    /// menu, and the toggle belongs to the *pair* rather than to whichever half happens to be
+    /// filling that corner, so it goes outside it. In the middle, because it's the setting the two
+    /// ends are named against: one, both, the other, in the order they'd read.
+    private func viewToggle(across: Bool) -> some View {
+        HStack(spacing: 0) {
+            viewToggleSegment(.document, "doc.text", "Document only")
+            viewToggleSegment(.split, across ? "rectangle.split.2x1" : "rectangle.split.1x2",
+                              "Document and graph")
+            viewToggleSegment(.graph, "point.3.connected.trianglepath.dotted", "Graph only")
+        }
+        .frame(height: 34)
+        .background(WW.surface.opacity(0.94), in: Capsule())
+        .overlay(Capsule().stroke(WW.hairline, lineWidth: 1))
+        .shadow(color: .black.opacity(0.10), radius: 10, y: 2)
+        .padding(.top, 8)
+        // Clear of the pane's ⋯ in the same corner: its own width and trailing padding, plus air.
+        .padding(.trailing, 12 + 34 + 8)
+        .accessibilityElement(children: .contain)
+    }
+
+    /// One of the three. Filled in when it's the one you're looking at — the same "on" a canvas
+    /// control wears, so a chosen thing looks chosen everywhere in the app.
+    private func viewToggleSegment(_ mode: JointViewMode, _ icon: String,
+                                   _ label: String) -> some View {
+        let isOn = viewMode == mode
+        return Button {
+            guard !isOn else { return }
+            withAnimation(.snappy(duration: 0.22)) { viewModeID = mode.rawValue }
+            WWHaptics.light()
+        } label: {
+            Image(systemName: icon)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(isOn ? WW.paper : WW.moss)
+                .frame(width: 38, height: 28)
+                .background(isOn ? WW.moss : Color.clear, in: Capsule())
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 3)
+        .accessibilityLabel(label)
+        .accessibilityAddTraits(isOn ? [.isSelected] : [])
+    }
+
     /// How wide the grab strip is, and how little of the screen a half may be left with.
     private static let dividerThickness: CGFloat = 16
     private static let minimumSplit: Double = 0.2
+}
+
+/// Which halves of a joint document are on screen — see `JointDocumentView.viewToggle`. A raw
+/// string because it's kept in `@AppStorage`, and a name on disk that says what it means survives
+/// a reordering of the cases.
+enum JointViewMode: String {
+    case document
+    case split
+    case graph
 }
 
 // MARK: - Graph documents
@@ -3313,13 +3429,15 @@ struct GraphDocumentView: View {
     /// The ⌘ key, when there's a keyboard to hold it down with: held as a drag begins, that drag
     /// draws a selection box too, without the mode being switched on first.
     @State private var keys = ModifierKeys()
-    /// The ⌘ and ⌥ *buttons* beside the minimap, for a device with no keyboard: held down with one
-    /// thumb while the other drags. A press rather than a toggle, so each behaves exactly as its key
-    /// does — on while it's down, off the moment it isn't.
-    @State private var metaHeld = false
-    @State private var optionHeld = false
-    /// The hardware ⌘ / ⌥ as they're held, which is a different thing from `keys` above: that one is
-    /// read off a touch, and a touch is not what a hover or a key press is. See `ModifierKeyMonitor`.
+    /// The ⌘ and ⌥ as they're *held* — which is a different question from `keys` above: that one is
+    /// read off a touch, and a touch is not what a hover or a key press is.
+    ///
+    /// Both sorts live here. The **hardware** keys are watched on the device (`ModifierKeyMonitor`),
+    /// and so are the **buttons** beside the minimap, which a device with no keyboard holds down
+    /// with one thumb while the other drags. The buttons aren't canvas state for the same reason
+    /// the keys aren't: a **joint document** is two panes of one screen, and a soft key has to
+    /// behave like the real one across both — holding ⌘ beside the canvas turns the document half's
+    /// "+" into a caret, exactly as a hardware ⌘ does.
     @ObservedObject private var modifierKeys = ModifierKeyMonitor.shared
     /// The card the pointer is resting on. Tracked whenever there's a pointer, not only while ⌘ is
     /// engaged — otherwise pressing ⌘ with the pointer already over a card would raise nothing,
@@ -3446,8 +3564,8 @@ struct GraphDocumentView: View {
             phase = .idle
             gestureStart = nil
             isSelecting = false
-            metaHeld = false
-            optionHeld = false
+            modifierKeys.virtualCommand = false
+            modifierKeys.virtualOption = false
             quickActionsTask?.cancel()
             hoveringQuickActions = false
             hoveredNodeID = nil
@@ -3695,7 +3813,8 @@ struct GraphDocumentView: View {
                 // The heading is read off the buffer rather than the stored node, so the editor is
                 // set the size the card was — and grows the moment you type a `#` in front of it.
                 InlineTextEditor(text: $editingText, selection: $editingSelection, style: .graphNode,
-                                 heading: GraphHeading.parse(editingText))
+                                 heading: GraphHeading.parse(editingText),
+                                 onSubmit: { finishEditing() })
             } actions: {
                 // The ink first, where the same dot sits on a group's ring: it's what this card
                 // *is* rather than something to do to it, so it leads the row.
@@ -4383,10 +4502,10 @@ struct GraphDocumentView: View {
     /// Whether ⌘ is engaged as far as what's *drawn* is concerned: the on-screen button held down,
     /// or a hardware ⌘ held. Both are view state, so the cards, the "+" buttons and the quick
     /// actions follow them.
-    private var isCommandEngaged: Bool { metaHeld || modifierKeys.isCommandDown }
+    private var isCommandEngaged: Bool { modifierKeys.commandDown }
 
     /// The same for ⌥, which on this canvas means "copy what I drag".
-    private var isOptionEngaged: Bool { optionHeld || modifierKeys.isOptionDown }
+    private var isOptionEngaged: Bool { modifierKeys.optionDown }
 
     /// Whether the canvas is in picking-out state: ⌘ engaged, or the mode (⋯ → Select Nodes) that
     /// stays on with nothing held.
@@ -4577,27 +4696,33 @@ struct GraphDocumentView: View {
                 dropTargetID = nil
                 dragMode = .move
 
-                // Out of the network first, then put down where the finger left it: unlinking joins
-                // this node's parent and children to each other, so the branch is whole again before
-                // anything moves.
-                if mode == .unlink { unlink(branch) }
+                // The unlinking a ⌘ drag does happened as the drag *began* — see `beginDrag` —
+                // so by here the card has been out of the network the whole way across the canvas.
 
-                if let latest = self.document {
-                    commit(branch: branch, movedBy: translation, in: latest)
-                    if let settled = self.document {
-                        updateGroupMembership(after: branch, in: settled)
-                    }
-                    if mode == .copy {
-                        wwLog("Copied \(branch.count) graph node\(branch.count == 1 ? "" : "s")",
-                              .general)
-                    }
-                    if mode == .move, let dragged, let target,
-                       model.documents.attachNode(dragged, to: target, in: documentID,
-                                                  heights: measuredHeights) {
-                        let name = latest.node(with: target)?.trimmedText ?? ""
-                        wwLog("Hung a graph branch under “\(name.isEmpty ? "a node" : name)”", .general)
-                        haptic()
-                    }
+                guard let latest = self.document else { return }
+                commit(branch: branch, movedBy: translation, in: latest)
+                if mode == .copy {
+                    wwLog("Copied \(branch.count) graph node\(branch.count == 1 ? "" : "s")",
+                          .general)
+                }
+                // Groups first, judged **where the finger let go** — which is what the ring was
+                // showing you the whole way across (`liveMembers`), so the drop confirms it. What
+                // an attach does next is the layout's answer to a re-parenting, not a second
+                // opinion about who's in the group: a card that joined stays joined, and its new
+                // ring simply stretches to reach wherever the branch settles.
+                if let settled = self.document {
+                    updateGroupMembership(after: branch, in: settled, leaving: mode == .unlink)
+                }
+                if mode == .move, let dragged, let target,
+                   model.documents.attachNode(dragged, to: target, in: documentID,
+                                              heights: measuredHeights) {
+                    let name = latest.node(with: target)?.trimmedText ?? ""
+                    wwLog("Hung a graph branch under “\(name.isEmpty ? "a node" : name)”", .general)
+                    haptic()
+                    // With Auto tidy on, a branch hung off a node lines that node's children up
+                    // around it — the same tidy adding a child runs, for the same reason: the row
+                    // just changed, and the new arrival is what changed it.
+                    autoTidyChildren(of: target)
                 }
             }
     }
@@ -4619,7 +4744,11 @@ struct GraphDocumentView: View {
         guard dragMode == .copy else {
             draggingNodeID = node.id
             draggingBranch = picked
-            if dragMode == .unlink { haptic(strong: true) }
+            // A ⌘ drag comes away from the network **as it starts**, not when it stops: the card
+            // has to be seen leaving, its parent and children joined up behind it, while the finger
+            // is still moving. Doing it on release meant a whole drag that looked like an ordinary
+            // move and only turned out to be a detachment once it was over.
+            if dragMode == .unlink { unlink(picked) }
             return
         }
 
@@ -4762,6 +4891,9 @@ struct GraphDocumentView: View {
     /// This is what **⌘ + drag** does — you pull a card out of the network and it comes out, which
     /// is the gesture the old scissors button was standing in for. Nodes that weren't joined to
     /// anything are left alone: a loose card dragged with ⌘ down is simply a card being moved.
+    ///
+    /// It runs as the drag **begins** (`beginDrag`), not when it ends: the card comes away under
+    /// your finger, and what you watch happen is what happened.
     private func unlink(_ ids: Set<UUID>) {
         guard let document else { return }
         let linked = ids.filter { id in
@@ -4770,7 +4902,9 @@ struct GraphDocumentView: View {
         }
         guard !linked.isEmpty else { return }
         for id in linked { model.documents.unlinkNode(id, in: documentID) }
-        haptic()
+        // The firmer of the two taps: this is the drag announcing what it is, at the moment it
+        // becomes it, rather than a small confirmation after the fact.
+        haptic(strong: true)
         wwLog("Unlinked \(linked.count) graph node\(linked.count == 1 ? "" : "s")", .general)
     }
 
@@ -4799,6 +4933,16 @@ struct GraphDocumentView: View {
             withAnimation(.snappy(duration: 0.25)) {
                 model.documents.tidyChildren(of: parentID, in: documentID, heights: measuredHeights)
             }
+        }
+    }
+
+    /// Auto tidy, asked of one parent by id: what a branch *dropped onto* a node owes its new
+    /// siblings. `autoTidySiblings` above answers the same question for a node that was just made;
+    /// this one is for a node that has just arrived from somewhere else on the canvas.
+    private func autoTidyChildren(of parentID: UUID) {
+        guard autoTidy else { return }
+        withAnimation(.snappy(duration: 0.25)) {
+            model.documents.tidyChildren(of: parentID, in: documentID, heights: measuredHeights)
         }
     }
 
@@ -5048,8 +5192,9 @@ struct GraphDocumentView: View {
     /// So the rings are worked out innermost first, and each one is pushed out to clear every ring
     /// nested inside it by `nestedGroupGap` — the ring you can see between two rings.
     ///
-    /// Membership itself is untouched by this: a node dragged in or out is still judged against the
-    /// plain bounding box of the members that didn't move (`boundingBox(ofMembers:in:)`), so a
+    /// Membership itself is untouched by this nesting gap: a node dragged into a ring is judged
+    /// against the plain bounding box of the members that didn't move — `liveMembers` while the
+    /// drag runs, `boundingBox(ofMembers:in:)` when it ends, and the same test either way — so a
     /// buffer drawn for the eye can't quietly change what a group contains.
     private func groupRings(in document: Document,
                             boxes: [UUID: CGRect]) -> (order: [GraphGroup], frames: [UUID: CGRect]) {
@@ -5057,7 +5202,7 @@ struct GraphDocumentView: View {
         // member sets are built once here rather than per comparison — this runs on every frame of
         // a drag.
         let inward = document.groups
-            .map { (group: $0, members: $0.members) }
+            .map { (group: $0, members: liveMembers(of: $0, boxes: boxes)) }
             .sorted { $0.members.count < $1.members.count }
         var frames: [UUID: CGRect] = [:]
         for entry in inward {
@@ -5072,6 +5217,30 @@ struct GraphDocumentView: View {
         }
         // Widest first for drawing, so an inner ring's edge and label sit on top of the outer one's.
         return (inward.reversed().map { $0.group }, frames)
+    }
+
+    /// Who a ring should be drawn around *right now*, mid-drag — the group's members, plus
+    /// whatever is being dragged and currently sits inside it.
+    ///
+    /// The ring has to answer the drag as it happens: a card carried into a group makes the ring
+    /// stretch to take it in, so letting go is a confirmation of what you're already looking at
+    /// rather than a surprise. It's the same test `updateGroupMembership` runs on release — the
+    /// ring measured from the members that *aren't* moving, and a card counted in when its middle
+    /// falls inside it — so what the drag shows is what the drop does.
+    ///
+    /// Nothing while a **ring** is the thing being dragged (a group moving doesn't change who's in
+    /// it), and a **⌘** drag is shown leaving: that's the one gesture that takes a node out.
+    private func liveMembers(of group: GraphGroup, boxes: [UUID: CGRect]) -> Set<UUID> {
+        guard !draggingBranch.isEmpty, draggingGroupID == nil else { return group.members }
+        let settled = group.members.subtracting(draggingBranch)
+        guard let frame = boundingBox(of: settled, boxes: boxes) else { return group.members }
+        var members = dragMode == .unlink ? settled : group.members
+        for id in draggingBranch {
+            guard let box = boxes[id],
+                  frame.contains(CGPoint(x: box.midX, y: box.midY)) else { continue }
+            members.insert(id)
+        }
+        return members
     }
 
     /// The same, for the places outside the drawing pass that have a document but no prepared
@@ -5164,8 +5333,10 @@ struct GraphDocumentView: View {
         .overlay(Capsule().stroke(WW.paletteColor(group.colorID) ?? WW.hairline, lineWidth: 1))
     }
 
-    /// Dragging the ring moves what's inside it — the members themselves, which is exactly what the
-    /// ring is drawn around. Anything hanging off a member but outside the ring stays where it is.
+    /// Dragging the ring moves what's inside it — and everything hanging off it. A child follows
+    /// its parent whoever picked the parent up: dragging a card carries its branch, and so does
+    /// dragging a ring the card happens to be in. (A child that's *also* a member is carried once;
+    /// the branch is a set.)
     ///
     /// With **⌥ held** it drags a copy instead: the members are duplicated and a fresh ring, same
     /// name and same ink, is drawn round the copies — so a cluster you've arranged once can be
@@ -5204,7 +5375,11 @@ struct GraphDocumentView: View {
         dragMode = isOptionEngaged || keys.isOptionDown ? .copy : .move
 
         guard dragMode == .copy else {
-            draggingBranch = group.members
+            // The members *and their branches*: a child hanging off a member but outside the ring
+            // still moves with its parent, exactly as it does when the parent is dragged by itself.
+            draggingBranch = document.map { doc in
+                Set(group.members.flatMap { doc.subtree(of: $0) })
+            } ?? group.members
             return
         }
         let copies = model.documents.duplicateGroup(group.id, in: documentID)
@@ -5216,20 +5391,37 @@ struct GraphDocumentView: View {
         }
     }
 
-    /// Membership is a matter of where things are: a node dragged inside a ring joins it, one
-    /// dragged out leaves. The ring is measured from the members that *didn't* move, so a node
-    /// can't keep itself in by its own presence.
-    private func updateGroupMembership(after moved: Set<UUID>, in document: Document) {
+    /// Membership is a matter of where things are, but only ever in one direction: a node whose
+    /// card comes to rest inside a ring **joins** that group, and nothing an ordinary drag does
+    /// takes a node back out of one.
+    ///
+    /// Joining had to be one-way to be usable at all. Membership was recomputed from position
+    /// alone, which meant the group a node had just been dropped into let go of it again the
+    /// moment anything moved it — a drop landing on a card, which re-settles the branch beside its
+    /// new parent, or a parent dragged elsewhere taking its children along. Worse, a ring measured
+    /// from the members that *stayed* could be left with one node and dissolve itself: A over
+    /// B, C, D, with B, C, D also inside a wider ring around E — move A and B, C, D go with it,
+    /// the wider ring is measured from E alone, and a group nobody touched disappears.
+    ///
+    /// So **leaving is asked for**: ⌘ + drag, which already means "take this out of the network",
+    /// also takes it out of any ring it's dragged clear of (`leaving`). That's the one gesture
+    /// that removes, and it's the same one for both kinds of belonging.
+    ///
+    /// The ring is measured from the members that *didn't* move, so a node can't keep itself in by
+    /// its own presence — and a group whose members all moved is left alone entirely: the whole
+    /// cluster travelled, which says nothing about who's in it.
+    private func updateGroupMembership(after moved: Set<UUID>, in document: Document,
+                                       leaving: Bool = false) {
         for group in document.groups {
-            guard let frame = boundingBox(ofMembers: group.members.subtracting(moved), in: document)
-            else { continue }
+            let frame = boundingBox(ofMembers: group.members.subtracting(moved), in: document)
             var members = group.members
             for id in moved {
                 guard document.node(with: id) != nil else { continue }
                 let box = rect(of: id, in: document)
-                if frame.contains(CGPoint(x: box.midX, y: box.midY)) {
+                let inside = frame?.contains(CGPoint(x: box.midX, y: box.midY)) ?? false
+                if inside {
                     members.insert(id)
-                } else {
+                } else if leaving {
                     members.remove(id)
                 }
             }
@@ -5505,12 +5697,15 @@ struct GraphDocumentView: View {
     /// They're *keys*, not switches: you hold one down with one thumb and drag with the other,
     /// exactly as you'd hold the real thing, and it lets go the moment you do. That's what keeps
     /// them honest — whatever else these modifiers come to mean on this canvas, the buttons mean it
-    /// too. Today ⌘ picks nodes out and pulls a dragged one out of the network; ⌥ drags a copy.
+    /// too. Today ⌘ picks nodes out, pulls a dragged card out of the network and out of any ring it
+    /// leaves, and — in a joint document — turns the other half's "+" into a caret; ⌥ drags a copy.
     private func modifierKeyColumn(for document: Document) -> some View {
         VStack(spacing: 8) {
-            modifierKey("command", isOn: $metaHeld, enabled: !document.nodes.isEmpty,
-                        label: "Hold to select nodes, or drag a node out of the network")
-            modifierKey("option", isOn: $optionHeld, enabled: !document.nodes.isEmpty,
+            modifierKey("command", isOn: $modifierKeys.virtualCommand,
+                        enabled: !document.nodes.isEmpty,
+                        label: "Hold to select nodes, or drag a node out of the network and its groups")
+            modifierKey("option", isOn: $modifierKeys.virtualOption,
+                        enabled: !document.nodes.isEmpty,
                         label: "Hold to drag a copy")
         }
     }
@@ -5565,15 +5760,38 @@ struct GraphDocumentView: View {
             .shadow(color: .black.opacity(0.10), radius: 12, y: 3)
     }
 
-    /// The whole graph, small, along the bottom — every node a dot, with a box around what's on
-    /// screen. Whether it's shown at all is `bottomControls`' business, since the row it sits in
-    /// has to keep its shape without it.
+    /// The whole graph, small, along the bottom — every node a dot in its own colour, every group
+    /// a ring in its own, with a box around what's on screen. Whether it's shown at all is
+    /// `bottomControls`' business, since the row it sits in has to keep its shape without it.
     private func minimap(for document: Document, edges: [GraphEdgeLine]) -> some View {
-        GraphMinimap(nodes: document.nodes, edges: edges, viewport: viewportInCanvas) { spot in
+        GraphMinimap(nodes: document.nodes, edges: edges, rings: minimapRings(in: document),
+                     viewport: viewportInCanvas) { spot in
             center(on: spot, animated: false)
         }
         .equatable()
         .transition(.opacity)
+    }
+
+    /// The group rings as the map wants them: a plain rectangle and an ink each.
+    ///
+    /// Measured from **stored** positions rather than the live boxes the canvas draws with, for the
+    /// same reason the dots are: the map is a picture of where the graph *is*, and a ring sliding
+    /// about under a drag would repaint it sixty times a second to say nothing. Nor does it borrow
+    /// `groupRings`' nesting gap — that exists so two rings on the canvas read as one inside the
+    /// other, and at this size the pair would be a single thick line either way.
+    private func minimapRings(in document: Document) -> [GraphMinimap.Ring] {
+        document.groups.compactMap { group -> GraphMinimap.Ring? in
+            var frame: CGRect?
+            for id in group.memberIDs {
+                guard let node = document.node(with: id) else { continue }
+                let box = card(around: CGPoint(x: node.position.x, y: node.position.y), of: id)
+                frame = frame.map { $0.union(box) } ?? box
+            }
+            guard let frame else { return nil }
+            return GraphMinimap.Ring(rect: frame.insetBy(dx: -GraphCanvas.groupPadding,
+                                                         dy: -GraphCanvas.groupPadding),
+                                     color: WW.paletteColor(group.colorID) ?? WW.moss)
+        }
     }
 
     /// Nothing, drawn: the view exists only to give `ModifierKeys` somewhere to watch from, so a
@@ -5961,7 +6179,8 @@ struct GraphDocumentView: View {
     private enum NodeDragMode {
         /// The card and its branch travel, and a drop on another card re-parents them.
         case move
-        /// ⌘: the cards come out of the network as they move — the old scissors, as a gesture.
+        /// ⌘: the cards come out of the network the moment the drag starts — the old scissors, as
+        /// a gesture — and out of any group's ring they're dragged clear of.
         case unlink
         /// ⌥: a copy of the cards comes away, leaving the originals where they are.
         case copy
@@ -6392,6 +6611,22 @@ final class ModifierKeyMonitor: ObservableObject {
 
     @Published private(set) var isCommandDown = false
     @Published private(set) var isOptionDown = false
+    /// Shift, watched for one reason: **Return** commits a node being edited, and shift + Return is
+    /// how you say "no, I really do want a line break". A `UITextView` is handed the same "\n"
+    /// either way, so the only way to tell the two apart is to ask the keyboard what else is down.
+    @Published private(set) var isShiftDown = false
+
+    /// The **⌘ and ⌥ buttons** beside a canvas's minimap, held with a thumb where there's no
+    /// keyboard to hold the real thing. They live here rather than in the canvas that draws them
+    /// because a *joint* document is two panes of one screen: the canvas's ⌘ has to reach the
+    /// document half as well, where it turns the "+" between sections into a caret, exactly as the
+    /// hardware key does. One shared pair of soft keys, read wherever a modifier is read.
+    @Published var virtualCommand = false
+    @Published var virtualOption = false
+
+    /// ⌘ as anything on screen should read it: the key, or the button standing in for it.
+    var commandDown: Bool { isCommandDown || virtualCommand }
+    var optionDown: Bool { isOptionDown || virtualOption }
 
     #if canImport(GameController)
     private var observers: [NSObjectProtocol] = []
@@ -6407,6 +6642,7 @@ final class ModifierKeyMonitor: ObservableObject {
                                             object: nil, queue: .main) { [weak self] _ in
             self?.report(command: false)
             self?.report(option: false)
+            self?.report(shift: false)
         })
     }
 
@@ -6422,6 +6658,11 @@ final class ModifierKeyMonitor: ObservableObject {
         for code in [GCKeyCode.leftAlt, GCKeyCode.rightAlt] {
             input.button(forKeyCode: code)?.pressedChangedHandler = { [weak self] _, _, pressed in
                 self?.report(option: pressed || Self.isDown(.leftAlt, .rightAlt))
+            }
+        }
+        for code in [GCKeyCode.leftShift, GCKeyCode.rightShift] {
+            input.button(forKeyCode: code)?.pressedChangedHandler = { [weak self] _, _, pressed in
+                self?.report(shift: pressed || Self.isDown(.leftShift, .rightShift))
             }
         }
     }
@@ -6447,6 +6688,15 @@ final class ModifierKeyMonitor: ObservableObject {
         DispatchQueue.main.async { [weak self] in
             guard let self, self.isOptionDown != down else { return }
             withAnimation(.snappy(duration: 0.15)) { self.isOptionDown = down }
+        }
+    }
+
+    /// Shift changes nothing that's drawn — it only decides what a Return means — so it's set
+    /// without an animation around it.
+    private func report(shift down: Bool) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.isShiftDown != down else { return }
+            self.isShiftDown = down
         }
     }
 }
@@ -6630,17 +6880,27 @@ private struct GraphMinimap: View, Equatable {
     /// The curves between them, as the canvas has them — control points and all, so the map bends
     /// the way the canvas does.
     let edges: [GraphEdgeLine]
+    /// The rings, as rectangles in canvas points — see `Ring` and `GraphDocumentView.minimapRings`.
+    let rings: [Ring]
     /// What the canvas is showing, in canvas points.
     let viewport: CGRect
     /// The canvas point the user picked out.
     let onGo: (CGPoint) -> Void
 
-    /// Compared on the nodes and the viewport alone. The edges are worked out from those same
+    /// One group on the map: where its ring falls, and the ink it's drawn in. A rectangle rather
+    /// than the group itself, because the map has no cards to measure a ring from — the canvas
+    /// works that out once and hands the answer over.
+    struct Ring: Equatable {
+        let rect: CGRect
+        let color: Color
+    }
+
+    /// Compared on the nodes, the rings and the viewport. The edges are worked out from those same
     /// positions (plus the measured cards), so they can't change without one of these changing —
     /// and leaving them out keeps a drag from repainting a map that, drawn from *stored* positions,
     /// isn't moving anyway.
     static func == (lhs: GraphMinimap, rhs: GraphMinimap) -> Bool {
-        lhs.viewport == rhs.viewport && lhs.nodes == rhs.nodes
+        lhs.viewport == rhs.viewport && lhs.nodes == rhs.nodes && lhs.rings == rhs.rings
     }
 
     var body: some View {
@@ -6654,6 +6914,20 @@ private struct GraphMinimap: View, Equatable {
                 context.fill(Path(roundedRect: box, cornerRadius: 3), with: .color(WW.moss.opacity(0.10)))
                 context.stroke(Path(roundedRect: box, cornerRadius: 3),
                                with: .color(WW.moss.opacity(0.7)), lineWidth: 1)
+
+                // The groups, under the links and the dots alike: the same dashed ring in the
+                // same ink, washed inside the same way, so a cluster you picked out by its colour
+                // on the canvas is the cluster you reach for on the map. A ring is what the nodes
+                // sit *in*, so it's laid down before them.
+                for ring in rings {
+                    let frame = CGRect(origin: project(CGPoint(x: ring.rect.minX, y: ring.rect.minY), fit),
+                                       size: CGSize(width: ring.rect.width * fit.scale,
+                                                    height: ring.rect.height * fit.scale))
+                    let shape = Path(roundedRect: frame, cornerRadius: 4)
+                    context.fill(shape, with: .color(ring.color.opacity(GraphCanvas.tintOpacity)))
+                    context.stroke(shape, with: .color(ring.color.opacity(0.6)),
+                                   style: StrokeStyle(lineWidth: 0.75, dash: [3, 2]))
+                }
 
                 // The links, under the dots: the canvas's own curves, every point run through the
                 // same projection the dots are, so a link on the map leaves and arrives exactly
@@ -6671,10 +6945,16 @@ private struct GraphMinimap: View, Equatable {
                 for node in nodes {
                     let point = project(CGPoint(x: node.position.x, y: node.position.y), fit)
                     let dot = CGRect(x: point.x - 2.5, y: point.y - 2.5, width: 5, height: 5)
+                    // A card's own ink, where it has one — the dot is the card, small, and a
+                    // colour that means something on the canvas has to mean it here too.
+                    let ink = WW.paletteColor(node.colorID)
                     if node.hasText {
-                        context.fill(Path(ellipseIn: dot), with: .color(WW.ink))
+                        context.fill(Path(ellipseIn: dot), with: .color(ink ?? WW.ink))
                     } else {
-                        context.stroke(Path(ellipseIn: dot), with: .color(WW.inkTertiary), lineWidth: 1)
+                        // Nothing said into it yet: an outline rather than a dot, in its colour if
+                        // it has been given one.
+                        context.stroke(Path(ellipseIn: dot), with: .color(ink ?? WW.inkTertiary),
+                                       lineWidth: 1)
                     }
                 }
             }
@@ -6707,6 +6987,14 @@ private struct GraphMinimap: View, Equatable {
             maxX = max(maxX, CGFloat(node.position.x))
             minY = min(minY, CGFloat(node.position.y))
             maxY = max(maxY, CGFloat(node.position.y))
+        }
+        // A ring reaches further than the dots inside it, so it's fitted as well — otherwise the
+        // outermost group would be drawn with its edge off the side of the map.
+        for ring in rings {
+            minX = min(minX, ring.rect.minX)
+            maxX = max(maxX, ring.rect.maxX)
+            minY = min(minY, ring.rect.minY)
+            maxY = max(maxY, ring.rect.maxY)
         }
         let padding: CGFloat = 160
         let width: CGFloat = max(maxX - minX + padding * 2, 1)

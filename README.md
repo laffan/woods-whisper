@@ -110,10 +110,12 @@ the rest of the app depends on.
   lines you added split the block into separate paragraphs (a single line break you typed stays
   inside the paragraph — it's text the *app* wrote that splits on every line).
 - **The "+" between sections.** The thin rule with a **"+"** at its middle, under every paragraph,
-  records a clip and drops its transcript in at that spot. Hold **⌘** (with a keyboard attached) and
+  records a clip and drops its transcript in at that spot. Hold **⌘** and
   the glyph becomes a caret: tap it then and you get an **empty section to type into**, opened for
   editing where it sits — the same thought the graph canvas answers with a double-tap, for the times
-  what you're adding isn't worth saying aloud.
+  what you're adding isn't worth saying aloud. "Hold ⌘" means the key with a keyboard attached, or —
+  in a **joint document**, where the graph half draws one — the **⌘ button beside the minimap**: a
+  soft key is a key, and a key held on one side of a split screen is held on both.
 - **One red record button.** Recording isn't a toolbar glyph any more. In the **Inbox** and inside a
   **document** it's a plain red dot, centered above the bottom bar — nothing behind it, the text
   scrolling past underneath — and it does what the mic did there before: a clip filed into the
@@ -145,7 +147,10 @@ the rest of the app depends on.
   cards: **tap twice** to edit one in place — the row along the bottom of the open card opens with a
   **colour dot** and carries **Revise / Transform / Tidy Children**, and a red **trash** that
   deletes the node outright — or **long-press** for the actions a paragraph gets from a swipe (Edit,
-  Add Child, Revise, Transform, Delete) as a dropdown. **Drag** a node and its children
+  Add Child, Revise, Transform, Delete) as a dropdown. **Return closes an open card**: a node is a
+  card rather than a page, so the key that ends a line ends the edit instead — exactly what **Done**
+  does. **Shift + Return** puts a line break in for the times a card really does want two.
+  **Drag** a node and its children
   come with it; **drop it on another node** and the whole branch hangs off that one — settling into
   place beside its new parent, below the children already there and clear of anything else. The
   lines joining them are **smooth curves**, leaving and arriving square-on to the side of the card
@@ -181,9 +186,13 @@ the rest of the app depends on.
   minimap's left, and **Auto Tidy** at its right — all three there whether or not the minimap is.
   Auto Tidy is a setting: tap it on and it stays on, which is why it sits apart from the other two.
   **⌘ and ⌥ are keys**: hold one down with one thumb and drag with the other, exactly as you'd hold
-  the real thing, and it lets go the moment you do. All three fill in while they're on.
+  the real thing, and it lets go the moment you do. All three fill in while they're on. Being keys,
+  they reach as far as the real ones do: in a **joint document** the canvas's ⌘ turns the document
+  half's **"+"** into a caret while it's held, the same as a keyboard's would.
 - **Auto Tidy.** With it on, adding a node lines its siblings up around it — **Tidy Children**, run
-  for you rather than asked for, every time a row of children changes. Children go out beside their
+  for you rather than asked for, every time a row of children changes. **Dropping** a branch onto a
+  node counts as changing that row, so a card hung off a parent lines its new siblings up as your
+  finger leaves it, rather than sitting where it landed until you ask. Children go out beside their
   parent at the standard distance, stacked with **30 points of air between the cards** — measured
   between what's drawn, so a six-line card takes the room it needs and the gap stays the gap you
   see. A node with no parent has no
@@ -218,25 +227,37 @@ the rest of the app depends on.
 - **Groups.** Select a few nodes and tap **Group**: a dashed ring is drawn round them, and it
   follows them wherever they go. A sheet opens on the new ring — its **name**, its **colour**, and
   **Ungroup** — and tapping the name at a ring's corner opens the same one again. The **dot** beside
-  the name colours it without opening anything. Drag the ring's **edge** to move everything inside,
-  and drag a node **in or out** of the ring to change what's in the group — membership is a matter
-  of where things are, not a list to manage. A ring left with fewer than two nodes dissolves itself.
+  the name colours it without opening anything. Drag the ring's **edge** to move everything inside —
+  the members, and whatever hangs off them, since a child follows its parent whoever picked the
+  parent up. Drag a node **into** the ring and it joins: the ring stretches to take it in as you
+  carry it across, and letting go is a confirmation of what you were already looking at. Nothing an
+  ordinary drag does takes a node back *out* — a branch travelling with its parent, or a card
+  re-settled by a drop, keeps every group it belongs to — so leaving is asked for: **⌘ + drag** the
+  card clear of the ring, the same gesture that takes it out of the network. A ring left with fewer
+  than two nodes dissolves itself.
   A group **nested** inside another is drawn with 10 points of air between the two rings, so one
   reads as being inside the other rather than the pair reading as one thick line.
-- **⌘ + drag takes a node out of the network.** Hold ⌘ (the real one, or the button beside the
-  minimap) and drag a card: it comes away from the tree as it moves — its parent and its children
-  are joined to each other, so the branch survives — and it floats free where you drop it, still
-  saying what it said. It's the whole of what the old scissors button did, as the gesture you'd
-  reach for anyway. Drag several selected cards and they all come out.
+- **⌘ + drag takes a node out.** Hold ⌘ (the real one, or the button beside the
+  minimap) and drag a card: it comes away from the tree **the moment the drag starts** — its parent
+  and its children are joined to each other, so the branch survives — and it floats free where you
+  drop it, still saying what it said. You watch it leave rather than finding out afterwards. Drag it
+  clear of a **group's ring** and it leaves that too: ⌘ is the one gesture for "take this out of
+  what it's in", whether what it's in is the tree or a ring. It's the whole of what the old scissors
+  button did, as the gesture you'd reach for anyway. Drag several selected cards and they all come
+  out.
 - **⌥ + drag leaves a copy behind.** Hold ⌥ instead and what comes away is a *copy* — of the card,
   of the whole selection, or of a group, ring and all — appearing over the original and travelling
   with your finger. The copy is unlinked from what it came out of, though links *inside* what you
   copied survive, so a cluster keeps its shape. It carries the words but not the recording behind
   them: the clip stays with the node that was spoken into.
 - **Finding your way around a graph.** A **minimap** sits along the bottom, the two keys at its
-  left and Auto Tidy at its right: every node as a dot, every parent-to-child link as a hairline between two of them, all
+  left and Auto Tidy at its right: every node as a dot **in the colour that card is drawn in**,
+  every parent-to-child link as a hairline between two of them, every **group** as its own dashed
+  ring in its own ink, all
   inside a box showing what's on screen — the same curves the canvas draws, so the map carries the
-  shape of the graph and not just where the nodes happen to have fallen. Touch or drag it to go there. The **⋯** menu adds **List
+  shape of the graph and not just where the nodes happen to have fallen. A colour means the same
+  thing on the map as on the canvas, which is what lets you find a cluster there rather than only
+  recognise one. Touch or drag it to go there. The **⋯** menu adds **List
   Nodes** (the graph as an indented list, in outline order), **Center Graph**, and a switch for the
   minimap itself. The same menu's **Copy Outline** / **Share
   Outline** — and the backup folder — hand over the graph as a **Markdown outline**: one bullet per
@@ -267,7 +288,13 @@ the rest of the app depends on.
   **phone**, stacked with the **graph on top** — it's panned and pinched with a whole hand — and the
   document below it, where the keyboard comes up from anyway.
   **Drag the divider** to give one half more room; where you leave it is where it opens next time
-  (across and down are remembered separately). Each half stays an ordinary document throughout — its
+  (across and down are remembered separately). Not every moment wants both halves, so a **three-part
+  toggle** sits in the pair's top-right corner, just left of the pane's **⋯**: **document only**,
+  **split**, **graph only**. Writing wants the page and mapping wants the canvas — and on a phone,
+  where the two share the height, either one alone is most of what's worth having. It belongs to the
+  pair rather than to either half, which is why it sits outside the menu the half floats there, and
+  like the divider it's remembered: what you were last looking at is how the next pair opens. Each
+  half stays an ordinary document throughout — its
   own recordings, its own Auto transform, its own backup file, and its own **⋯** menu floating in
   the top-right corner of its pane (no titles: the row you tapped already said what this is, so
   **Rename** moves into that menu) — so nothing about either of them changes by being paired. On a

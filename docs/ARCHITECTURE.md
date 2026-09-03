@@ -82,9 +82,12 @@ storage, and connectivity code without the model dependencies.
   mind-map equivalent of circling a cluster in pencil, which is why membership is a plain list of
   ids and a node can be in a group while hanging off a parent somewhere else. The ring's geometry
   isn't stored either; it's the union of the members' cards, so it follows them. Membership is
-  edited by *moving nodes*: after a drag, the canvas re-measures each ring from the members that
-  didn't move and adds or drops the ones that did, so a node can't hold itself in by its own
-  presence.
+  edited by *moving nodes*, and only ever in one direction: after a drag, the canvas re-measures each
+  ring from the members that didn't move (so a node can't hold itself in by its own presence) and
+  **adds** the ones that came to rest inside it. Nothing an ordinary drag does removes a node from a
+  ring — a branch travelling with its parent, or a card re-settled by a drop, keeps every group it
+  belongs to. Leaving is asked for: a **⌘ drag** clear of the ring, the same gesture that takes a
+  card out of the tree (`updateGroupMembership(after:in:leaving:)`).
 - **`PromptPreset`** — a named, reusable instruction (`systemPrompt` + `template` with a
   `{{transcript}}` token) plus generation params. Three built-ins ship; users add their own.
 - **`DeviceLink`** — describes the Watch↔host pairing; for the direct-to-iPad path it stores the
@@ -212,7 +215,12 @@ into the menu when embedded, since there's no title there to tap. The divider be
 16-point grab strip whose drag writes a fraction to `@AppStorage` — `jointSplitAcross` and
 `jointSplitDown`, two settings because how you like an iPad's columns says nothing about how you
 like a phone's rows — clamped so neither half can be left under a fifth of the screen and
-unrecoverable. On a phone the document half also moves its Auto transform strip off the bottom and
+unrecoverable. Which halves are shown at all is a third remembered setting (`jointViewMode`,
+`JointViewMode`), driven by the three-part toggle the *pair* floats in the top-right corner, clear
+of the pane's own ⋯ by that button's width: document only, split, graph only. A hidden half is not
+rendered rather than sized to nothing, so it isn't holding the keyboard or running a canvas nobody
+is looking at — the cost is that it opens re-centred, which is the right state for a pane that has
+just changed size anyway. On a phone the document half also moves its Auto transform strip off the bottom and
 into the list (`AutoTransformBar`, split out of `CaptureBar` for exactly this), where it scrolls
 away instead of spending a shared screen on furniture.
 
@@ -253,7 +261,12 @@ transform — `scaleEffect(anchor: .topLeading)` then `offset` — so a canvas p
   values handed to the minimap and run through its projection, control points and all — so the map
   bends where the canvas bends. They're left out of the map's `==` on purpose: they're a function of
   the same positions, so nothing can change them without changing the nodes, and comparing them
-  would repaint a map that (drawn from stored positions) doesn't move during a drag anyway.
+  would repaint a map that (drawn from stored positions) doesn't move during a drag anyway. The map
+  carries a card's **colour** and a group's **ring** for the same reason it carries the curves: a
+  colour that means something on the canvas has to mean it here, or the map is a picture of the
+  wrong graph. The rings come in as plain rectangles (`minimapRings`), measured from *stored*
+  positions and without the canvas's nesting gap — that gap exists so two rings read as one inside
+  the other, and at this size the pair is a single line either way.
 - **A drag is one edit, measured in a space that isn't moving.** The live translation stays in view
   state and is written to the nodes only when the finger lifts, so dragging a branch doesn't rewrite
   the document (and its Markdown mirror) once per frame. Like pinning, positions don't bump
@@ -267,7 +280,12 @@ transform — `scaleEffect(anchor: .topLeading)` then `offset` — so a canvas p
   happening. Only a plain move looks for a drop target: a card being pulled out of the tree, or a
   copy pulled out of one, shouldn't land straight back in it. An unlink carries the picked cards
   *without* their branches (unlinking joins each one's parent and children to each other, so the
-  branch stays where it is and stays whole) and runs `unlinkNode` before the positions are
+  branch stays where it is and stays whole) and runs `unlinkNode` **as the drag begins**, not when
+  it ends: the card has to be seen coming away while the finger is still moving, rather than a whole
+  drag reading as an ordinary move and only turning out to be a detachment once it's over. A drag
+  onto another card also carries the **auto tidy** the drop owes its new siblings
+  (`autoTidyChildren(of:)`), since hanging a branch off a node changes that row exactly as adding a
+  child does. Positions are
   committed. A copy is made **at the start** of the drag rather than at the end — `duplicateNodes`
   appends the copies over their originals and the drag moves *them*, which is what makes the gesture
   read as pulling a duplicate out. That's also why the drag tracks `dragSourceID` (the card whose
@@ -305,8 +323,8 @@ transform — `scaleEffect(anchor: .topLeading)` then `offset` — so a canvas p
   fight over the same touch. A *held* finger is always a recording — a root node under the finger,
   wherever it lands — which is the one gesture the canvas can't afford to make conditional, since
   it's the record button. Selecting is asked for instead: the ⌘ button beside the minimap held down
-  (`metaHeld`), or the mode from ⋯ → Select Nodes (`isSelecting`) for hands that would rather not
-  hold anything. Either way a drag draws the box and a tap picks a card out;
+  (`ModifierKeyMonitor.virtualCommand`), or the mode from ⋯ → Select Nodes (`isSelecting`) for hands
+  that would rather not hold anything. Either way a drag draws the box and a tap picks a card out;
   the "+" buttons stand down while it's on, so a stray fingertip can't add a node in the middle of
   choosing them. With a keyboard attached, **holding a real ⌘ turns a single drag into a selection
   box** as well. Two predicates, two mechanisms, because they answer different questions.
@@ -320,8 +338,13 @@ transform — `scaleEffect(anchor: .topLeading)` then `offset` — so a canvas p
   focused view; one shared instance, since a joint document has two canvases asking about one
   keyboard. It watches `leftAlt`/`rightAlt` alongside `leftGUI`/`rightGUI`, since ⌥ has to be drawn
   as it's held too — it's what a copy drag reads, and what a document's inter-paragraph "+" reads to
-  become a caret. With no hardware keyboard both stay false, which is what the ⌘ and ⌥ buttons are
-  for. Hover is tracked on every card in every mode rather than only while picking out: a
+  become a caret. It watches shift too, for one question only: a `UITextView` is handed the same
+  `"\n"` whether or not shift was down, and a graph node's editor needs to tell **Return** (which
+  commits, the same as Done) from **shift + Return** (which puts a line break in). With no hardware
+  keyboard all of them stay false, which is what the ⌘ and ⌥ buttons are for — and those buttons
+  live on the *same* shared monitor (`virtualCommand` / `virtualOption`) rather than in the canvas
+  that draws them, because a joint document is two panes of one screen: a soft ⌘ held beside the
+  canvas has to turn the document half's "+" into a caret, exactly as the real key does. Hover is tracked on every card in every mode rather than only while picking out: a
   pointer already resting on a card has sent its hover event and won't send another when ⌘ goes
   down. A card's quick actions **don't** go away the moment the pointer leaves it: the bar floats
   clear of the card, so reaching it means crossing a few points that belong to neither, and letting
@@ -393,9 +416,13 @@ two groups measured from the same outermost cards would otherwise land exactly o
 Rings are worked out innermost first (fewest members first — a strict subset is nested by
 definition) and each is pushed out to clear the rings inside it by `nestedGroupGap`; they're then
 drawn widest first, so an inner ring's edge and label sit above the outer one's rather than under
-it. Membership is deliberately *not* judged against these frames: a node dragged in or out is still
+it. Membership is deliberately *not* judged against these frames: a node dragged into a ring is
 tested against the plain bounding box of the members that didn't move, so a buffer drawn for the eye
-can't quietly change what a group contains.
+can't quietly change what a group contains. What the rings *do* answer live is the drag itself —
+`liveMembers(of:boxes:)` counts a dragged card in while its middle is inside the ring, so the ring
+stretches to take it in as you carry it across and letting go confirms what you were looking at
+rather than surprising you. It runs the same test the drop does, which is what keeps the two in
+step.
 
 **Two shapes for one list (iOS).** `showingNodeList` is the *request*; how it's answered depends on
 the width. `horizontalSizeClass == .regular` puts the node list in an `HStack` beside the canvas as a
