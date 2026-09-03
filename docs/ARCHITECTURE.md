@@ -289,9 +289,12 @@ transform — `scaleEffect(anchor: .topLeading)` then `offset` — so a canvas p
   `pickingOutThisTouch` reads `UIEvent.modifierFlags` off the touch itself (`CommandKeyWatcher`) —
   enough for a drag, and it works on every version. `isPickingOut` is view *state*, because the
   cards have to be drawn differently while the key is down and the quick actions appear under a
-  pointer with nothing touched at all; that needs a key press to actually reach the view, which is
-  `onModifierKeysChanged` and iOS 18 (`CommandKeyHeld`). Below 18 it stays false and the ⌘ button is
-  the way in. Hover is tracked on every card in every mode rather than only while picking out: a
+  pointer with nothing touched at all; that needs the press itself. SwiftUI has nothing for this on
+  iOS — `onModifierKeysChanged` is macOS-only — and the responder chain is the wrong shape, since
+  presses go to whatever is first responder (a text view, or nothing). So `CommandKeyMonitor` reads
+  GameController's keyboard, which reports the state of the keys on the device rather than of a
+  focused view; one shared instance, since a joint document has two canvases asking about one
+  keyboard. With no hardware keyboard it stays false, which is what the ⌘ button is for. Hover is tracked on every card in every mode rather than only while picking out: a
   pointer already resting on a card has sent its hover event and won't send another when ⌘ goes
   down. And `registerTap` leaves the selection alone while picking out — a tap on a card reaches
   this gesture too, and clearing there undid the card's own toggle a frame later, which is why

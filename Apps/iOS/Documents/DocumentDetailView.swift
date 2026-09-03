@@ -8,6 +8,11 @@ import UIKit
 // `touchesBegan` and setting `state` are only visible with it imported.
 import UIKit.UIGestureRecognizerSubclass
 #endif
+#if canImport(GameController)
+// For the hardware ⌘ as it's *held* — see `CommandKeyMonitor`. GameController reports the state of
+// the keys on the device, which is the one place iOS will tell you that.
+import GameController
+#endif
 
 /// A document: a coherent body of editable paragraphs, with the source recordings kept in a
 /// separate "Recordings" section at the bottom.
@@ -3261,13 +3266,9 @@ struct GraphDocumentView: View {
     /// on while it's down, off the moment it isn't — which is what lets it stand for other
     /// modifiers later without changing what it means.
     @State private var metaHeld = false
-    /// The hardware ⌘, as *live* state — which is a different thing from `keys`, and needed for a
-    /// different reason. `keys` is read at touch-down, which is all a drag needs; but the cards have
-    /// to be *drawn* differently while the key is down (that's what puts the quick actions under
-    /// the pointer), and nothing about a key press reaches this view unless something watches for
-    /// it. `onModifierKeysChanged` does, from iOS 18; before that this stays false and the ⌘ button
-    /// beside the minimap is the way in.
-    @State private var commandKeyDown = false
+    /// The hardware ⌘ as it's held, which is a different thing from `keys` above: that one is read
+    /// off a touch, and a touch is not what a hover or a key press is. See `CommandKeyMonitor`.
+    @ObservedObject private var commandKey = CommandKeyMonitor.shared
     /// The card the pointer is resting on. Tracked whenever there's a pointer, not only while ⌘ is
     /// engaged — otherwise pressing ⌘ with the pointer already over a card would raise nothing,
     /// since no hover event happens when a key goes down.
@@ -3452,8 +3453,6 @@ struct GraphDocumentView: View {
                 .background(WW.paper)
                 // Nothing to see: it watches the window for the ⌘ held as a touch goes down.
                 .background { commandKeyWatcher() }
-                // …and this one watches the key itself, for as long as it's held.
-                .modifier(CommandKeyHeld(isDown: $commandKeyDown))
                 .clipped()
                 .contentShape(Rectangle())
                 // The canvas's own gestures. A touch that lands on a node is the node's — SwiftUI
@@ -4271,7 +4270,7 @@ struct GraphDocumentView: View {
     /// (⋯ → Select Nodes), the ⌘ button held down, or — from iOS 18, where a key press can be
     /// watched for — a hardware ⌘ held. All three are view state, so the cards, the "+" buttons and
     /// the quick actions follow them.
-    private var isPickingOut: Bool { isSelecting || metaHeld || commandKeyDown }
+    private var isPickingOut: Bool { isSelecting || metaHeld || commandKey.isDown }
 
     /// The same question at the moment a touch begins, which is where a drag decides whether it's a
     /// selection box or a pan. This one also counts the flags read off the touch itself, which is
@@ -5756,27 +5755,69 @@ final class ModifierKeys {
     var isCommandDown = false
 }
 
-/// Watches the hardware ⌘ *while it's held*, rather than at the moment of a touch.
+/// Whether the hardware ⌘ is down *right now* — as against what was held when a touch began, which
+/// is `ModifierKeys` above and a different question.
 ///
-/// Two mechanisms, because they answer different questions. A drag only needs to know what was held
-/// when it began, which is what `CommandKeyWatcher` reads off the touch itself — and that works
-/// everywhere. But the canvas also has to be *drawn* differently while the key is down: the cards
-/// change what a tap means, and the quick actions appear under the pointer without anything being
-/// touched at all. Nothing about a key press reaches a SwiftUI view unless something watches for it,
-/// and the thing that watches — `onModifierKeysChanged` — arrived in iOS 18. Below that this is
-/// inert and the ⌘ button beside the minimap is the way in, which is what it's there for.
-struct CommandKeyHeld: ViewModifier {
-    @Binding var isDown: Bool
+/// Two mechanisms because there are two questions. A drag only needs to know what was held when it
+/// started, and a touch carries that with it. But the canvas has to be *drawn* differently while
+/// the key is down — the cards change what a tap means, and a node's quick actions appear under the
+/// pointer with nothing touched at all — which needs the press itself, as it happens.
+///
+/// SwiftUI has no answer for that on iOS (`onModifierKeysChanged` is macOS), and the responder
+/// chain is the wrong shape for it: presses go to whatever is first responder, which here is a text
+/// view or nothing at all. GameController's keyboard is neither — it reports the state of the keys
+/// on the device, whoever happens to be typing — so that's what this watches. One shared watcher:
+/// a joint document has two canvases in it, and they're asking about the same keyboard.
+///
+/// With no hardware keyboard there's nothing to report and this stays false, which is exactly the
+/// case the ⌘ button beside the minimap exists for.
+final class CommandKeyMonitor: ObservableObject {
+    static let shared = CommandKeyMonitor()
 
-    func body(content: Content) -> some View {
-        if #available(iOS 18.0, *) {
-            content.onModifierKeysChanged(mask: .command) { _, held in
-                let down = held.contains(.command)
-                guard isDown != down else { return }
-                withAnimation(.snappy(duration: 0.15)) { isDown = down }
+    @Published private(set) var isDown = false
+
+    #if canImport(GameController)
+    private var observers: [NSObjectProtocol] = []
+
+    private init() {
+        watch(GCKeyboard.coalesced)
+        let center = NotificationCenter.default
+        observers.append(center.addObserver(forName: .GCKeyboardDidConnect,
+                                            object: nil, queue: .main) { [weak self] note in
+            self?.watch(note.object as? GCKeyboard ?? GCKeyboard.coalesced)
+        })
+        observers.append(center.addObserver(forName: .GCKeyboardDidDisconnect,
+                                            object: nil, queue: .main) { [weak self] _ in
+            self?.report(false)
+        })
+    }
+
+    /// Both ⌘ keys, watched separately: either one down means ⌘ is down, and letting one go while
+    /// the other is still held shouldn't read as letting go.
+    private func watch(_ keyboard: GCKeyboard?) {
+        guard let input = keyboard?.keyboardInput else { return }
+        for code in [GCKeyCode.leftGUI, GCKeyCode.rightGUI] {
+            input.button(forKeyCode: code)?.pressedChangedHandler = { [weak self] _, _, pressed in
+                self?.report(pressed || Self.eitherIsDown)
             }
-        } else {
-            content
+        }
+    }
+
+    private static var eitherIsDown: Bool {
+        guard let input = GCKeyboard.coalesced?.keyboardInput else { return false }
+        return input.button(forKeyCode: .leftGUI)?.isPressed == true
+            || input.button(forKeyCode: .rightGUI)?.isPressed == true
+    }
+    #else
+    private init() {}
+    #endif
+
+    /// Handlers arrive on whichever queue GameController feels like; published state has to change
+    /// on the main one.
+    private func report(_ down: Bool) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.isDown != down else { return }
+            withAnimation(.snappy(duration: 0.15)) { self.isDown = down }
         }
     }
 }
@@ -5784,9 +5825,9 @@ struct CommandKeyHeld: ViewModifier {
 #if canImport(UIKit)
 /// Reports the modifier keys held at each touch-down into a `ModifierKeys`.
 ///
-/// UIKit tells the truth about this and SwiftUI (before iOS 18) doesn't: a `UIEvent` carries the
-/// modifier flags that were down when it happened, so one passive recognizer on the window sees
-/// what the keyboard was doing as each touch begins. The recognizer fails itself immediately and
+/// UIKit tells the truth about this and SwiftUI has no answer for it on iOS at all: a `UIEvent`
+/// carries the modifier flags that were down when it happened, so one passive recognizer on the
+/// window sees what the keyboard was doing as each touch begins. The recognizer fails itself immediately and
 /// cancels nothing, so it observes the touch without ever taking part in it — the canvas's own
 /// gestures are untouched.
 struct CommandKeyWatcher: UIViewRepresentable {

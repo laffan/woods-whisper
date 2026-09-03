@@ -177,8 +177,9 @@ the rest of the app depends on.
   selected — and a tap on a card takes it in or out. While ⌘ is engaged, the card you **point at**
   (or tap) also raises a small pair of buttons just above it: **delete** that node, or **tidy its
   children** — the two things worth doing to *one* card. Pick out a second and they stand down: a
-  set of nodes is what the bar along the bottom is for. (Pointing needs a pointer and a real ⌘ needs
-  iOS 18 — below that the ⌘ button beside the minimap is the way in, and a tap does the pointing.) Any one of the
+  set of nodes is what the bar along the bottom is for. (Pointing needs a pointer, and a real ⌘ needs
+  a real keyboard — without either, the ⌘ button beside the minimap is the way in and a tap does the
+  pointing.) Any one of the
   selected nodes drags the whole lot, and a bar along the bottom carries what you can do with them;
   **Done** leaves the mode.
 - **Lining a selection up.** That bar's second row has **Align Left**, **Align Top**, **Distribute
