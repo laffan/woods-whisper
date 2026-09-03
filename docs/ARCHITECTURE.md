@@ -311,7 +311,17 @@ transform — `scaleEffect(anchor: .topLeading)` then `offset` — so a canvas p
   height downwards — for the same reason.
   `DocumentStore.tidyChildren(of:in:)` is the one thing that moves nodes the user didn't drag:
   children into a column beside their parent, spaced by the *height of the branch hanging off each*
-  so a child with a family doesn't land on its sibling.
+  so a child with a family doesn't land on its sibling. **Which way that row runs is read, not
+  decided** (`Document.branchAxis(of:)`): the mean offset of the children from their parent, which
+  is steady because a row centred on one axis cancels its own spread on the other. A row drawn
+  downwards is re-spaced downwards — the same arithmetic turned ninety degrees, with `spread` the
+  sideways twin of `extent`, and the two gaps staying attached to their axes (cards side by side
+  need `standardNodeGap`, cards stacked need only `tidyRowGap`, whichever way the row runs). A tie
+  takes the canvas's own direction, right. `tidyGraph` reads *every* row's direction before it moves
+  anything: it works roots-down, so a child asked afterwards would report the direction its parent's
+  tidy had just pushed it in rather than the one it was arranged in — which is why `tidyChildren`
+  takes an optional `axis`. `addChildNode` follows the same reading, so the "+" adds to the row it's
+  joining rather than always striking out to the right.
   Inserting a node on an edge is the same idea in miniature — the branch below slides out by a
   node's width and the new node takes the middle of the widened gap, so it has the room the "+" had.
   Both go through one rigid `translate(subtreeOf:)`, which is why nothing below ever gets scrambled.
@@ -408,13 +418,20 @@ dragging a node changes neither the stored positions nor the viewport it draws �
 cheaper than repainting every dot. What's left, if it's ever still not smooth, is splitting the node
 card into its own view so SwiftUI can skip the ones a drag isn't touching.
 
-**A long press has to fail before a drag can begin.** A card carries a double tap (edit), a long
-press (the dropdown) and a drag, and the long press fails on *movement* — so at its default
-`maximumDistance` of 10 points the drag couldn't start until the finger had travelled 10, whatever
-its own `minimumDistance` said. The card sat still for the first stretch of every drag and then
-jumped to catch up, which reads as a hang. The press's `maximumDistance` is now 3 and the drag's
-`minimumDistance` 4, so the press is out of the way before the drag wants to start — and the jump
-when it does start (the translation arrives already accumulated) is 4 points rather than 6.
+**A drag has to outrank the gestures it shares a card with.** A card carries a double tap (edit), a
+long press (the dropdown) and a drag. Gesture modifiers on one view are tried in the order they were
+attached, and the drag was attached last — so the tap and the press each got first refusal and the
+drag couldn't begin until both had *failed*. Both fail on movement, and a tap's allowance for it is
+around ten points with nothing on `onTapGesture` to set it. So the card sat still for the first ten
+points of every drag and then jumped to catch up: a hang, then smoothness. Tightening the press's
+`maximumDistance` (now 3, and worth keeping — a menu shouldn't open out from under a card already on
+its way) fixed half of it and left the tap doing the same thing.
+
+`highPriorityGesture` inverts the order and takes nothing away. A tap doesn't travel the drag's four
+points, so the drag never begins during one and the tap still fires; a press held still never moves
+at all, so the menu still opens. Only a touch that actually goes somewhere is claimed — which is the
+touch that meant to. The four points are also the distance the card jumps when the drag does begin,
+since the translation arrives already accumulated.
 
 **Saving is on the path of every gesture, so what it does has to be worth it.** `persistDocuments`
 runs on every committed drag, every edit, and — since a ⌘ drag detaches as it *starts* — on the

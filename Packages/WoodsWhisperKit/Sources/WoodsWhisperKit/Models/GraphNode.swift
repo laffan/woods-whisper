@@ -87,6 +87,29 @@ public struct GraphNode: Identifiable, Codable, Hashable, Sendable {
     public var displayText: String { heading?.text ?? trimmedText }
 }
 
+/// Which way a parent's children hang off it — read from where they already sit, never decided.
+///
+/// The canvas's own direction is **right**: a child added to a fresh parent goes out beside it, and
+/// that's what a tidy has always assumed. But a mind map isn't always drawn that way. Turn a branch
+/// downwards — children in a row under their parent — and a tidy that put them back in a column to
+/// the right wouldn't be tidying, it would be overruling you. So the arranging asks the layout
+/// which way this row runs and keeps it: the spacing is the tidy's business, the direction is
+/// yours.
+public enum GraphBranchAxis: String, Codable, Hashable, Sendable {
+    case right, left, down, up
+
+    /// Whether the row runs *across* the canvas (children beside their parent, stacked down the
+    /// page) or *down* it (children under their parent, spread across).
+    public var isHorizontal: Bool { self == .right || self == .left }
+
+    /// Which way along that axis: +1 for right and down, -1 for left and up.
+    public var sign: Double { (self == .right || self == .down) ? 1 : -1 }
+
+    /// What a parent with nowhere to read a direction from gets — the one the canvas has always
+    /// used, so nothing about a graph drawn the ordinary way changes.
+    public static let `default` = GraphBranchAxis.right
+}
+
 /// A node and how deep it hangs in the graph — one line of the node list, and the shape the
 /// outline is built from.
 public struct GraphNodeEntry: Identifiable, Hashable, Sendable {
@@ -128,6 +151,43 @@ extension Document {
             .sorted { lhs, rhs in
                 if lhs.position.y != rhs.position.y { return lhs.position.y < rhs.position.y }
                 if lhs.position.x != rhs.position.x { return lhs.position.x < rhs.position.x }
+                return lhs.createdAt < rhs.createdAt
+            }
+    }
+
+    /// Which way `parentID`'s children hang off it, read from the *mean* offset of the children
+    /// from their parent.
+    ///
+    /// The mean is what makes this steady rather than jumpy. A row of children spread along one
+    /// axis is centred on the parent across the other, so the cross-axis offsets cancel and only
+    /// the direction the row actually runs in survives — however many children there are, and
+    /// whichever of them happens to be furthest out. A tie (children sitting on top of their
+    /// parent, a graph piled on the origin) is no direction at all, so it takes the canvas's own.
+    public func branchAxis(of parentID: UUID) -> GraphBranchAxis {
+        guard let parent = node(with: parentID) else { return .default }
+        var dx = 0.0, dy = 0.0, count = 0.0
+        for child in nodes where child.parentID == parentID {
+            dx += child.position.x - parent.position.x
+            dy += child.position.y - parent.position.y
+            count += 1
+        }
+        guard count > 0 else { return .default }
+        dx /= count
+        dy /= count
+        guard abs(dx) >= abs(dy) else { return dy < 0 ? .up : .down }
+        return dx < 0 ? .left : .right
+    }
+
+    /// The children of `parentID` in the order the row reads, given which way it runs: down the
+    /// page for a row that goes out sideways, across the page for one that goes down. Tidying
+    /// re-spaces a row without reordering it, which means reading it the way it's drawn.
+    public func children(of parentID: UUID, along axis: GraphBranchAxis) -> [GraphNode] {
+        guard !axis.isHorizontal else { return children(of: parentID) }
+        return nodes
+            .filter { $0.parentID == parentID }
+            .sorted { lhs, rhs in
+                if lhs.position.x != rhs.position.x { return lhs.position.x < rhs.position.x }
+                if lhs.position.y != rhs.position.y { return lhs.position.y < rhs.position.y }
                 return lhs.createdAt < rhs.createdAt
             }
     }

@@ -182,9 +182,9 @@ the rest of the app depends on.
   this a heading", and the size is what it turned into — and comes back the moment you open the node
   to edit it. (Three hashes or more isn't a size the canvas draws, so it stays ordinary text with
   the hashes showing.)
-- **Three keys and a toggle, around the minimap.** An on-screen **⇧**, **⌘** and **⌥** stacked at
-  the canvas's bottom left, and **Auto Tidy** at the right — all four there whether or not the
-  minimap is.
+- **Three keys and a toggle, around the minimap.** **⌘** and **⌥** stacked at the canvas's bottom
+  left; **⇧** over **Auto Tidy** at the bottom right — all four there whether or not the minimap
+  is, two to a side so neither stack stands taller than the map between them.
   Auto Tidy is a setting: tap it on and it stays on, which is why it sits apart from the keys.
   **⇧, ⌘ and ⌥ are keys**: hold one down with one thumb and drag with the other, exactly as you'd
   hold the real thing, and it lets go the moment you do. They fill in while they're on. Being keys,
@@ -198,7 +198,15 @@ the rest of the app depends on.
   finger leaves it, rather than sitting where it landed until you ask. Children go out beside their
   parent at the standard distance, stacked with **30 points of air between the cards** — measured
   between what's drawn, so a six-line card takes the room it needs and the gap stays the gap you
-  see. A node with no parent has no
+  see.
+  **A tidy never turns a branch round.** Which way a row runs is something you said by putting the
+  cards there, so it's read off the layout and kept: children drawn in a column to the right are
+  re-spaced in a column to the right, children drawn in a row *underneath* are re-spaced in a row
+  underneath, and the same for left and up. Tidying is about the spacing — the part nobody wants to
+  do by hand — not about the direction. A card's **"+"** follows the same rule: it adds the new
+  child to the row it's joining rather than always striking out to the right. (A parent with no
+  children yet has no direction to read, so its first child goes out to the right, as always.)
+  A node with no parent has no
   siblings to line up, so a root you hold or double-tap onto the canvas is left exactly where you put
   it; abandoning an empty node closes the row back up. A node made *during* a gesture — a **"+"**
   held down, a chain still being spoken — waits until your finger lifts, so the card being recorded

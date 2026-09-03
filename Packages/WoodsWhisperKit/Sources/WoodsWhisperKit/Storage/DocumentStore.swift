@@ -858,23 +858,37 @@ public final class DocumentStore: ObservableObject {
     public func tidyGraph(in documentID: UUID, heights: [UUID: Double] = [:]) {
         guard let docIdx = index(of: documentID) else { return }
         let parents = documents[docIdx].nodeEntries.map(\.node.id)
-        for id in parents where !documents[docIdx].children(of: id).isEmpty {
-            tidyChildren(of: id, in: documentID, heights: heights)
+            .filter { !documents[docIdx].children(of: $0).isEmpty }
+        // Every row's direction is read **before** anything moves. This pass works from the roots
+        // down, so by the time it reaches a row that row's parent has already been picked up and
+        // put somewhere else — and a child asked afterwards would report the direction it was just
+        // pushed in rather than the one you arranged it in. The layout you're tidying is the one
+        // you were looking at when you asked.
+        let axes = parents.reduce(into: [UUID: GraphBranchAxis]()) { axes, id in
+            axes[id] = documents[docIdx].branchAxis(of: id)
+        }
+        for id in parents {
+            tidyChildren(of: id, in: documentID, heights: heights, axis: axes[id])
         }
     }
 
-    /// Add a child to `parentID` — the "+" on a node's right edge. It starts to the right of its
-    /// parent and below any siblings; the layout takes it from there.
+    /// Add a child to `parentID` — the "+" on a node's right edge. It starts one step out along
+    /// whichever way that parent's children already run (`Document.branchAxis(of:)`), clear of the
+    /// siblings already there; the layout takes it from there. A parent with no children yet has no
+    /// direction to follow, so its first child goes out to the right, as it always has.
     @discardableResult
     public func addChildNode(to parentID: UUID, in documentID: UUID, text: String = "") -> GraphNode? {
         guard let docIdx = index(of: documentID),
               let parent = documents[docIdx].node(with: parentID) else { return nil }
-        let siblings = documents[docIdx].children(of: parentID).count
-        let node = GraphNode(text: text,
-                             parentID: parentID,
-                             position: GraphPoint(x: parent.position.x + Self.childColumnOffset,
-                                                  y: parent.position.y
-                                                     + Double(siblings) * Self.standardRowStep))
+        let axis = documents[docIdx].branchAxis(of: parentID)
+        let siblings = Double(documents[docIdx].children(of: parentID).count)
+        // One step out along the row's own axis, and one place along it past what's already there.
+        let position = axis.isHorizontal
+            ? GraphPoint(x: parent.position.x + axis.sign * Self.childColumnOffset,
+                         y: parent.position.y + siblings * Self.standardRowStep)
+            : GraphPoint(x: parent.position.x + siblings * Self.childColumnOffset,
+                         y: parent.position.y + axis.sign * Self.standardRowStep)
+        let node = GraphNode(text: text, parentID: parentID, position: position)
         documents[docIdx].nodes.append(node)
         touch(docIdx)
         return node
@@ -925,44 +939,90 @@ public final class DocumentStore: ObservableObject {
         return node
     }
 
-    /// "Tidy children": line a node's children up in a column beside it — all the same distance
-    /// out, evenly spaced down the page, centred on the parent — and bring each one's branch along
-    /// unchanged.
+    /// "Tidy children": line a node's children up beside it — all the same distance out, evenly
+    /// spaced, centred on the parent — and bring each one's branch along unchanged.
     ///
-    /// Siblings are spaced by the *height of the branch hanging off them* rather than by a flat
-    /// gap, so a child with a family of its own doesn't land on top of the next one. Their order is
-    /// the order they already read in, top to bottom, so tidying rearranges the spacing and not the
-    /// meaning.
+    /// **The direction is the layout's, not this method's.** Children drawn in a column to the
+    /// right are re-spaced in a column to the right; children drawn in a row underneath are
+    /// re-spaced in a row underneath, and the same for left and up (`Document.branchAxis(of:)`).
+    /// A tidy is about the spacing of a row — which is a thing nobody wants to do by hand — not
+    /// about which way the row runs, which is a thing you decided by putting the cards there.
+    /// Turning a branch downwards and having it snap back sideways is the tidy overruling you.
+    ///
+    /// Siblings are spaced by the *reach of the branch hanging off them* rather than by a flat gap,
+    /// so a child with a family of its own doesn't land on top of the next one. Their order is the
+    /// order they already read in — top to bottom for a sideways row, left to right for a downward
+    /// one — so tidying rearranges the spacing and not the meaning.
     ///
     /// `heights` is what the canvas has measured each card to be. A branch's extent is worked out
-    /// from the **cards**, so what's left between two of them is `tidyRowGap` of visible air —
-    /// spacing centres instead would leave a taller card overlapping its neighbour and a short one
-    /// marooned. Anything not in `heights` falls back to `nodeCardHeight`.
+    /// from the **cards**, so what's left between two of them is a gap of visible air — spacing
+    /// centres instead would leave a taller card overlapping its neighbour and a short one
+    /// marooned. Anything not in `heights` falls back to `nodeCardHeight`. Widths aren't measured
+    /// because they aren't variable: every card is drawn `nodeCardWidth` wide.
+    ///
+    /// `axis` is for the one caller that can't read the direction off the layout when it needs it:
+    /// see `tidyGraph`.
     public func tidyChildren(of parentID: UUID, in documentID: UUID,
-                             heights: [UUID: Double] = [:]) {
+                             heights: [UUID: Double] = [:],
+                             axis: GraphBranchAxis? = nil) {
         guard let docIdx = index(of: documentID),
               let parent = documents[docIdx].node(with: parentID) else { return }
-        let children = documents[docIdx].children(of: parentID)
+        let axis = axis ?? documents[docIdx].branchAxis(of: parentID)
+        let children = documents[docIdx].children(of: parentID, along: axis)
         guard !children.isEmpty else { return }
 
-        // How far each child's branch reaches above and below the child itself.
-        let reaches = children.map { child -> (above: Double, below: Double) in
-            let box = extent(ofSubtree: child.id, at: docIdx, heights: heights)
-            return (child.position.y - box.top, box.bottom - child.position.y)
-        }
+        if axis.isHorizontal {
+            // A column beside the parent: one distance out for all of them, stacked down the page
+            // by how far each branch reaches above and below its own card.
+            let reaches = children.map { child -> (before: Double, after: Double) in
+                let box = extent(ofSubtree: child.id, at: docIdx, heights: heights)
+                return (child.position.y - box.top, box.bottom - child.position.y)
+            }
+            let bands = reaches.reduce(0.0) { $0 + $1.before + $1.after }
+            let height = bands + Double(children.count - 1) * Self.tidyRowGap
+            var cursor = parent.position.y - height / 2
+            let column = parent.position.x + axis.sign * Self.childColumnOffset
 
-        let bands = reaches.reduce(0.0) { $0 + $1.above + $1.below }
-        let height = bands + Double(children.count - 1) * Self.tidyRowGap
-        var cursor = parent.position.y - height / 2
-        let column = parent.position.x + Self.childColumnOffset
+            for (child, reach) in zip(children, reaches) {
+                let y = cursor + reach.before
+                translate(subtreeOf: child.id,
+                          byX: column - child.position.x,
+                          y: y - child.position.y,
+                          at: docIdx)
+                cursor = y + reach.after + Self.tidyRowGap
+            }
+        } else {
+            // A row under the parent, which is the same arithmetic turned ninety degrees: spread
+            // across the page by how far each branch reaches either side of its own card, and every
+            // card's near edge a clear `tidyRowGap` from the parent's.
+            //
+            // The two gaps are different numbers on purpose, and they stay attached to the axis
+            // they belong to rather than to the direction the row happens to run: cards *side by
+            // side* need a card's width of air between them to read as separate (`standardNodeGap`),
+            // cards *stacked* need much less (`tidyRowGap`), and that's true of a row going down
+            // just as it is of a column going across.
+            let spreads = children.map { child -> (before: Double, after: Double) in
+                let box = spread(ofSubtree: child.id, at: docIdx)
+                return (child.position.x - box.left, box.right - child.position.x)
+            }
+            let bands = spreads.reduce(0.0) { $0 + $1.before + $1.after }
+            let width = bands + Double(children.count - 1) * Self.standardNodeGap
+            var cursor = parent.position.x - width / 2
+            let parentHalf = (heights[parentID] ?? Self.nodeCardHeight) / 2
 
-        for (child, reach) in zip(children, reaches) {
-            let y = cursor + reach.above
-            translate(subtreeOf: child.id,
-                      byX: column - child.position.x,
-                      y: y - child.position.y,
-                      at: docIdx)
-            cursor = y + reach.below + Self.tidyRowGap
+            for (child, band) in zip(children, spreads) {
+                let x = cursor + band.before
+                // The row is level: every card's *edge* the same distance from the parent's, which
+                // is what makes a row of mismatched cards read as a row.
+                let childHalf = (heights[child.id] ?? Self.nodeCardHeight) / 2
+                let y = parent.position.y
+                    + axis.sign * (parentHalf + Self.tidyRowGap + childHalf)
+                translate(subtreeOf: child.id,
+                          byX: x - child.position.x,
+                          y: y - child.position.y,
+                          at: docIdx)
+                cursor = x + band.after + Self.standardNodeGap
+            }
         }
         touch(docIdx)
     }
@@ -985,6 +1045,25 @@ public final class DocumentStore: ObservableObject {
             return (y - Self.nodeCardHeight / 2, y + Self.nodeCardHeight / 2)
         }
         return (top, bottom)
+    }
+
+    /// The same across the page: how far left and right a branch reaches. Card widths aren't
+    /// measured the way heights are because they aren't variable — every card is drawn
+    /// `nodeCardWidth` wide, and only its height grows with what was said into it.
+    private func spread(ofSubtree id: UUID, at docIdx: Int) -> (left: Double, right: Double) {
+        var left = Double.greatestFiniteMagnitude
+        var right = -Double.greatestFiniteMagnitude
+        let half = Self.nodeCardWidth / 2
+        for nodeID in documents[docIdx].subtree(of: id) {
+            guard let node = documents[docIdx].node(with: nodeID) else { continue }
+            left = min(left, node.position.x - half)
+            right = max(right, node.position.x + half)
+        }
+        guard left <= right else {
+            let x = documents[docIdx].node(with: id)?.position.x ?? 0
+            return (x - half, x + half)
+        }
+        return (left, right)
     }
 
     /// Move a node and everything hanging off it, rigidly — the one way this store ever moves a

@@ -3299,8 +3299,9 @@ struct JointDocumentView: View {
                               "Document and graph")
             viewToggleSegment(.graph, "point.3.connected.trianglepath.dotted", "Graph only")
         }
-        .padding(2)
-        .background(WW.hairline.opacity(0.5), in: Capsule())
+        // No track behind the three. The bar's own surface is the background, and the one filled
+        // capsule is the whole of what the control has to say; a plate under all three said it
+        // twice and made a small thing look heavy.
         .accessibilityElement(children: .contain)
     }
 
@@ -3801,20 +3802,31 @@ struct GraphDocumentView: View {
                         toggleSelection(of: node)
                         withAnimation(.snappy(duration: 0.15)) { tappedNodeID = node.id }
                     }
-                    .gesture(nodeDrag(node, in: document))
+                    .highPriorityGesture(nodeDrag(node, in: document))
             } else {
                 card
                     .onTapGesture(count: 2) { startEditing(node) }
-                    // `maximumDistance` deliberately *under* the drag's `minimumDistance` below.
-                    // A long press has to fail before a drag on the same card can begin, and it
-                    // fails on movement — so with the default 10 points, a drag couldn't start
-                    // until the finger had travelled 10, however small its own threshold was. The
-                    // card sat still for the first stretch of every drag and then jumped to catch
-                    // up. At 3 the press is out of the way before the drag wants to start.
+                    // 3 points, not the default 10: once you've started moving, you're dragging,
+                    // and a menu that opens out from under a card already on its way is a menu
+                    // nobody asked for.
                     .onLongPressGesture(minimumDuration: 0.45, maximumDistance: 3) {
                         openMenu(for: node)
                     }
-                    .gesture(nodeDrag(node, in: document))
+                    // **High priority, and that's what makes a drag start when it starts.**
+                    //
+                    // Gesture modifiers on one view are tried in the order they were attached, and
+                    // a plain `.gesture` here is attached last — so the double tap and the long
+                    // press each got first refusal, and a drag couldn't begin until both had
+                    // *failed*. Both fail on movement, and a tap's allowance for it is around ten
+                    // points with no way to set it from `onTapGesture`. So the card sat still for
+                    // the first ten points of every drag and then jumped to catch up: the hang.
+                    //
+                    // Raising the drag inverts the order without taking anything away. A tap
+                    // doesn't travel four points, so the drag never begins during one and the tap
+                    // still fires; a press held still never moves at all, so the menu still opens.
+                    // Only a touch that actually goes somewhere is claimed, which is the touch that
+                    // meant to.
+                    .highPriorityGesture(nodeDrag(node, in: document))
             }
         }
         // Hover is watched in every mode, not only while picking out: a pointer resting on a card
@@ -5747,14 +5759,15 @@ struct GraphDocumentView: View {
                 } else {
                     Spacer(minLength: 0)
                 }
-                autoTidyButton()
+                rightControlColumn(for: document)
             }
             .padding(.horizontal, 12)
             .padding(.bottom, 10)
         }
     }
 
-    /// The on-screen keys, stacked at the minimap's left: **⇧**, **⌘** and **⌥**.
+    /// The two on-screen keys at the minimap's left: **⌘** and **⌥**. (**⇧** is a key too, but it
+    /// lives on the other side — see `rightControlColumn`.)
     ///
     /// They're *keys*, not switches: you hold one down with one thumb and drag with the other,
     /// exactly as you'd hold the real thing, and it lets go the moment you do. That's what keeps
@@ -5762,17 +5775,9 @@ struct GraphDocumentView: View {
     /// too. Today ⌘ picks nodes out, pulls a dragged card out of the network and out of any ring it
     /// leaves, and — in a joint document — turns the other half's "+" into a caret; ⌥ drags a copy;
     /// ⇧ qualifies ⌘, so ⌘⇧ takes a card out of its ring and leaves the tree alone.
-    ///
-    /// ⇧ sits at the top and is **live only while ⌘ is**, because that's all it means here — on its
-    /// own it would be a key that does nothing, and a key that does nothing is a key you press to
-    /// find out. It's drawn either way rather than appearing and vanishing: a button that moves out
-    /// from under a thumb is worse than one that's greyed.
     private func modifierKeyColumn(for document: Document) -> some View {
         let hasNodes = !document.nodes.isEmpty
         return VStack(spacing: 8) {
-            modifierKey("shift", isOn: $modifierKeys.virtualShift,
-                        enabled: hasNodes && isCommandEngaged,
-                        label: "Hold with ⌘ to drag a node out of its group but not out of the network")
             modifierKey("command", isOn: $modifierKeys.virtualCommand,
                         enabled: hasNodes,
                         label: "Hold to select nodes, or drag a node out of the network and its groups")
@@ -5782,8 +5787,28 @@ struct GraphDocumentView: View {
         }
     }
 
-    /// **Auto tidy**, at the minimap's right — a setting rather than a key, so unlike its
-    /// neighbours across the map it's a toggle that stays where you put it.
+    /// The right-hand stack: **⇧** over **Auto tidy**.
+    ///
+    /// ⇧ is the third key, and it's over here rather than on top of the other two so that neither
+    /// side stands taller than the minimap between them. Two and two reads as the row it is; three
+    /// and one left a column poking up past the map for the sake of a key that's greyed most of
+    /// the time.
+    ///
+    /// It's **live only while ⌘ is**, because qualifying ⌘ is all it means here — on its own it
+    /// would be a key that does nothing, and a key that does nothing is a key you press to find
+    /// out. Drawn either way rather than appearing and vanishing: a button that moves out from
+    /// under a thumb is worse than one that's greyed.
+    private func rightControlColumn(for document: Document) -> some View {
+        VStack(spacing: 8) {
+            modifierKey("shift", isOn: $modifierKeys.virtualShift,
+                        enabled: !document.nodes.isEmpty && isCommandEngaged,
+                        label: "Hold with ⌘ to drag a node out of its group but not out of the network")
+            autoTidyButton()
+        }
+    }
+
+    /// **Auto tidy**, at the minimap's right — a setting rather than a key, so unlike the keys
+    /// around it it's a toggle that stays where you put it.
     private func autoTidyButton() -> some View {
         Button {
             withAnimation(.snappy(duration: 0.2)) { autoTidy.toggle() }

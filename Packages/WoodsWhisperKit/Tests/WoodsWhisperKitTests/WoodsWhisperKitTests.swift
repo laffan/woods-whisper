@@ -1063,6 +1063,107 @@ final class WoodsWhisperKitTests: XCTestCase {
                        column + DocumentStore.childColumnOffset)
     }
 
+    // MARK: Which way a branch runs
+
+    /// The direction is read off the layout, and a tie takes the canvas's own.
+    func testABranchsDirectionIsReadFromWhereItsChildrenSit() {
+        let parent = GraphNode(text: "Camp", position: GraphPoint(x: 0, y: 0))
+        func graph(_ children: [GraphPoint]) -> Document {
+            Document(title: "Route", kind: .graph,
+                     nodes: [parent] + children.map {
+                         GraphNode(parentID: parent.id, position: $0)
+                     })
+        }
+        // A column out to the right, centred on the parent: the cross-axis offsets cancel.
+        XCTAssertEqual(graph([GraphPoint(x: 330, y: -90), GraphPoint(x: 330, y: 90)])
+                        .branchAxis(of: parent.id), .right)
+        XCTAssertEqual(graph([GraphPoint(x: -330, y: -90), GraphPoint(x: -330, y: 90)])
+                        .branchAxis(of: parent.id), .left)
+        // A row underneath, spread across it.
+        XCTAssertEqual(graph([GraphPoint(x: -200, y: 86), GraphPoint(x: 200, y: 86)])
+                        .branchAxis(of: parent.id), .down)
+        XCTAssertEqual(graph([GraphPoint(x: -200, y: -86), GraphPoint(x: 200, y: -86)])
+                        .branchAxis(of: parent.id), .up)
+        // Nothing to read: children on top of their parent, and a parent with no children at all.
+        XCTAssertEqual(graph([GraphPoint(x: 0, y: 0)]).branchAxis(of: parent.id), .right)
+        XCTAssertEqual(graph([]).branchAxis(of: parent.id), .right)
+    }
+
+    /// The bug this was written for: two nodes one above the other, a third dropped between them
+    /// with the "+", and Auto tidy swinging the whole branch round to the side.
+    @MainActor
+    func testTidyKeepsADownwardBranchDownward() {
+        let name = "GraphAxisTidyTests-\(UUID().uuidString)"
+        let store = DocumentStore(directoryName: name)
+        defer { removeStore(named: name) }
+
+        let graph = store.createDocument(title: "Route", kind: .graph)
+        let parent = store.addRootNode(in: graph.id, text: "Camp")!
+        let below = store.addChildNode(to: parent.id, in: graph.id, text: "Firewood")!
+        // Put the child under its parent rather than beside it — the arrangement being defended.
+        store.moveNodes([below.id: GraphPoint(x: 0, y: 200)], in: graph.id)
+
+        let middle = store.insertNode(between: parent.id, and: below.id, in: graph.id)!
+        store.tidyChildren(of: parent.id, in: graph.id)
+
+        let document = store.document(with: graph.id)!
+        let tidied = document.node(with: middle.id)!
+        XCTAssertGreaterThan(tidied.position.y, parent.position.y,
+                             "a child drawn below its parent should be tidied below it")
+        XCTAssertEqual(tidied.position.x, parent.position.x, accuracy: 0.001,
+                       "one child in a downward row sits under the middle of its parent")
+        // And the branch below it came along rather than being left behind.
+        XCTAssertGreaterThan(document.node(with: below.id)!.position.y, tidied.position.y)
+    }
+
+    /// Two children in a row under their parent: spread across it, level with each other, and not
+    /// stacked into a column off to one side.
+    @MainActor
+    func testTidySpreadsADownwardRowAcross() {
+        let name = "GraphAxisRowTests-\(UUID().uuidString)"
+        let store = DocumentStore(directoryName: name)
+        defer { removeStore(named: name) }
+
+        let graph = store.createDocument(title: "Route", kind: .graph)
+        let parent = store.addRootNode(in: graph.id, text: "Camp")!
+        let left = store.addChildNode(to: parent.id, in: graph.id, text: "Firewood")!
+        let right = store.addChildNode(to: parent.id, in: graph.id, text: "Water")!
+        store.moveNodes([left.id: GraphPoint(x: -300, y: 190),
+                         right.id: GraphPoint(x: 300, y: 210)], in: graph.id)
+
+        store.tidyChildren(of: parent.id, in: graph.id)
+        let document = store.document(with: graph.id)!
+        let a = document.node(with: left.id)!
+        let b = document.node(with: right.id)!
+
+        XCTAssertEqual(a.position.y, b.position.y, accuracy: 0.001, "a row is level")
+        XCTAssertGreaterThan(a.position.y, parent.position.y)
+        XCTAssertNotEqual(a.position.x, b.position.x)
+        // Centred on the parent, and a clear card's width of air between the two of them.
+        XCTAssertEqual((a.position.x + b.position.x) / 2, parent.position.x, accuracy: 0.001)
+        XCTAssertEqual(abs(b.position.x - a.position.x), 180 + 150, accuracy: 0.001)
+    }
+
+    /// The "+" on a card follows the row it's joining rather than always striking out to the right.
+    @MainActor
+    func testAddingAChildFollowsTheRowItJoins() {
+        let name = "GraphAxisAddTests-\(UUID().uuidString)"
+        let store = DocumentStore(directoryName: name)
+        defer { removeStore(named: name) }
+
+        let graph = store.createDocument(title: "Route", kind: .graph)
+        let parent = store.addRootNode(in: graph.id, text: "Camp")!
+        // The first child has no row to join, so it goes out to the right as it always has.
+        let first = store.addChildNode(to: parent.id, in: graph.id, text: "Firewood")!
+        XCTAssertGreaterThan(first.position.x, parent.position.x)
+        XCTAssertEqual(first.position.y, parent.position.y, accuracy: 0.001)
+
+        // Turn the branch downwards; the next child joins it there.
+        store.moveNodes([first.id: GraphPoint(x: 0, y: 200)], in: graph.id)
+        let second = store.addChildNode(to: parent.id, in: graph.id, text: "Water")!
+        XCTAssertGreaterThan(second.position.y, parent.position.y)
+    }
+
     // MARK: Lining a selection up
 
     /// A card the size the canvas draws them, centred where it's told.
