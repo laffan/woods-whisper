@@ -128,7 +128,12 @@ the rest of the app depends on.
   whatever else you asked for. The bar then carries the transform's name (tap it to pick another,
   flip the toggle off to stop). Each document remembers its own choice, and so does the Inbox. Only
   a *first* transcription is transformed: **Retranscribe** and **Reset** still give you the original
-  words back.
+  words back. And it **says nothing when it can't run**: with an online model chosen and no signal —
+  the woods, aeroplane mode — the clip simply keeps its plain transcription, and the reason is in
+  **Settings → Log** rather than in an alert over what you were doing. A rewrite that couldn't
+  happen because you're off-grid is this app working as promised, not an error. (A transform you
+  *asked* for still tells you when it fails: you're waiting on an answer, and you should know none
+  is coming.)
 - **Graph documents (experimental).** The **✎** button now asks what you're making: a **Document** or
   a **Graph**. A graph is a mind map on a pannable, zoomable canvas over a very light grid — endless
   in every direction, so there's always more room a drag away. **Hold anywhere on the canvas** and a

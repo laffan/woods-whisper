@@ -518,6 +518,21 @@ returning the original words. `fillDocumentBody` and `fillGraphNodes` both run *
 transform, so what lands in a paragraph or a node is the shaped text rather than a flash of the raw
 transcription.
 
+**A transform nobody asked for fails quietly.** `applyAutoTransform` runs on its own over a fresh
+capture, which changes what a failure *means*: the clip keeps the words it already had, and an alert
+over whatever the user was doing is noise about a thing they never started. So the offline case —
+the one that happens by design in an app built for the woods — is checked twice and reported
+neither time. **Before**: an online model (`LanguageModelChoice.isOnline`) with no path
+(`NetworkReachability`) is skipped outright, which also saves a two-minute timeout on a request that
+can't land. **After**: `transformRecordingTranscript` takes `reportsOfflineFailure`, false for this
+one caller, because a path can drop mid-request and `NWPathMonitor` answers about the path rather
+than about whether Anthropic is reachable down it. `TextTransformError.isOffline` is what tells the
+two apart — the `URLError` codes that mean "there was no route", plus `timedOut`, unwrapped from the
+`.underlying` case. Everything else still reports, and so does *every* failure of a transform
+someone pressed a button for: they're waiting on an answer and should know none is coming.
+`NetworkReachability` starts optimistic, since `NWPathMonitor`'s first update takes a moment and a
+transform skipped in that window would be skipped for nothing.
+
 **Transcription text size (iOS).** How big transcription text is set — a document's paragraphs, an
 Inbox entry, a graph node — is one number, chosen in Settings → Display and stored in
 `AppSettings.transcriptTextSize`. The app root reads it with `@AppStorage` and hands it down the

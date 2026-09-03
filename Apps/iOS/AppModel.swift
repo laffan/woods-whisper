@@ -727,10 +727,18 @@ final class AppModel: ObservableObject {
     /// asked for, without a trip through the Transform pane. In a document the body text is read back
     /// after this returns, so what lands there is the transformed text.
     ///
-    /// Quietly does nothing when nothing is chosen, when the transcript came back empty, or when the
-    /// language model isn't loaded — none of those is a reason to interrupt a capture with an alert;
-    /// the clip keeps its plain transcription and the log says why. ("Number Paragraphs" needs no
-    /// model, so it still runs.) A transform that runs and *fails* reports itself the usual way.
+    /// Quietly does nothing when nothing is chosen, when the transcript came back empty, when the
+    /// language model isn't loaded, or when the chosen model is an **online** one and there's no
+    /// network to reach it over — none of those is a reason to interrupt a capture with an alert;
+    /// the clip keeps its plain transcription and the log says why. ("Number Paragraphs" needs
+    /// neither a model nor a signal, so it still runs.)
+    ///
+    /// The offline case is checked twice on purpose. Once **before** starting, because a request
+    /// fired into a dead network is a wasted two-minute timeout as well as a wasted request; and
+    /// once **after**, because a path can go while a request is in flight and `NWPathMonitor`
+    /// answers about the path rather than about whether Anthropic is reachable down it. Either way
+    /// nothing is said: a rewrite that couldn't happen because you're in the woods is the app
+    /// working as promised, not an error. Any *other* failure still reports itself the usual way.
     private func applyAutoTransform(recordingID: UUID, in documentID: UUID) async {
         guard let preset = autoTransformPresetForCapture(in: documentID) else { return }
         let transcript = documents.document(with: documentID)?
@@ -741,9 +749,16 @@ final class AppModel: ObservableObject {
             wwLog("Auto transform “\(preset.name)” skipped — the language model isn't loaded", .transform)
             return
         }
+        let model = AppSettings.shared.model
+        if !preset.isNumberParagraphs, model.isOnline, !NetworkReachability.shared.isOnline {
+            wwLog("Auto transform “\(preset.name)” skipped — \(model.shortName) runs online and there's no network. The transcription is untouched.",
+                  .transform)
+            return
+        }
         wwLog("Auto transform: running “\(preset.name)” on a new transcript", .transform)
         autoTransformingIDs.insert(recordingID)
-        await transformRecordingTranscript(preset, recordingID: recordingID, in: documentID)
+        await transformRecordingTranscript(preset, recordingID: recordingID, in: documentID,
+                                           reportsOfflineFailure: false)
         autoTransformingIDs.remove(recordingID)
     }
 
@@ -1015,9 +1030,15 @@ final class AppModel: ObservableObject {
     /// Run a preset against a recording's transcript, replacing the transcript in place. Backs the
     /// Inbox transcript editor's "Transform" button. ("Reset" there just re-transcribes the audio
     /// via `transcribe`, restoring the original transcription.)
+    ///
+    /// `reportsOfflineFailure` is false for the one caller that didn't ask for this — the **Auto
+    /// transform** that runs itself over a fresh capture. A dropped signal there leaves the plain
+    /// transcription in place and says so only in the log; every other failure, and every failure
+    /// of a transform someone pressed a button for, still raises an alert.
     func transformRecordingTranscript(_ preset: PromptPreset,
                                       recordingID: UUID,
-                                      in documentID: UUID) async {
+                                      in documentID: UUID,
+                                      reportsOfflineFailure: Bool = true) async {
         guard var recording = documents.document(with: documentID)?
             .recordings.first(where: { $0.id == recordingID }) else { return }
         let source = recording.transcript?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -1042,8 +1063,12 @@ final class AppModel: ObservableObject {
             wwLog(String(format: "Transcript transform “%@” finished (%d chars)", preset.name,
                          answer.count), .transform)
         } catch {
+            // A dropped signal isn't logged as an error either: nothing went wrong, the rewrite
+            // just didn't happen, and the log is what someone reads to find out why.
+            let offline = TextTransformError.isOffline(error)
+            wwLog("Transform failed: \(error.localizedDescription)", offline ? .transform : .error)
+            if offline, !reportsOfflineFailure { return }
             setupError = error.localizedDescription
-            wwLog("Transform failed: \(error.localizedDescription)", .error)
         }
     }
 

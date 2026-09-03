@@ -182,4 +182,37 @@ public enum TextTransformError: Error, LocalizedError {
             return error.localizedDescription
         }
     }
+
+    /// Whether this failure was **the network not being there**, rather than anything about the
+    /// transform itself.
+    ///
+    /// Worth telling apart because this app is an offline one with a single optional online step.
+    /// A transform that runs *by itself* and can't reach the network hasn't gone wrong — it simply
+    /// hasn't happened, and the clip keeps the words it already had. Interrupting a capture with an
+    /// alert to say so is noise about a thing the user never asked for. A transform the user asked
+    /// for still reports: they're waiting on an answer and deserve to know none is coming.
+    public var isOffline: Bool { Self.isOffline(self) }
+
+    /// The same question of any error, wrapped or bare — the catch blocks see a `TextTransformError`
+    /// around a `URLError`, while a caller closer to the metal may see the `URLError` itself.
+    ///
+    /// The codes are the ones that mean "there was no route", plus `timedOut`: a request that never
+    /// got an answer is, for something running unasked in the background, the same "not now" as one
+    /// that never got out. A server that answered and said no is a different matter and still
+    /// reports.
+    public static func isOffline(_ error: Error) -> Bool {
+        if let transform = error as? TextTransformError {
+            guard case .underlying(let inner) = transform else { return false }
+            return isOffline(inner)
+        }
+        guard let url = error as? URLError else { return false }
+        switch url.code {
+        case .notConnectedToInternet, .networkConnectionLost, .cannotConnectToHost,
+             .cannotFindHost, .dnsLookupFailed, .timedOut, .dataNotAllowed,
+             .internationalRoamingOff, .callIsActive:
+            return true
+        default:
+            return false
+        }
+    }
 }
