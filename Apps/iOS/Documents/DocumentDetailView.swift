@@ -88,11 +88,12 @@ struct DocumentDetailView: View {
     // Playback
     @StateObject private var playback = AudioPlaybackController()
 
-    /// The hardware ⌘ as it's held. Watched here for one thing: it turns the inter-paragraph "+"
-    /// from "record a section here" into "type one here" — the graph canvas's double-tap, on a
-    /// document. Read as *state* rather than off a touch, because the button has to say so before
-    /// it's pressed. (With no keyboard attached it stays false and the "+" is the recorder it has
-    /// always been; a document has no on-screen ⌘ the way the canvas does.)
+    /// ⌘ as it's held — the hardware key, or a button standing in for it. Watched here for one
+    /// thing: it turns the inter-paragraph "+" from "record a section here" into "type one here" —
+    /// the graph canvas's double-tap, on a document. Read as *state* rather than off a touch,
+    /// because the button has to say so before it's pressed. (With no keyboard attached, the button
+    /// is the ⌘ at the left of this document's Auto transform strip — or, in half of a joint
+    /// document, the canvas's own beside its minimap.)
     @ObservedObject private var modifierKeys = ModifierKeyMonitor.shared
 
     private var document: Document? { model.documents.document(with: documentID) }
@@ -204,7 +205,12 @@ struct DocumentDetailView: View {
                            selected: model.autoTransformPreset(for: documentID),
                            onSelect: { model.setAutoTransform($0, for: documentID) },
                            onRecord: { recorderTask = .addToRecordings },
-                           showsAutoTransform: !showsInlineAutoTransform)
+                           showsAutoTransform: !showsInlineAutoTransform,
+                           // A document on its own draws its own ⌘, at the left of the strip: with
+                           // no keyboard and no canvas beside it, there'd otherwise be no way to
+                           // ask a "+" for a section to type into. Half of a joint document has the
+                           // graph's key reaching across, so it doesn't draw a second one.
+                           showsCommandKey: !isJoined)
             }
         }
         .overlay(alignment: .top) {
@@ -877,9 +883,9 @@ struct DocumentDetailView: View {
     /// held**, put an empty section there and open it for typing, which is the same thought the
     /// graph canvas answers with a double-tap. Not everything worth adding is worth saying aloud.
     ///
-    /// "⌘ held" means the key *or* the ⌘ button beside a canvas's minimap: in a joint document the
-    /// canvas's soft keys are the only ⌘ a device without a keyboard has, and they reach this half
-    /// of the screen too (`ModifierKeyMonitor.commandDown`).
+    /// "⌘ held" means the key *or* the button standing in for it — the ⌘ at the left of this
+    /// document's Auto transform strip, or, in a joint document, the canvas's own beside its
+    /// minimap, which reaches this half of the screen too (`ModifierKeyMonitor.commandDown`).
     private func startInsert(at position: Int) {
         let slot = slot(for: position)
         guard modifierKeys.commandDown else {
@@ -1137,6 +1143,9 @@ struct CaptureBar: View {
     /// pinned to the bottom of each is more furniture than screen. There it goes into the list
     /// instead, under the document's own actions, where it scrolls away with everything else.
     var showsAutoTransform = true
+    /// Whether the strip carries the **⌘** key at its left — a document on its own, with no canvas
+    /// beside it to draw one. See `AutoTransformBar.showsCommandKey`.
+    var showsCommandKey = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1147,7 +1156,8 @@ struct CaptureBar: View {
                 .padding(.bottom, showsAutoTransform ? 20 : 12)
 
             if showsAutoTransform {
-                AutoTransformBar(presets: presets, selected: selected, onSelect: onSelect)
+                AutoTransformBar(presets: presets, selected: selected, onSelect: onSelect,
+                                 showsCommandKey: showsCommandKey)
             }
         }
     }
@@ -1162,6 +1172,16 @@ struct AutoTransformBar: View {
     let presets: [PromptPreset]
     let selected: PromptPreset?
     let onSelect: (PromptPreset?) -> Void
+    /// Whether the **⌘** key sits at the left of the strip, ahead of the label.
+    ///
+    /// It does on a document that stands on its own, and nowhere else. ⌘ is what turns the
+    /// inter-paragraph "+" from "record a section here" into "type one here" — and until now the
+    /// only ⌘ a device without a keyboard had was the one a *canvas* draws beside its minimap, so
+    /// the document you'd most want to type into was the one screen that couldn't. This strip is
+    /// already pinned to the bottom of it, which makes it where the key belongs. Half of a joint
+    /// document has the canvas's key reaching across, and the Inbox has no "+" for ⌘ to mean
+    /// anything to — so neither draws a second one.
+    var showsCommandKey = false
 
     /// Whether the toggle reads as on. Held locally as well as in the store because "on, but no
     /// transform picked yet" is a real state: it's what you see between flipping the switch and
@@ -1185,6 +1205,12 @@ struct AutoTransformBar: View {
             isOn = selected != nil
             showingList = false
         }
+        // A strip that goes away mid-hold — a paragraph opening for editing, the screen being left —
+        // takes its ⌘ with it, so the key lets go on the way out rather than leaving ⌘ down over a
+        // document nobody has a thumb on.
+        .onDisappear {
+            if showsCommandKey { ModifierKeyMonitor.shared.virtualCommand = false }
+        }
         // A transform deleted (or reset) out from under the choice turns the toggle back off, rather
         // than leaving it reading "on" over nothing.
         .onChange(of: selected?.id) { _, id in
@@ -1194,6 +1220,8 @@ struct AutoTransformBar: View {
 
     private var toggleRow: some View {
         HStack(spacing: 12) {
+            if showsCommandKey { CommandKeyButton() }
+
             Button {
                 guard isOn else { return }
                 withAnimation(.snappy(duration: 0.22)) { showingList.toggle() }
@@ -1270,6 +1298,56 @@ struct AutoTransformBar: View {
             showingList = on
             if !on { onSelect(nil) }
         }
+    }
+}
+
+/// The **⌘** key at the left of a document's Auto transform strip — the soft key a graph canvas
+/// draws beside its minimap, for the screen that has no canvas to draw one.
+///
+/// Held, ⌘ turns the "+" between sections from "record a section here" into a caret: an empty
+/// section, opened where it sits, for the times what you're adding isn't worth saying aloud. With a
+/// keyboard attached that's the real key, and half of a joint document borrows the graph's. A
+/// document on its own had neither, so the one screen that's all prose was the one that couldn't be
+/// typed into without dictating first.
+///
+/// A **key**, like the ones beside a minimap, not a switch: hold it with one thumb, tap the "+"
+/// with the other, and it lets go the moment you lift — and the "+" says which of the two it is
+/// while you hold, since it's drawn as a caret for as long as the key is down. It writes to the
+/// same `ModifierKeyMonitor` the hardware key reports through, so everything that reads ⌘ reads
+/// this too.
+private struct CommandKeyButton: View {
+    @ObservedObject private var modifierKeys = ModifierKeyMonitor.shared
+
+    var body: some View {
+        let isOn = modifierKeys.virtualCommand
+        return Image(systemName: "command")
+            .font(.system(size: 14, weight: .medium))
+            .foregroundStyle(isOn ? WW.paper : WW.moss)
+            .frame(width: 40, height: 32)
+            // The strip is already `WW.surface`, so an unpressed key is the page colour with a
+            // hairline around it — a key face on the bar rather than a shape lost in it.
+            .background(isOn ? WW.moss : WW.paper,
+                        in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(isOn ? WW.moss : WW.hairline, lineWidth: 1))
+            .contentShape(Rectangle())
+            // A press, not a tap: `onChanged` fires as the thumb lands and `onEnded` when it
+            // leaves, so the key is down for exactly as long as it's held — the same gesture the
+            // canvas's ⌘ and ⌥ are worked with.
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { _ in
+                        guard !modifierKeys.virtualCommand else { return }
+                        withAnimation(.snappy(duration: 0.15)) { modifierKeys.virtualCommand = true }
+                        WWHaptics.medium()
+                    }
+                    .onEnded { _ in
+                        withAnimation(.snappy(duration: 0.15)) { modifierKeys.virtualCommand = false }
+                    }
+            )
+            .accessibilityLabel("Command")
+            .accessibilityHint("Hold, then tap a “+” to add a section to type into instead of recording one")
+            .accessibilityAddTraits(isOn ? [.isSelected] : [])
     }
 }
 
@@ -6717,7 +6795,8 @@ final class ModifierKeys {
 /// a joint document has two canvases in it, and they're asking about the same keyboard.
 ///
 /// With no hardware keyboard there's nothing to report and both stay false, which is exactly the
-/// case the ⌘ and ⌥ buttons beside the minimap exist for.
+/// case the on-screen keys exist for — ⌘ and ⌥ beside a canvas's minimap, and ⌘ on a plain
+/// document's Auto transform strip.
 final class ModifierKeyMonitor: ObservableObject {
     static let shared = ModifierKeyMonitor()
 
@@ -6728,11 +6807,13 @@ final class ModifierKeyMonitor: ObservableObject {
     /// either way, so the only way to tell the two apart is to ask the keyboard what else is down.
     @Published private(set) var isShiftDown = false
 
-    /// The **⌘ and ⌥ buttons** beside a canvas's minimap, held with a thumb where there's no
-    /// keyboard to hold the real thing. They live here rather than in the canvas that draws them
-    /// because a *joint* document is two panes of one screen: the canvas's ⌘ has to reach the
-    /// document half as well, where it turns the "+" between sections into a caret, exactly as the
-    /// hardware key does. One shared pair of soft keys, read wherever a modifier is read.
+    /// The **soft keys**, held with a thumb where there's no keyboard to hold the real thing: ⌘ and
+    /// ⌥ beside a canvas's minimap, and ⌘ again at the left of a plain document's Auto transform
+    /// strip, which is that screen's own bottom bar. They live here rather than in the views that
+    /// draw them because a key isn't local to the thing under the thumb: a *joint* document is two
+    /// panes of one screen, and the canvas's ⌘ has to reach the document half as well, where it
+    /// turns the "+" between sections into a caret exactly as the hardware key does. One set of
+    /// soft keys, read wherever a modifier is read.
     @Published var virtualCommand = false
     @Published var virtualOption = false
     @Published var virtualShift = false

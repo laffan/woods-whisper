@@ -113,16 +113,22 @@ the rest of the app depends on.
   records a clip and drops its transcript in at that spot. Hold **⌘** and
   the glyph becomes a caret: tap it then and you get an **empty section to type into**, opened for
   editing where it sits — the same thought the graph canvas answers with a double-tap, for the times
-  what you're adding isn't worth saying aloud. "Hold ⌘" means the key with a keyboard attached, or —
-  in a **joint document**, where the graph half draws one — the **⌘ button beside the minimap**: a
-  soft key is a key, and a key held on one side of a split screen is held on both.
+  what you're adding isn't worth saying aloud. "Hold ⌘" means the key with a keyboard attached, or
+  the button standing in for it where there's no keyboard: **on the Auto transform strip** at the
+  bottom of an ordinary document, or — in a **joint document**, where the graph half draws one —
+  the **⌘ button beside the minimap**. A soft key is a key: hold it with one thumb and tap the "+"
+  with the other, it lets go the moment you lift, and a key held on one side of a split screen is
+  held on both.
 - **One red record button.** Recording isn't a toolbar glyph any more. In the **Inbox** and inside a
   **document** it's a plain red dot, centered above the bottom bar — nothing behind it, the text
   scrolling past underneath — and it does what the mic did there before: a clip filed into the
   Inbox, or one added to the document (its transcript appended to the body).
 - **Auto transform.** A toggle at the bottom of the Inbox and of every document (a **graph** has no
   bottom bar, so its equivalent — **Auto transform nodes** — lives in **Settings → Graphs** and
-  applies to every graph). Flip it on and a
+  applies to every graph). In a document that isn't half of a pair, a **⌘ key** sits at the strip's
+  left, ahead of the label — the soft key a canvas draws beside its minimap, on the one screen with
+  no canvas to draw it, so a "+" can be asked for a section to type into without a keyboard
+  attached. Flip the toggle on and a
   list of your transforms opens; pick one and it runs by itself on every new recording the moment
   that recording is first transcribed — so captures arrive already cleaned up, summarized, or
   whatever else you asked for. The bar then carries the transform's name (tap it to pick another,

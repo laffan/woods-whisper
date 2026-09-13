@@ -356,10 +356,17 @@ transform — `scaleEffect(anchor: .topLeading)` then `offset` — so a canvas p
   become a caret. It watches shift too, for one question only: a `UITextView` is handed the same
   `"\n"` whether or not shift was down, and a graph node's editor needs to tell **Return** (which
   commits, the same as Done) from **shift + Return** (which puts a line break in). With no hardware
-  keyboard all of them stay false, which is what the ⌘ and ⌥ buttons are for — and those buttons
-  live on the *same* shared monitor (`virtualCommand` / `virtualOption`) rather than in the canvas
-  that draws them, because a joint document is two panes of one screen: a soft ⌘ held beside the
-  canvas has to turn the document half's "+" into a caret, exactly as the real key does. Hover is tracked on every card in every mode rather than only while picking out: a
+  keyboard all of them stay false, which is what the on-screen keys are for — the ⌘ and ⌥ buttons
+  beside a canvas's minimap, and the ⌘ at the left of a plain document's Auto transform strip
+  (`CommandKeyButton`, drawn when `AutoTransformBar.showsCommandKey` is set, which a document
+  standing on its own is the only caller to set). They all
+  live on the *same* shared monitor (`virtualCommand` / `virtualOption`) rather than in the views
+  that draw them, because a key isn't local to what's under the thumb: a joint document is two panes
+  of one screen, and a soft ⌘ held beside the canvas has to turn the document half's "+" into a
+  caret, exactly as the real key does. Which is also why a document that *is* half of a pair draws
+  no ⌘ of its own — the canvas's already reaches it — and why the strip releases `virtualCommand`
+  in `onDisappear`: a bar taken away mid-hold (a paragraph opening for editing) would otherwise
+  leave the key down with no thumb on it. Hover is tracked on every card in every mode rather than only while picking out: a
   pointer already resting on a card has sent its hover event and won't send another when ⌘ goes
   down. A card's quick actions **don't** go away the moment the pointer leaves it: the bar floats
   clear of the card, so reaching it means crossing a few points that belong to neither, and letting
