@@ -5,6 +5,12 @@ import WoodsWhisperKit
 import UIKit
 #endif
 
+/// "Document" means this app's document, everywhere in this target. Newer SDKs ship a `Document`
+/// type of their own in a framework these files import, and a type named in a signature (`on
+/// document: Document`) then has two candidates and fails to build. A declaration in this module
+/// wins over anything imported, so this one line settles it for every file here.
+typealias Document = WoodsWhisperKit.Document
+
 @main
 struct WoodsWhisperApp: App {
     @StateObject private var model = AppModel()

@@ -314,8 +314,8 @@ final class AppModel: ObservableObject {
         func blocks(for recording: Recording) -> [Document.Paragraph] {
             Document.paragraphs(fromLinesOf: recording.transcript ?? "")
         }
-        var paragraphs = doc.recordings.filter { !$0.isRevision }.flatMap(blocks)
-        let revisions = doc.recordings.filter { $0.isRevision }.flatMap(blocks)
+        var paragraphs = doc.recordings.filter { !$0.isRevision }.flatMap { blocks(for: $0) }
+        let revisions = doc.recordings.filter { $0.isRevision }.flatMap { blocks(for: $0) }
         if !revisions.isEmpty {
             paragraphs.append(Document.Paragraph(text: "--- Revisions ---"))
             paragraphs.append(contentsOf: revisions)
