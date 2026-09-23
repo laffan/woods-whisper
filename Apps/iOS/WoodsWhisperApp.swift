@@ -132,6 +132,11 @@ enum WW {
     static let slate = dynamicColor(light: UIColor(red: 0.353, green: 0.478, blue: 0.553, alpha: 1),
                                     dark: UIColor(red: 0.545, green: 0.655, blue: 0.729, alpha: 1))
 
+    /// Drag-and-drop targets: a clear, bright blue — deliberately outside the muted palette, since
+    /// it marks where something *will* land rather than anything already on the page.
+    static let dropBlue = dynamicColor(light: UIColor(red: 0.000, green: 0.478, blue: 1.000, alpha: 1),
+                                       dark: UIColor(red: 0.039, green: 0.518, blue: 1.000, alpha: 1))
+
     /// The ink behind a stored colour id — an Inbox tag's (`InboxTag.paletteIDs`), a graph node's or
     /// a group's (`GraphPalette.colorIDs`, the same set of names). The kit names these; the palette
     /// they name lives here, which is what keeps a colour right in both light and dark.

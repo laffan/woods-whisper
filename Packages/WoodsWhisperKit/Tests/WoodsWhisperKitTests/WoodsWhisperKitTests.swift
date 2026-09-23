@@ -275,6 +275,57 @@ final class WoodsWhisperKitTests: XCTestCase {
 
     // MARK: Joint documents, made
 
+    func testMergingAppendsWithASingleSpace() {
+        XCTAssertEqual(Document.merging("  second part. ", into: "First part."),
+                       "First part. second part.")
+    }
+
+    func testMergingInsertsAtAWordBoundary() {
+        // Offset 6 is the start of "brown".
+        XCTAssertEqual(Document.merging("quick", into: "A big brown fox", at: 6),
+                       "A big quick brown fox")
+        XCTAssertEqual(Document.merging("Hey.", into: "there", at: 0), "Hey. there")
+        XCTAssertEqual(Document.merging("end", into: "start", at: 99), "start end")
+    }
+
+    @MainActor
+    func testMergingAParagraphRemovesTheDraggedOne() {
+        let name = "MergeTests-\(UUID().uuidString)"
+        let store = DocumentStore(directoryName: name)
+        defer { removeStore(named: name) }
+
+        let doc = store.createDocument(title: "Notes")
+        let a = Document.Paragraph(text: "One two.")
+        let b = Document.Paragraph(text: "Three.")
+        let c = Document.Paragraph(text: "Four.")
+        store.setParagraphs([a, b, c], in: doc.id)
+
+        store.mergeParagraph(c.id, into: a.id, in: doc.id)
+        XCTAssertEqual(store.document(with: doc.id)?.paragraphs.map(\.text), ["One two. Four.", "Three."])
+
+        store.mergeParagraph(b.id, into: a.id, at: 4, in: doc.id)
+        XCTAssertEqual(store.document(with: doc.id)?.paragraphs.map(\.text), ["One Three. two. Four."])
+    }
+
+    @MainActor
+    func testMovingAParagraphAppendsItToTheOtherDocument() {
+        let name = "MoveParagraphTests-\(UUID().uuidString)"
+        let store = DocumentStore(directoryName: name)
+        defer { removeStore(named: name) }
+
+        let source = store.createDocument(title: "Source")
+        let target = store.createDocument(title: "Target")
+        let keep = Document.Paragraph(text: "Stays.")
+        let go = Document.Paragraph(text: "Goes.")
+        store.setParagraphs([keep, go], in: source.id)
+        store.setParagraphs([Document.Paragraph(text: "Already here.")], in: target.id)
+
+        store.moveParagraph(go.id, from: source.id, to: target.id)
+        XCTAssertEqual(store.document(with: source.id)?.paragraphs.map(\.id), [keep.id])
+        XCTAssertEqual(store.document(with: target.id)?.paragraphs.map(\.text), ["Already here.", "Goes."])
+        XCTAssertEqual(store.document(with: target.id)?.paragraphs.last?.id, go.id)
+    }
+
     /// The link has to land on the document that asked for it. It used to land on whichever
     /// document sat above it in the array: the index was taken before the counterpart was inserted
     /// at the front, and the insert moved everything down a place.

@@ -154,6 +154,19 @@ public struct Document: Identifiable, Codable, Hashable, Sendable {
         return blocks.isEmpty ? [] : blocks.map { Paragraph(text: $0) }
     }
 
+    /// One section's text dropped into another's: `inserted` placed at `offset` characters into
+    /// `base` (nil, or anything past the end, appends it). Whatever whitespace sat at the seam is
+    /// replaced by a single space either side, so a merge reads as one run of prose rather than two
+    /// pieces pushed together — and an offset landing mid-word still leaves both words whole.
+    public static func merging(_ inserted: String, into base: String, at offset: Int? = nil) -> String {
+        let cut = min(max(offset ?? base.count, 0), base.count)
+        let splitIndex = base.index(base.startIndex, offsetBy: cut)
+        let head = base[..<splitIndex].trimmingCharacters(in: .whitespacesAndNewlines)
+        let tail = base[splitIndex...].trimmingCharacters(in: .whitespacesAndNewlines)
+        let middle = inserted.trimmingCharacters(in: .whitespacesAndNewlines)
+        return [head, middle, tail].filter { !$0.isEmpty }.joined(separator: " ")
+    }
+
     /// Split text the app **produced** — a transcript, a transform's answer — into body paragraphs
     /// on *any* line break, not just blank lines.
     ///

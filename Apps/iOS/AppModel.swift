@@ -232,13 +232,17 @@ final class AppModel: ObservableObject {
     /// model isn't loaded yet and the clip has to wait for `transcribePending`, or for the next
     /// launch. `fillDocumentBody`, at the end of every transcription, is the one place that files
     /// them.
+    ///
+    /// `tag` files an Inbox entry before it's even transcribed — a clip recorded by holding a tag at
+    /// the top of the Inbox. A tag already set is a choice made by hand, so the first-word auto tag
+    /// leaves it alone.
     func addDeviceRecording(audioURL: URL, duration: TimeInterval, toDocument documentID: UUID,
-                            body: BodyInsertion = .none) {
+                            body: BodyInsertion = .none, tag: String? = nil) {
         let name = Recording.defaultName(for: Date(), duration: duration,
                                          byteCount: Recording.fileSize(at: audioURL))
         let recording = Recording(name: name, duration: duration,
                                   audioFileName: audioURL.lastPathComponent, origin: deviceOrigin(),
-                                  bodyDestination: body.destination)
+                                  bodyDestination: body.destination, tag: tag)
         documents.addRecording(recording, toDocument: documentID)
         wwLog("Captured “\(recording.name)” on device", .general)
         guard transcriptionReady else {

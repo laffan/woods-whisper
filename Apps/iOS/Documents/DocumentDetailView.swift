@@ -18,8 +18,10 @@ import GameController
 /// separate "Recordings" section at the bottom.
 ///
 /// • The body reads top-to-bottom. Between paragraphs, a "+" inserts a fresh recording's transcript
-///   at that spot. Swipe a paragraph for Delete / Revise / Edit / Transform; long-press to enter
-///   reorder mode and drag to rearrange. A "Revise" clip is set aside in a "Revisions" section.
+///   at that spot. Swipe a paragraph for Delete / Revise / Move / Edit / Transform. Hold one and
+///   drag it: onto another paragraph to merge into it (held there two seconds, at a precise spot),
+///   between two to move it. A long press released without moving enters reorder mode. A "Revise"
+///   clip is set aside in a "Revisions" section.
 /// • Recordings are source material: play them, or "Re-transcribe" to append their text to the body.
 ///   Long-press a recording to enter selection mode for batch actions.
 /// • "Transform" rewrites the whole body in place.
@@ -45,6 +47,21 @@ struct DocumentDetailView: View {
 
     // Recording → document move (swipe a recording right)
     @State private var movingRecording: Recording?
+
+    // Dragging a section: hold it, then drag. Over another section it merges into it (and, held
+    // there for two seconds, into a precise spot inside it); between two it reorders. `sectionFrames`
+    // is where the rows say where they are on screen — a plain object, so a row scrolling doesn't
+    // redraw the document; only the drag itself, which is state, does.
+    @State private var sectionDrag: SectionDrag?
+    @State private var sectionFrames = SectionFrames()
+    @State private var preciseTask: Task<Void, Never>?
+    @GestureState private var sectionPressActive = false
+
+    // Section → document move (swipe a paragraph left → Move): the section on its way, and — for
+    // "New Document" — the one waiting on the name step, with the title being typed.
+    @State private var movingParagraphID: UUID?
+    @State private var pendingNewDocParagraphID: UUID?
+    @State private var newDocTitle = ""
 
     // Transform
     @State private var showingDocTransform = false        // drives the bottom transform pane
@@ -119,6 +136,7 @@ struct DocumentDetailView: View {
         .onDisappear {
             playback.stop()
             finishEditing()
+            cancelSectionDrag()
         }
         .sheet(item: $recorderTask) { task in
             RecordingSheet(title: task.sheetTitle,
@@ -164,6 +182,31 @@ struct DocumentDetailView: View {
             }
             Button("Cancel", role: .cancel) { }
         }
+        .overlay {
+            if let paragraphID = movingParagraphID {
+                MoveToDocumentOverlay(
+                    targets: sectionMoveTargets,
+                    onCancel: { withAnimation(.snappy(duration: 0.22)) { movingParagraphID = nil } },
+                    onNewDocument: {
+                        withAnimation(.snappy(duration: 0.22)) { movingParagraphID = nil }
+                        startNewDocument(for: paragraphID)
+                    },
+                    onPick: { target in
+                        withAnimation(.snappy(duration: 0.22)) {
+                            model.documents.moveParagraph(paragraphID, from: documentID, to: target.id)
+                            movingParagraphID = nil
+                        }
+                        wwLog("Moved a section to “\(target.title)”", .general)
+                    })
+            }
+        }
+        .alert("Rename document",
+               isPresented: Binding(get: { pendingNewDocParagraphID != nil },
+                                    set: { if !$0 { pendingNewDocParagraphID = nil } })) {
+            TextField("Title", text: $newDocTitle)
+            Button("Save") { confirmNewDocument() }
+            Button("Cancel", role: .cancel) { pendingNewDocParagraphID = nil }
+        }
         .alert("Reset with Originals?", isPresented: $showingResetConfirm) {
             Button("Reset", role: .destructive) { model.resetWithOriginals(in: documentID) }
             Button("Cancel", role: .cancel) { }
@@ -196,6 +239,20 @@ struct DocumentDetailView: View {
         }
         .wwList()
         .environment(\.editMode, $editMode)
+        // A section on the move holds the list still: the finger is carrying something, and the
+        // list sliding under it would change what it's over.
+        .scrollDisabled(sectionDrag != nil)
+        .overlay { sectionDragOverlay() }
+        .onChange(of: sectionPressActive) { _, active in
+            // The gesture state resets however the hold ends — including the ways that never reach
+            // `onEnded` (a sequenced drag let go before it moved, a touch the system took back).
+            // Given a moment, so an `onEnded` that *is* coming lands first; if none did, finish the
+            // drag here rather than leave a section hanging in the air.
+            guard !active else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                if let drag = sectionDrag, !sectionPressActive { endSectionDrag(moved: drag.hasMoved) }
+            }
+        }
         // Bottom furniture: the record button and the Auto transform toggle. It stands down while
         // the list is in reorder mode (the toolbar's own Done is the way out) and while a paragraph
         // is being edited, where the actions ride inside the edit box instead.
@@ -315,16 +372,23 @@ struct DocumentDetailView: View {
                     guard !editMode.isEditing else { return }
                     startEditing(para)
                 }
-                .onLongPressGesture {
-                    withAnimation { editMode = .active }
-                }
-                // Swipe left → Replace / Delete
+                // Hold, then drag: the section lifts and follows the finger — onto another section
+                // to merge into it, or between two to move it there. Held and let go without
+                // moving, it's the long press it always was: reorder mode.
+                .gesture(sectionDragGesture(for: para))
+                .opacity(sectionDrag?.paragraphID == para.id ? 0.35 : 1)
+                // Swipe left → Delete / Revise / Move
                 .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                     Button("Delete", role: .destructive) {
                         model.documents.deleteParagraph(para.id, in: documentID)
                     }
                     .tint(WW.ember)
                     Button("Revise") { recorderTask = .revise(paragraphID: para.id) }.tint(WW.amber)
+                    // The Inbox's Move, for a section: another document, or a new one made of it.
+                    Button("Move") {
+                        withAnimation(.snappy(duration: 0.22)) { movingParagraphID = para.id }
+                    }
+                    .tint(WW.slate)
                 }
                 // Swipe right → Transform / Edit
                 .swipeActions(edge: .leading, allowsFullSwipe: false) {
@@ -347,13 +411,289 @@ struct DocumentDetailView: View {
                 Text(model.isThinking(para.id) ? "Thinking…" : "Transforming…")
                     .foregroundStyle(WW.inkSecondary)
             }
+        } else if isPreciseTarget(para.id) {
+            // Held over for two seconds: the words laid out one by one, each saying where it is, so
+            // the caret can sit in the gap nearest the finger.
+            PreciseSectionText(text: para.text,
+                               font: InlineTextStyle.documentBody.font(transcriptTextSize),
+                               wordSpacing: CGFloat(transcriptTextSize) * 0.28,
+                               frames: sectionFrames)
+                .background { sectionFrameReader(para.id) }
         } else {
             Text(para.text)
                 .font(InlineTextStyle.documentBody.font(transcriptTextSize))
                 .lineSpacing(5)
                 .foregroundStyle(WW.ink)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .background { sectionFrameReader(para.id) }
         }
+    }
+
+    // MARK: Dragging a section
+
+    /// Where this section's text is on screen, kept up to date as the list scrolls. A row that
+    /// scrolls away takes its frame with it, so a drop is only ever worked out against what's drawn.
+    private func sectionFrameReader(_ id: UUID) -> some View {
+        GeometryReader { geo in
+            Color.clear
+                .onChange(of: geo.frame(in: .global), initial: true) { _, frame in
+                    sectionFrames.text[id] = frame
+                }
+                .onDisappear { sectionFrames.text[id] = nil }
+        }
+    }
+
+    private func isPreciseTarget(_ id: UUID) -> Bool {
+        guard let drag = sectionDrag, drag.isPrecise else { return false }
+        return drag.target == .merge(id)
+    }
+
+    /// The hold that lifts a section. A long press first, so a swipe (the row's actions) and a
+    /// scroll both get the touch the moment it moves; once it's held, the drag that follows is ours.
+    private func sectionDragGesture(for para: Document.Paragraph) -> some Gesture {
+        LongPressGesture(minimumDuration: 0.5)
+            .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .global))
+            .updating($sectionPressActive) { value, state, _ in
+                if case .second(true, _) = value { state = true }
+            }
+            .onChanged { value in
+                guard case .second(true, let drag) = value else { return }
+                if sectionDrag == nil {
+                    guard !editMode.isEditing, editingParagraphID == nil else { return }
+                    let start = drag?.location
+                        ?? sectionFrames.text[para.id].map { CGPoint(x: $0.midX, y: $0.midY) }
+                        ?? .zero
+                    sectionDrag = SectionDrag(paragraphID: para.id, start: start)
+                    WWHaptics.medium()
+                }
+                if let drag { updateSectionDrag(to: drag.location) }
+            }
+            .onEnded { value in
+                guard case .second(true, let drag) = value else { return }
+                let moved = drag.map { hypot($0.translation.width, $0.translation.height) > 8 } ?? false
+                endSectionDrag(moved: moved)
+            }
+    }
+
+    private func updateSectionDrag(to point: CGPoint) {
+        guard var drag = sectionDrag, let document else { return }
+        if !drag.hasFinger {
+            drag.start = point
+            drag.hasFinger = true
+        }
+        drag.location = point
+        let target = sectionDropTarget(at: point, for: drag, in: document)
+        if target != drag.target {
+            drag.target = target
+            drag.isPrecise = false
+            drag.caret = nil
+            preciseTask?.cancel()
+            if case .merge(let id) = target {
+                armPreciseDrop(on: id)
+                WWHaptics.light()
+            }
+        }
+        if drag.isPrecise, case .merge(let id) = drag.target {
+            drag.caret = sectionCaret(at: point, in: id) ?? drag.caret
+        }
+        sectionDrag = drag
+    }
+
+    /// Two seconds over the same section and the drop stops being "onto the end of it" and becomes
+    /// "right here in it": a caret appears inside the section and follows the finger word by word.
+    private func armPreciseDrop(on id: UUID) {
+        preciseTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(SectionDrag.preciseDelay * 1_000_000_000))
+            guard !Task.isCancelled, var drag = sectionDrag, drag.target == .merge(id) else { return }
+            sectionFrames.words = [:]
+            drag.isPrecise = true
+            sectionDrag = drag
+            WWHaptics.medium()
+            // The words report where they are once they're drawn; place the caret after that.
+            try? await Task.sleep(nanoseconds: 60_000_000)
+            guard !Task.isCancelled, var settled = sectionDrag, settled.isPrecise,
+                  settled.target == .merge(id) else { return }
+            settled.caret = sectionCaret(at: settled.location, in: id)
+            sectionDrag = settled
+        }
+    }
+
+    /// What a drop at `point` would do. Over the body of another section — clear of its top and
+    /// bottom edges — it merges; anywhere else it's a place between two sections. Dropping a section
+    /// back where it already is means nothing, so that's no target at all.
+    private func sectionDropTarget(at point: CGPoint, for drag: SectionDrag,
+                                   in document: Document) -> SectionDropTarget? {
+        let paragraphs = document.paragraphs
+        guard let from = paragraphs.firstIndex(where: { $0.id == drag.paragraphID }) else { return nil }
+
+        // Already placing a caret: the whole of the section keeps it, edges and all, so reaching
+        // for its first or last line doesn't slip into "between".
+        if drag.isPrecise, case .merge(let id) = drag.target,
+           let frame = sectionFrames.text[id], frame.insetBy(dx: 0, dy: -6).contains(CGPoint(x: frame.midX, y: point.y)) {
+            return drag.target
+        }
+
+        for para in paragraphs where para.id != drag.paragraphID {
+            guard let frame = sectionFrames.text[para.id] else { continue }
+            let edge = min(frame.height * 0.2, 14)
+            if point.y > frame.minY + edge, point.y < frame.maxY - edge { return .merge(para.id) }
+        }
+
+        // Between: before the first drawn section whose middle is below the finger, or after the
+        // last one drawn.
+        var position: Int?
+        for (index, para) in paragraphs.enumerated() {
+            guard let frame = sectionFrames.text[para.id] else { continue }
+            if point.y < frame.midY { position = index; break }
+            position = index + 1
+        }
+        guard let position, position != from, position != from + 1 else { return nil }
+        return .insert(position)
+    }
+
+    /// The gap between words nearest the finger, in the section laid out for a precise drop: the
+    /// line nearest it, then the gap on that line to either side of the word under it.
+    private func sectionCaret(at point: CGPoint, in id: UUID) -> SectionCaret? {
+        guard let text = document?.paragraphs.first(where: { $0.id == id })?.text else { return nil }
+        let tokens = SectionToken.split(text)
+        let slots: [(index: Int, rect: CGRect)] = tokens.indices.compactMap { index in
+            sectionFrames.words[index].map { (index: index, rect: $0) }
+        }
+        guard let nearest = slots.min(by: { abs($0.rect.midY - point.y) < abs($1.rect.midY - point.y) })
+        else { return nil }
+        let line = slots
+            .filter { abs($0.rect.midY - nearest.rect.midY) < 2 }
+            .sorted { $0.rect.minX < $1.rect.minX }
+        guard let first = line.first, let last = line.last else { return nil }
+        let lineRect = line.dropFirst().reduce(first.rect) { $0.union($1.rect) }
+
+        if let hit = line.firstIndex(where: { point.x < $0.rect.midX }) {
+            let word = line[hit]
+            let x = hit > 0 ? (line[hit - 1].rect.maxX + word.rect.minX) / 2 : word.rect.minX - 2
+            return SectionCaret(offset: tokens[word.index].offset, x: x, line: lineRect)
+        }
+        let next = last.index + 1
+        return SectionCaret(offset: next < tokens.count ? tokens[next].offset : text.count,
+                            x: last.rect.maxX + 2, line: lineRect)
+    }
+
+    /// The finger lifted. Onto a section it merges — at the caret if one was placed, onto the end
+    /// if not; between two it moves there. A hold that never went anywhere is the long press it
+    /// always was, and opens reorder mode.
+    private func endSectionDrag(moved: Bool) {
+        preciseTask?.cancel()
+        preciseTask = nil
+        guard let drag = sectionDrag else {
+            if !moved, !editMode.isEditing, editingParagraphID == nil {
+                withAnimation { editMode = .active }
+            }
+            return
+        }
+        sectionDrag = nil
+        switch drag.target {
+        case .merge(let targetID):
+            let offset = drag.isPrecise ? drag.caret?.offset : nil
+            withAnimation(.snappy(duration: 0.22)) {
+                model.documents.mergeParagraph(drag.paragraphID, into: targetID, at: offset,
+                                               in: documentID)
+            }
+            WWHaptics.medium()
+            wwLog(offset == nil ? "Merged a section onto the end of another"
+                                : "Merged a section into another", .general)
+        case .insert(let position):
+            guard let from = document?.paragraphs.firstIndex(where: { $0.id == drag.paragraphID })
+            else { return }
+            withAnimation(.snappy(duration: 0.22)) {
+                model.documents.moveParagraphs(in: documentID, from: IndexSet(integer: from),
+                                               to: position)
+            }
+            WWHaptics.light()
+        case nil:
+            if !moved { withAnimation { editMode = .active } }
+        }
+    }
+
+    private func cancelSectionDrag() {
+        preciseTask?.cancel()
+        preciseTask = nil
+        sectionDrag = nil
+    }
+
+    /// What's drawn over the list while a section is on the move: the section itself under the
+    /// finger, and where it would go — a dotted blue outline round a section it would merge into
+    /// (with a bright blue caret once a precise spot is being picked), or a blue rule between two.
+    @ViewBuilder
+    private func sectionDragOverlay() -> some View {
+        if let drag = sectionDrag, let document {
+            GeometryReader { geo in
+                let origin = geo.frame(in: .global).origin
+                ZStack(alignment: .topLeading) {
+                    switch drag.target {
+                    case .merge(let id):
+                        if let frame = sectionFrames.text[id] {
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(WW.dropBlue.opacity(drag.isPrecise ? 0.08 : 0.05))
+                                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .stroke(WW.dropBlue, style: StrokeStyle(lineWidth: 1.5, dash: [4, 4])))
+                                .frame(width: frame.width + 16, height: frame.height + 12)
+                                .position(x: frame.midX - origin.x, y: frame.midY - origin.y)
+                        }
+                        if drag.isPrecise, let caret = drag.caret {
+                            Capsule()
+                                .fill(WW.dropBlue)
+                                .frame(width: 3, height: caret.line.height + 6)
+                                .shadow(color: WW.dropBlue.opacity(0.7), radius: 4)
+                                .position(x: caret.x - origin.x, y: caret.line.midY - origin.y)
+                        }
+                    case .insert(let position):
+                        if let rule = insertionRule(at: position, in: document) {
+                            Capsule()
+                                .fill(WW.dropBlue)
+                                .frame(width: rule.width, height: 3)
+                                .position(x: rule.midX - origin.x, y: rule.midY - origin.y)
+                        }
+                    case nil:
+                        EmptyView()
+                    }
+
+                    if let para = document.paragraphs.first(where: { $0.id == drag.paragraphID }) {
+                        Text(para.text)
+                            .font(InlineTextStyle.documentBody.font(transcriptTextSize))
+                            .foregroundStyle(WW.ink)
+                            .lineLimit(3)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .frame(width: min(geo.size.width - 48, 360), alignment: .leading)
+                            .background(WW.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .stroke(WW.hairline, lineWidth: 1))
+                            .shadow(color: .black.opacity(0.18), radius: 12, y: 4)
+                            .scaleEffect(0.94)
+                            // Above the finger rather than under it, so what it's over stays in sight.
+                            .position(x: drag.location.x - origin.x, y: drag.location.y - origin.y - 56)
+                    }
+                }
+                .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
+            }
+            .allowsHitTesting(false)
+        }
+    }
+
+    /// The rule drawn between two sections for a drop at `position`: halfway across the gap, or
+    /// just past the one section drawn beside it.
+    private func insertionRule(at position: Int, in document: Document) -> CGRect? {
+        let paragraphs = document.paragraphs
+        let above = position > 0 ? sectionFrames.text[paragraphs[position - 1].id] : nil
+        let below = position < paragraphs.count ? sectionFrames.text[paragraphs[position].id] : nil
+        let y: CGFloat
+        switch (above, below) {
+        case let (above?, below?): y = (above.maxY + below.minY) / 2
+        case let (above?, nil):    y = above.maxY + 14
+        case let (nil, below?):    y = below.minY - 14
+        case (nil, nil):           return nil
+        }
+        let span = above ?? below!
+        return CGRect(x: span.minX, y: y - 1.5, width: span.width, height: 3)
     }
 
     // MARK: Document actions (Copy / Share / Edit)
@@ -494,6 +834,28 @@ struct DocumentDetailView: View {
 
     private var otherDocuments: [Document] {
         model.documents.documents.filter { $0.id != documentID && $0.title != DocumentStore.inboxTitle }
+    }
+
+    /// Where a section can be moved: the other *prose* documents. A graph has no body for a
+    /// paragraph to join the end of.
+    private var sectionMoveTargets: [Document] { otherDocuments.filter { !$0.isGraph } }
+
+    /// Open the name step for a document made of one section, suggesting its first two words.
+    private func startNewDocument(for paragraphID: UUID) {
+        guard let para = document?.paragraphs.first(where: { $0.id == paragraphID }) else { return }
+        let words = para.text.split(whereSeparator: \.isWhitespace).prefix(2)
+        newDocTitle = words.isEmpty ? "New Document" : words.joined(separator: " ")
+        pendingNewDocParagraphID = paragraphID
+    }
+
+    /// Confirm the name step: create the document and move the section into it as its body.
+    private func confirmNewDocument() {
+        guard let paragraphID = pendingNewDocParagraphID else { return }
+        let trimmed = newDocTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let doc = model.documents.createDocument(title: trimmed.isEmpty ? "New Document" : trimmed)
+        model.documents.moveParagraph(paragraphID, from: documentID, to: doc.id)
+        pendingNewDocParagraphID = nil
+        wwLog("Moved a section into a new document, “\(doc.title)”", .general)
     }
 
     private func copyDocument(_ document: Document) {
@@ -1013,6 +1375,151 @@ struct TextImportItems: View {
         Button(action: onFile) {
             Label("Import Text File…", systemImage: "doc.text")
         }
+    }
+}
+
+// MARK: - Dragging a section
+
+/// A section on the move: which one, where the finger is (in global coordinates), and what letting
+/// go there would do.
+private struct SectionDrag {
+    /// How long a section has to be held over another before the drop turns precise.
+    static let preciseDelay: TimeInterval = 2
+
+    let paragraphID: UUID
+    /// Where the finger was when the drag first heard from it — the section can lift a beat before
+    /// the drag reports a location, and "has it moved?" should be measured from the finger.
+    var start: CGPoint
+    var hasFinger = false
+    var location: CGPoint
+    var target: SectionDropTarget?
+    /// Held long enough over a section to pick a spot inside it, rather than its end.
+    var isPrecise = false
+    var caret: SectionCaret?
+
+    init(paragraphID: UUID, start: CGPoint) {
+        self.paragraphID = paragraphID
+        self.start = start
+        self.location = start
+    }
+
+    /// Whether the finger has gone anywhere since the section lifted.
+    var hasMoved: Bool { hypot(location.x - start.x, location.y - start.y) > 8 }
+}
+
+private enum SectionDropTarget: Equatable {
+    /// Onto another section: its text joins that one's.
+    case merge(UUID)
+    /// Between two sections: the body position it moves to, counted as `onMove` counts it.
+    case insert(Int)
+}
+
+/// A precise drop's spot: the character offset the text goes in at, and where to draw the caret.
+private struct SectionCaret: Equatable {
+    var offset: Int
+    var x: CGFloat
+    var line: CGRect
+}
+
+/// Where the sections — and, during a precise drop, the words of the one being dropped into — are
+/// on screen. A class so the rows can keep it current without making the document redraw.
+final class SectionFrames {
+    var text: [UUID: CGRect] = [:]
+    /// Keyed by the word's index in `SectionToken.split`.
+    var words: [Int: CGRect] = [:]
+}
+
+/// A word of a section's text and the character offset it starts at — the offset a drop in front of
+/// it goes in at.
+struct SectionToken {
+    let offset: Int
+    let text: String
+
+    static func split(_ text: String) -> [SectionToken] {
+        var tokens: [SectionToken] = []
+        var current = ""
+        var start = 0
+        for (index, character) in text.enumerated() {
+            if character.isWhitespace {
+                if !current.isEmpty { tokens.append(SectionToken(offset: start, text: current)) }
+                current = ""
+            } else {
+                if current.isEmpty { start = index }
+                current.append(character)
+            }
+        }
+        if !current.isEmpty { tokens.append(SectionToken(offset: start, text: current)) }
+        return tokens
+    }
+}
+
+/// A section's text set word by word, for the moment a drop is being placed inside it: the same
+/// type and line spacing as the paragraph it stands in for, but each word reporting where it landed,
+/// which a single `Text` has no way to do.
+private struct PreciseSectionText: View {
+    let text: String
+    let font: Font
+    let wordSpacing: CGFloat
+    let frames: SectionFrames
+
+    var body: some View {
+        let tokens = SectionToken.split(text)
+        SectionFlowLayout(spacing: wordSpacing, lineSpacing: 5) {
+            ForEach(tokens.indices, id: \.self) { index in
+                Text(tokens[index].text)
+                    .font(font)
+                    .foregroundStyle(WW.ink)
+                    .fixedSize()
+                    .background {
+                        GeometryReader { geo in
+                            Color.clear.onChange(of: geo.frame(in: .global), initial: true) { _, frame in
+                                frames.words[index] = frame
+                            }
+                        }
+                    }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// Words left to right, wrapping at the width offered — a paragraph, built from its words.
+private struct SectionFlowLayout: Layout {
+    var spacing: CGFloat
+    var lineSpacing: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        arrange(width: proposal.width ?? .infinity, subviews: subviews).size
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews,
+                       cache: inout ()) {
+        let points = arrange(width: bounds.width, subviews: subviews).points
+        for (index, point) in points.enumerated() {
+            subviews[index].place(at: CGPoint(x: bounds.minX + point.x, y: bounds.minY + point.y),
+                                  proposal: .unspecified)
+        }
+    }
+
+    private func arrange(width: CGFloat, subviews: Subviews) -> (points: [CGPoint], size: CGSize) {
+        var points: [CGPoint] = []
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var lineHeight: CGFloat = 0
+        var widest: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > 0, x + size.width > width {
+                x = 0
+                y += lineHeight + lineSpacing
+                lineHeight = 0
+            }
+            points.append(CGPoint(x: x, y: y))
+            widest = max(widest, x + size.width)
+            x += size.width + spacing
+            lineHeight = max(lineHeight, size.height)
+        }
+        return (points, CGSize(width: width.isFinite ? width : widest, height: y + lineHeight))
     }
 }
 
@@ -2239,6 +2746,11 @@ struct InboxView: View {
     @State private var filterTag: String?
     @State private var showingFilteredDeleteConfirm = false
 
+    // Holding a tag at the top records an entry already filed under it: the recorder behind the
+    // hold, and which tag is being spoken into (its chip carries the counter meanwhile).
+    @StateObject private var tagRecorder = AudioRecorder()
+    @State private var recordingTag: String?
+
     private var inbox: Document? { model.documents.document(with: documentID) }
     /// Newest first — the Inbox reads as a capture feed, so the clip you just made is at the top.
     private var recordings: [Recording] {
@@ -2267,6 +2779,15 @@ struct InboxView: View {
         return configured.filter(used.contains) + used.subtracting(configured).sorted()
     }
 
+    /// The tags across the top of the Inbox: every one Settings lists, whether or not anything is
+    /// filed under it yet — each is somewhere to record *into* as much as a filter — followed by any
+    /// an entry still carries that the list has since dropped.
+    private var barTags: [String] {
+        let configured = tags.map(\.name)
+        let orphaned = Set(recordings.compactMap(\.tag)).subtracting(configured).sorted()
+        return configured + orphaned
+    }
+
     /// What the list is showing: everything, or one tag's worth. A filter on a tag that has just
     /// lost its last entry falls away on its own rather than leaving an empty screen.
     private var visibleRecordings: [Recording] {
@@ -2284,10 +2805,15 @@ struct InboxView: View {
         // The filter row rides above the list rather than scrolling with it: it's how you're
         // *reading* the Inbox, so it stays put while the entries move under it.
         .safeAreaInset(edge: .top, spacing: 0) { tagFilterBar() }
-        .onChange(of: tagsInUse) { _, inUse in
+        // Leaving mid-hold files what was said rather than leaving the microphone open.
+        .onDisappear { finishTagRecording() }
+        .onChange(of: tagsInUse) { wasInUse, inUse in
             // The last entry under this tag has just gone (deleted, moved, re-filed): drop the
-            // filter rather than leaving an empty list with no way to see it's a filter's doing.
-            if let filterTag, !inUse.contains(filterTag) { self.filterTag = nil }
+            // filter rather than leaving an empty list behind. A tag that never had anything under
+            // it is a filter you chose to look at empty — that one stays.
+            if let filterTag, wasInUse.contains(filterTag), !inUse.contains(filterTag) {
+                self.filterTag = nil
+            }
         }
         .navigationTitle(selectionMode ? "\(selected.count) selected" : DocumentStore.inboxTitle)
         .navigationBarTitleDisplayMode(.inline)
@@ -2341,7 +2867,7 @@ struct InboxView: View {
                 VStack(spacing: 0) {
                     // While a filter is on, the whole of what's on screen is one kind of thing —
                     // so there's a sensible "all of it" to copy or to be rid of.
-                    if filterTag != nil { filteredActionsBar() }
+                    if filterTag != nil, !visibleRecordings.isEmpty { filteredActionsBar() }
                     CaptureBar(presets: model.documents.presets,
                                selected: model.autoTransformPreset(for: documentID),
                                onSelect: { model.setAutoTransform($0, for: documentID) },
@@ -2350,10 +2876,14 @@ struct InboxView: View {
             }
         }
         .overlay {
-            if recordings.isEmpty {
+            if recordings.isEmpty, filterTag == nil {
                 WWEmptyState(title: "Inbox is empty",
                              systemImage: "tray",
-                             message: "Recordings from your Watch and the record button land here — as does text you import.")
+                             message: "Recordings from your Watch and the record button land here — as does text you import. Hold a tag above to record an entry filed under it.")
+            } else if let filterTag, visibleRecordings.isEmpty {
+                WWEmptyState(title: "Nothing under “\(filterTag)”",
+                             systemImage: "tag",
+                             message: "Hold the tag above to record an entry filed under it.")
             }
         }
         .sheet(isPresented: $showingRecorder) {
@@ -2642,27 +3172,36 @@ struct InboxView: View {
 
     // MARK: Tags
 
-    /// The row of tags across the top of the Inbox, there only once something is filed under one —
-    /// a filter you didn't ask for is a control in the way, and an Inbox nobody has tagged has
-    /// nothing to filter.
+    /// The row of tags across the top of the Inbox — every tag, always, whether or not anything is
+    /// filed under it yet. **Tap** one to see just those entries; **hold** one to record a new entry
+    /// that arrives already filed under it (the chip carries the counter while you speak).
     ///
     /// Tapping the tag you're already on takes the filter off, which is the same gesture as tapping
     /// "All" and saves reaching for it.
     @ViewBuilder
     private func tagFilterBar() -> some View {
-        let inUse = tagsInUse
-        if !inUse.isEmpty, !selectionMode, editingID == nil {
+        let all = barTags
+        // Always there, as long as there are tags at all: a tag is a filter *and* a place to record
+        // into, and the second is worth having before anything has been filed under it.
+        if !all.isEmpty {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     tagChip("All", isOn: filterTag == nil, tint: WW.inkSecondary) {
                         withAnimation(.snappy(duration: 0.2)) { filterTag = nil }
                     }
-                    ForEach(inUse, id: \.self) { tag in
-                        tagChip(tag, isOn: filterTag == tag, tint: tagColor(tag)) {
-                            withAnimation(.snappy(duration: 0.2)) {
-                                filterTag = (filterTag == tag) ? nil : tag
-                            }
-                        }
+                    ForEach(all, id: \.self) { tag in
+                        HoldableTagChip(title: tag,
+                                        isOn: filterTag == tag,
+                                        tint: tagColor(tag),
+                                        elapsed: recordingTag == tag ? tagRecorder.elapsed : nil,
+                                        canHold: !selectionMode,
+                                        onTap: {
+                                            withAnimation(.snappy(duration: 0.2)) {
+                                                filterTag = (filterTag == tag) ? nil : tag
+                                            }
+                                        },
+                                        onHold: { beginTagRecording(tag) },
+                                        onRelease: { finishTagRecording() })
                     }
                 }
                 .padding(.horizontal, 20)
@@ -2671,6 +3210,50 @@ struct InboxView: View {
             .background(WW.paper)
             .overlay(alignment: .bottom) { WWHairline() }
         }
+    }
+
+    // MARK: Holding a tag to record
+
+    /// A tag has been held: start capturing. Nothing is filed yet — the entry appears when the
+    /// finger lifts, already under the tag that was held.
+    private func beginTagRecording(_ tag: String) {
+        guard recordingTag == nil else { return }
+        guard AVAudioApplication.shared.recordPermission == .granted else {
+            // Checked, never awaited — the finger is already down. Asking is a separate path.
+            Task { @MainActor in
+                if !(await tagRecorder.requestPermission()) {
+                    model.setupError = "Microphone permission is required to record."
+                }
+            }
+            return
+        }
+        finishEditing()
+        do {
+            try tagRecorder.start(to: model.documents.newAudioURL().url)
+        } catch {
+            model.setupError = error.localizedDescription
+            return
+        }
+        recordingTag = tag
+        WWHaptics.recordingStarted()
+    }
+
+    /// The finger lifted: file the clip in the Inbox under the tag it was spoken into, and let
+    /// transcription (and any Auto transform) run on its own. The tag is set up front, so the
+    /// first-word auto tag never overrules it.
+    private func finishTagRecording() {
+        guard let tag = recordingTag else { return }
+        recordingTag = nil
+        guard let result = tagRecorder.stop() else { return }
+        // A press let go the instant it's recognised isn't a recording.
+        guard result.duration >= GraphCanvas.minimumClip else {
+            try? FileManager.default.removeItem(at: result.url)
+            return
+        }
+        model.addDeviceRecording(audioURL: result.url, duration: result.duration,
+                                 toDocument: documentID, tag: tag)
+        WWHaptics.medium()
+        wwLog("Recorded an Inbox entry under “\(tag)”", .general)
     }
 
     /// A filter chip in its tag's own colour: outlined in it while it's off, filled with it while
@@ -2856,67 +3439,20 @@ struct InboxView: View {
     /// scrolled to at all).
     @ViewBuilder
     private func moveOverlay(ids: Set<UUID>) -> some View {
-        ZStack(alignment: .bottom) {
-            Color.black.opacity(0.25)
-                .ignoresSafeArea()
-                .onTapGesture { withAnimation(.snappy(duration: 0.22)) { movingIDs = nil } }
-            movePane(ids: ids)
-                .wwPane()
-                .padding(.horizontal, 12)
-                .padding(.bottom, 8)
-                .transition(.move(edge: .bottom).combined(with: .opacity))
-        }
-    }
-
-    /// The pane body: a "Move to Document" header, a "New Document" row, then one row per
-    /// destination document. "New Document" leads because it's the one destination that's always
-    /// available — a long list of documents would otherwise push it out of sight below the scroll.
-    @ViewBuilder
-    private func movePane(ids: Set<UUID>) -> some View {
-        VStack(spacing: 0) {
-            Text("Move to Document")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(WW.ink)
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 16).padding(.top, 16).padding(.bottom, 12)
-            WWHairline()
-            ScrollView {
-                VStack(spacing: 0) {
-                    Button {
-                        withAnimation(.snappy(duration: 0.22)) { movingIDs = nil }
-                        startNewDocument(for: ids)
-                    } label: {
-                        Label("New Document", systemImage: "plus")
-                            .foregroundStyle(WW.moss)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 16).padding(.vertical, 12)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    // The hairline goes *above* each destination — under "New Document" and between
-                    // the documents — so the list doesn't end on a rule against the pane's edge.
-                    ForEach(documentTargets) { target in
-                        WWHairline().padding(.leading, 16)
-                        Button {
-                            withAnimation(.snappy(duration: 0.22)) {
-                                model.documents.moveRecordings(ids, from: documentID, to: target.id)
-                                movingIDs = nil
-                                exitSelection()
-                            }
-                        } label: {
-                            Text(target.title)
-                                .foregroundStyle(WW.ink)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.horizontal, 16).padding(.vertical, 12)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                    }
+        MoveToDocumentOverlay(
+            targets: documentTargets,
+            onCancel: { withAnimation(.snappy(duration: 0.22)) { movingIDs = nil } },
+            onNewDocument: {
+                withAnimation(.snappy(duration: 0.22)) { movingIDs = nil }
+                startNewDocument(for: ids)
+            },
+            onPick: { target in
+                withAnimation(.snappy(duration: 0.22)) {
+                    model.documents.moveRecordings(ids, from: documentID, to: target.id)
+                    movingIDs = nil
+                    exitSelection()
                 }
-            }
-            .frame(maxHeight: 320)
-        }
+            })
     }
 
     // MARK: New document (from a swipe or a batch selection)
@@ -3110,6 +3646,129 @@ private struct InboxRecordingRow<Editor: View>: View {
         .padding(.vertical, 2)
         .contentShape(Rectangle())
         .modifier(LongPressUnless(disabled: isEditing, action: onLongPress))
+    }
+}
+
+/// The floating "Move to Document" pane — a dimmed scrim you tap to dismiss, the pane anchored at
+/// the bottom — shared by an Inbox entry's **Move** and a document section's, so the two are the
+/// same pane doing the same thing. "New Document" leads because it's the one destination that's
+/// always available — a long list of documents would otherwise push it out of sight below the
+/// scroll. The hairline goes *above* each destination — under "New Document" and between the
+/// documents — so the list doesn't end on a rule against the pane's edge.
+struct MoveToDocumentOverlay: View {
+    let targets: [Document]
+    let onCancel: () -> Void
+    let onNewDocument: () -> Void
+    let onPick: (Document) -> Void
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            Color.black.opacity(0.25)
+                .ignoresSafeArea()
+                .onTapGesture(perform: onCancel)
+            pane
+                .wwPane()
+                .padding(.horizontal, 12)
+                .padding(.bottom, 8)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+        }
+    }
+
+    private var pane: some View {
+        VStack(spacing: 0) {
+            Text("Move to Document")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(WW.ink)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16).padding(.top, 16).padding(.bottom, 12)
+            WWHairline()
+            ScrollView {
+                VStack(spacing: 0) {
+                    Button(action: onNewDocument) {
+                        Label("New Document", systemImage: "plus")
+                            .foregroundStyle(WW.moss)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 16).padding(.vertical, 12)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    ForEach(targets) { target in
+                        WWHairline().padding(.leading, 16)
+                        Button { onPick(target) } label: {
+                            Text(target.title)
+                                .foregroundStyle(WW.ink)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 16).padding(.vertical, 12)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .frame(maxHeight: 320)
+        }
+    }
+}
+
+/// A tag at the top of the Inbox: **tap** it to filter by it, **hold** it to record an entry that's
+/// filed under it from the start — the graph's "+" hold, on a chip. While it records, the chip turns
+/// ember and carries the counter, since the finger is covering whatever else would say so.
+///
+/// The hold is a long press *sequenced into* a drag rather than a drag from the first instant: the
+/// chips sit in a horizontal scroll view, and a zero-distance drag would claim every swipe along
+/// the row. A long press gives the touch up the moment it moves, so the row still scrolls. The
+/// release is read off a `GestureState`, which SwiftUI resets however the gesture ends — lifted,
+/// or cancelled by the system — so a recording can't be left running by a touch that went astray.
+private struct HoldableTagChip: View {
+    let title: String
+    let isOn: Bool
+    let tint: Color
+    /// How long this tag has been recording for, or nil when it isn't.
+    let elapsed: TimeInterval?
+    let canHold: Bool
+    let onTap: () -> Void
+    let onHold: () -> Void
+    let onRelease: () -> Void
+
+    @GestureState private var isHeld = false
+
+    var body: some View {
+        let recording = elapsed != nil
+        let ink = recording ? WW.ember : tint
+        HStack(spacing: 6) {
+            if let elapsed {
+                Circle().fill(WW.ember).frame(width: 7, height: 7)
+                Text(Recording.durationLabel(elapsed))
+                    .font(.system(size: 13, weight: .semibold).monospacedDigit())
+            } else {
+                Text(title)
+                    .font(.system(size: 13, weight: isOn ? .semibold : .regular))
+            }
+        }
+        .foregroundStyle(isOn && !recording ? WW.paper : ink)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(isOn && !recording ? ink : ink.opacity(0.10), in: Capsule())
+        .overlay(Capsule().stroke(isOn || recording ? ink : ink.opacity(0.45), lineWidth: 1))
+        .scaleEffect(isHeld ? 0.96 : 1)
+        .contentShape(Capsule())
+        .gesture(hold.exclusively(before: TapGesture().onEnded { onTap() }))
+        .onChange(of: isHeld) { _, held in
+            if !held { onRelease() } else if canHold { onHold() }
+        }
+        .accessibilityLabel(title)
+        .accessibilityHint("Tap to filter by this tag. Hold to record an entry filed under it.")
+        .accessibilityAddTraits(.isButton)
+    }
+
+    private var hold: some Gesture {
+        LongPressGesture(minimumDuration: GraphCanvas.holdDuration)
+            .onChanged { _ in WWHaptics.prepare() }   // a hold may be 0.4s away; warm the engine
+            .sequenced(before: DragGesture(minimumDistance: 0))
+            .updating($isHeld) { value, state, _ in
+                if case .second(true, _) = value { state = true }
+            }
     }
 }
 
@@ -3841,29 +4500,6 @@ struct GraphDocumentView: View {
             .frame(width: isEditing ? GraphCanvas.editingNodeWidth : GraphCanvas.nodeWidth,
                    alignment: .leading)
             .background { sizeReader(for: node.id) }
-            .overlay(alignment: .trailing) {
-                // Nothing on the canvas adds nodes while selecting — the "+" would be one stray
-                // fingertip away from a card nobody asked for, in the middle of picking cards out.
-                if !isEditing, !isPickingOut {
-                    HoldablePlusButton(onTap: { addChild(to: node) },
-                                       onHold: {
-                                           holdRecord(at: CGPoint(x: center.x + GraphCanvas.nodeWidth / 2,
-                                                                  y: center.y)) {
-                                               model.documents.addChildNode(to: node.id, in: documentID)
-                                           }
-                                       },
-                                       onRelease: {
-                                           finishHoldRecording()
-                                           flushPendingTidy()
-                                       })
-                        .accessibilityLabel("Add child node")
-                        // Centred on the card's right edge, half in and half out: it's the seam a
-                        // child grows from, and it reads that way sitting *on* it rather than
-                        // tucked inside. Half the button's target width does it, the overlay
-                        // having put its trailing edge on the card's.
-                        .offset(x: HoldablePlusButton.target / 2)
-                }
-            }
 
         Group {
             if isEditing {
@@ -3905,6 +4541,34 @@ struct GraphDocumentView: View {
                     // Only a touch that actually goes somewhere is claimed, which is the touch that
                     // meant to.
                     .highPriorityGesture(nodeDrag(node, in: document))
+            }
+        }
+        // The "+" rides on the card from *outside* its gestures. Inside them it was a child of a
+        // view carrying a high-priority drag, and a high-priority gesture on an ancestor holds the
+        // touch until it fails — which a drag only does when the finger lifts. So the "+" saw a
+        // press only at its end: a tap still worked, a hold never armed. Attached here it's a
+        // sibling of those gestures, and its own press is its own from the first instant.
+        .overlay(alignment: .trailing) {
+            // Nothing on the canvas adds nodes while selecting — the "+" would be one stray
+            // fingertip away from a card nobody asked for, in the middle of picking cards out.
+            if !isEditing, !isPickingOut {
+                HoldablePlusButton(onTap: { addChild(to: node) },
+                                   onHold: {
+                                       holdRecord(at: CGPoint(x: center.x + GraphCanvas.nodeWidth / 2,
+                                                              y: center.y)) {
+                                           model.documents.addChildNode(to: node.id, in: documentID)
+                                       }
+                                   },
+                                   onRelease: {
+                                       finishHoldRecording()
+                                       flushPendingTidy()
+                                   })
+                    .accessibilityLabel("Add child node")
+                    // Centred on the card's right edge, half in and half out: it's the seam a
+                    // child grows from, and it reads that way sitting *on* it rather than
+                    // tucked inside. Half the button's target width does it, the overlay
+                    // having put its trailing edge on the card's.
+                    .offset(x: HoldablePlusButton.target / 2)
             }
         }
         // Hover is watched in every mode, not only while picking out: a pointer resting on a card

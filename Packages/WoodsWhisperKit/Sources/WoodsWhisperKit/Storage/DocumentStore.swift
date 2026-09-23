@@ -504,6 +504,38 @@ public final class DocumentStore: ObservableObject {
         touch(docIdx)
     }
 
+    /// Drop one section into another: `draggedID`'s text goes into `targetID` at `offset`
+    /// characters (nil appends it to the end), and the dragged section is removed. One write, so
+    /// the merge lands — and is backed up — as a single change.
+    public func mergeParagraph(_ draggedID: UUID, into targetID: UUID, at offset: Int? = nil,
+                               in documentID: UUID) {
+        guard draggedID != targetID,
+              let docIdx = index(of: documentID),
+              let draggedIdx = documents[docIdx].paragraphs.firstIndex(where: { $0.id == draggedID }),
+              let targetIdx = documents[docIdx].paragraphs.firstIndex(where: { $0.id == targetID })
+        else { return }
+        let merged = Document.merging(documents[docIdx].paragraphs[draggedIdx].text,
+                                      into: documents[docIdx].paragraphs[targetIdx].text,
+                                      at: offset)
+        documents[docIdx].paragraphs[targetIdx].text = merged
+        documents[docIdx].paragraphs.remove(at: draggedIdx)
+        touch(docIdx)
+    }
+
+    /// Move a section out of one document's body onto the end of another's — the swipe-left
+    /// **Move** on a paragraph. It keeps its id, so it's the same section in its new place.
+    public func moveParagraph(_ paragraphID: UUID, from sourceID: UUID, to targetID: UUID) {
+        guard sourceID != targetID,
+              let srcIdx = index(of: sourceID),
+              let pIdx = documents[srcIdx].paragraphs.firstIndex(where: { $0.id == paragraphID }),
+              let dstIdx = index(of: targetID)
+        else { return }
+        let paragraph = documents[srcIdx].paragraphs.remove(at: pIdx)
+        documents[dstIdx].paragraphs.append(paragraph)
+        documents[srcIdx].updatedAt = Date()
+        touch(dstIdx)
+    }
+
     /// Replace the entire body with new paragraphs (used by a whole-document transform).
     public func setParagraphs(_ paragraphs: [Document.Paragraph], in documentID: UUID) {
         guard let idx = index(of: documentID) else { return }

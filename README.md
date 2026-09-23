@@ -79,8 +79,11 @@ the rest of the app depends on.
   moment it's transcribed. It's forgiving about how you said it ("Questions…", "Fixed…", "Reminders…"
   all count) and strict about where: a tag has to open the entry, not turn up in the middle of a
   sentence. A transform runs first, so what the entry ends up saying is what files it, and a tag you
-  chose by hand is never overruled. Once anything is filed, a row of tags appears across the top of
-  the Inbox — tap one to see just those, tap it again for everything. While you're looking at one
+  chose by hand is never overruled. A row of every tag sits across the top of the Inbox, always —
+  tap one to see just those, tap it again for everything. **Hold** one instead and a recording
+  starts (the same tick the graph's hold gives, and the chip carries the counter); let go and the
+  entry lands in the Inbox **already filed under that tag**. A tag with nothing under it yet is
+  still there to record into, and tapping it shows an empty filter that says so. While you're looking at one
   tag, **Copy All**, **New Document** and **Delete All** appear at the bottom — no plate under them,
   floating over the page the way the record button does — because everything on screen is then one
   kind of thing. **New Document** is the one that earns the filter: it names a document after the
@@ -92,6 +95,19 @@ the rest of the app depends on.
   documents — it's the destination that's always there, so it no longer sits below however many
   documents you've got. Pick it, name the document, and the entries move across with their text
   seeded into the body.
+- **Moving a section out.** Swipe a document's section left → **Move** — the Inbox's Move, for a
+  paragraph: the same pane slides up with **New Document** at its head and the other documents
+  below it. Pick a document and the section goes onto the end of its body; pick **New Document**,
+  name it (the section's first two words are suggested), and the section becomes its body. Graphs
+  aren't offered — there's no body for a paragraph to join.
+- **Merging sections by dragging.** Hold a section and drag it: it lifts and follows your finger.
+  Between two sections, a blue rule shows where it'll move to. Over *another section*, that section
+  gets a **dotted blue outline** — let go and the dragged text is **appended onto the end** of it,
+  the two becoming one section. Keep holding over it for **two seconds** and a **bright blue caret**
+  appears inside it, following your finger from gap to gap between its words; let go and the text
+  goes in exactly there. A hold released without moving is the long press it always was: reorder
+  mode. (The list holds still while a section is being carried, so a drop far down a long document
+  is a job for reorder mode.)
 - **A line break makes a section.** Text the app itself produced — a transcript, a transform's
   answer — becomes **one paragraph per line** when it lands in a document body. So an Inbox entry a
   transform broke into lines (a list, a set of points) arrives as the sections it reads as, each with
