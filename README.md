@@ -90,11 +90,23 @@ the rest of the app depends on.
   tag (change it if you like), moves every entry under that tag into it with their audio, and seeds
   the body with what they said, leaving the Inbox clear of them. Entries keep the tag they were
   filed under even if you later drop it from the Settings list.
+- **Search, pulled down from the top.** At the top of the **Inbox**, the **Documents** list or a
+  **document**, pull down and a search field appears — the system's own, hidden until asked for.
+  It searches where you are, ignoring case and accents: the **Inbox** narrows to the entries that
+  say it (inside whichever tag is chosen); **Documents** narrows to the documents that hold it
+  anywhere — title, body, a graph's nodes, a recording's transcript, either half of a joint
+  document — with a line under each showing the words that matched; a **document** narrows its
+  body to the sections that say it, the words marked in amber. Tap a section and the search closes,
+  the whole document comes back, and it scrolls to that section, washed in amber for a moment so
+  your eye lands on it. (A graph canvas, and the halves of a joint document, have no search of
+  their own yet — find them from the Documents list.)
 - **Moving an entry into a document.** Swipe an Inbox entry left → **Move** (or select several and
   tap **Move**) and the pane that slides up leads with **New Document**, *above* the list of existing
   documents — it's the destination that's always there, so it no longer sits below however many
   documents you've got. Pick it, name the document, and the entries move across with their text
-  seeded into the body.
+  seeded into the body. Pick an existing document and the same happens there: the recordings join
+  its Recordings and what they said goes onto the end of its body (an entry not yet transcribed
+  adds its words the moment it is).
 - **Moving a section out.** Swipe a document's section left → **Move** — the Inbox's Move, for a
   paragraph: the same pane slides up with **New Document** at its head and the other documents
   below it. Pick a document and the section goes onto the end of its body; pick **New Document**,

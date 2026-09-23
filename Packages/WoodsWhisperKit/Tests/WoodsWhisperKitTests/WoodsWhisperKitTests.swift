@@ -275,6 +275,25 @@ final class WoodsWhisperKitTests: XCTestCase {
 
     // MARK: Joint documents, made
 
+    func testSearchIgnoresCaseAndAccentsAndReachesEveryText() {
+        var doc = Document(title: "Trail notes")
+        doc.paragraphs = [Document.Paragraph(text: "We passed the Café by the river.")]
+        doc.recordings = [Recording(audioFileName: "a.m4a", origin: .phone, transcript: "Owl at dusk")]
+        XCTAssertTrue(doc.matches("cafe"))
+        XCTAssertTrue(doc.matches("TRAIL"))
+        XCTAssertTrue(doc.matches("owl"))
+        XCTAssertTrue(doc.matches("  "))                 // an empty query matches everything
+        XCTAssertFalse(doc.matches("heron"))
+    }
+
+    func testSearchExcerptSurroundsTheMatch() {
+        var doc = Document(title: "Notes")
+        doc.paragraphs = [Document.Paragraph(text: String(repeating: "a ", count: 40) + "needle here")]
+        let excerpt = doc.searchExcerpt(for: "needle", radius: 6)
+        XCTAssertEqual(excerpt, "…a a a needle here")
+        XCTAssertNil(doc.searchExcerpt(for: "Notes"))     // the title alone isn't an excerpt
+    }
+
     func testMergingAppendsWithASingleSpace() {
         XCTAssertEqual(Document.merging("  second part. ", into: "First part."),
                        "First part. second part.")
@@ -324,6 +343,34 @@ final class WoodsWhisperKitTests: XCTestCase {
         XCTAssertEqual(store.document(with: source.id)?.paragraphs.map(\.id), [keep.id])
         XCTAssertEqual(store.document(with: target.id)?.paragraphs.map(\.text), ["Already here.", "Goes."])
         XCTAssertEqual(store.document(with: target.id)?.paragraphs.last?.id, go.id)
+    }
+
+    @MainActor
+    func testFilingInboxEntriesWritesTheirTranscriptsIntoTheBody() {
+        let name = "FileRecordingsTests-\(UUID().uuidString)"
+        let store = DocumentStore(directoryName: name)
+        defer { removeStore(named: name) }
+
+        let inbox = store.createDocument(title: "Inbox Source")
+        let target = store.createDocument(title: "Target")
+        store.setParagraphs([Document.Paragraph(text: "Already here.")], in: target.id)
+        let older = Recording(createdAt: Date(timeIntervalSince1970: 100), audioFileName: "a.m4a",
+                              origin: .phone, transcript: "First line\nSecond line", status: .done)
+        let newer = Recording(createdAt: Date(timeIntervalSince1970: 200), audioFileName: "b.m4a",
+                              origin: .phone, transcript: "Third", status: .done)
+        let pending = Recording(createdAt: Date(timeIntervalSince1970: 300), audioFileName: "c.m4a",
+                                origin: .phone)
+        for recording in [newer, older, pending] { store.addRecording(recording, toDocument: inbox.id) }
+
+        store.fileRecordings([older.id, newer.id, pending.id], from: inbox.id, into: target.id)
+
+        let filed = store.document(with: target.id)
+        XCTAssertEqual(filed?.paragraphs.map(\.text),
+                       ["Already here.", "First line", "Second line", "Third"])
+        XCTAssertEqual(filed?.recordings.count, 3)
+        XCTAssertEqual(filed?.recordings.first { $0.id == pending.id }?.bodyDestination, .append)
+        XCTAssertNil(filed?.recordings.first { $0.id == older.id }?.bodyDestination)
+        XCTAssertTrue(store.document(with: inbox.id)?.recordings.isEmpty ?? false)
     }
 
     /// The link has to land on the document that asked for it. It used to land on whichever

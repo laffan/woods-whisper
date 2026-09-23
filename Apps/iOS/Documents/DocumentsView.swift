@@ -44,8 +44,28 @@ struct DocumentsView: View {
             $0.title != DocumentStore.inboxTitle && !followers.contains($0.id)
         }
     }
-    private var pinnedDocuments: [Document] { userDocuments.filter { $0.isPinned } }
-    private var unpinnedDocuments: [Document] { userDocuments.filter { !$0.isPinned } }
+    private var pinnedDocuments: [Document] { shownDocuments.filter { $0.isPinned } }
+    private var unpinnedDocuments: [Document] { shownDocuments.filter { !$0.isPinned } }
+
+    // Search — pulled down from the top of the list. It reaches every word a document holds (title,
+    // body, a graph's nodes, the recordings' transcripts), and a joint document's row answers for
+    // both halves.
+    @State private var searchText = ""
+    private var searchQuery: String { searchText.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var isSearching: Bool { !searchQuery.isEmpty }
+
+    /// The rows on screen: every document, or the ones a search reaches.
+    private var shownDocuments: [Document] {
+        guard isSearching else { return userDocuments }
+        return userDocuments.filter { doc in
+            doc.matches(searchQuery) || (jointPartner(of: doc)?.matches(searchQuery) ?? false)
+        }
+    }
+
+    /// Why a row matched: a line around the first hit in either half.
+    private func searchExcerpt(for doc: Document) -> String? {
+        doc.searchExcerpt(for: searchQuery) ?? jointPartner(of: doc)?.searchExcerpt(for: searchQuery)
+    }
 
     /// The selected documents in the order the list shows them (pinned first), so combined text
     /// reads the same way the screen does.
@@ -90,6 +110,9 @@ struct DocumentsView: View {
                 }
             }
             .wwList()
+            // Hidden until the list is pulled down from the top, like any list on the system.
+            .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .automatic),
+                        prompt: "Search documents")
             .navigationTitle(selectionMode ? "\(selected.count) selected" : "Documents")
             .navigationDestination(for: Route.self) { route in
                 destination(for: route)
@@ -100,7 +123,7 @@ struct DocumentsView: View {
                         Button("Done") { exitSelection() }
                     }
                     ToolbarItem(placement: .primaryAction) {
-                        Button(selected.count == userDocuments.count ? "Deselect All" : "Select All") {
+                        Button(selected.count == shownDocuments.count ? "Deselect All" : "Select All") {
                             selectAll()
                         }
                     }
@@ -136,7 +159,11 @@ struct DocumentsView: View {
                 }
             }
             .overlay {
-                if userDocuments.isEmpty {
+                if isSearching, shownDocuments.isEmpty {
+                    WWEmptyState(title: "No results",
+                                 systemImage: "magnifyingglass",
+                                 message: "Nothing in your documents says “\(searchQuery)”.")
+                } else if userDocuments.isEmpty {
                     WWEmptyState(title: "No documents yet",
                                  systemImage: "doc.text",
                                  message: "Tap ✎ to start a document — or a graph — or the mic to record straight to your Inbox. Watch recordings land in the Inbox tab.")
@@ -232,9 +259,18 @@ struct DocumentsView: View {
                         .font(.system(size: 20, weight: .light))
                         .foregroundStyle(selected.contains(doc.id) ? WW.moss : WW.inkTertiary)
                 }
-                DocumentRow(document: doc, recordingElapsed: recordingElapsed(for: doc),
-                            partner: jointPartner(of: doc))
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 4) {
+                    DocumentRow(document: doc, recordingElapsed: recordingElapsed(for: doc),
+                                partner: jointPartner(of: doc))
+                    // While searching, the words that matched — the title alone rarely says why.
+                    if isSearching, let excerpt = searchExcerpt(for: doc) {
+                        Text(searchHighlighted(excerpt, query: searchQuery))
+                            .font(.footnote)
+                            .foregroundStyle(WW.inkSecondary)
+                            .lineLimit(2)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             .contentShape(Rectangle())
             .onTapGesture {
@@ -400,7 +436,7 @@ struct DocumentsView: View {
     }
 
     private func selectAll() {
-        let all = Set(userDocuments.map(\.id))
+        let all = Set(shownDocuments.map(\.id))
         selected = (selected == all) ? [] : all
     }
 

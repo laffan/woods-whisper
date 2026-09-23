@@ -57,6 +57,16 @@ struct DocumentDetailView: View {
     @State private var preciseTask: Task<Void, Never>?
     @GestureState private var sectionPressActive = false
 
+    // Search, pulled down from the top of the document: the body narrows to the sections that say
+    // it, marked where they say it. Tapping one puts the whole document back and scrolls to it,
+    // flashed so the eye lands on the right one.
+    @State private var searchText = ""
+    @State private var isSearchPresented = false
+    @State private var revealParagraphID: UUID?
+    @State private var flashParagraphID: UUID?
+    private var searchQuery: String { searchText.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var isSearchingBody: Bool { !searchQuery.isEmpty }
+
     // Section → document move (swipe a paragraph left → Move): the section on its way, and — for
     // "New Document" — the one waiting on the name step, with the title being typed.
     @State private var movingParagraphID: UUID?
@@ -127,6 +137,13 @@ struct DocumentDetailView: View {
         }
         .overlay(alignment: .topTrailing) {
             if isEmbedded { paneMenu(for: document) }
+        }
+        .modifier(PullDownSearch(enabled: !isEmbedded, text: $searchText,
+                                 isPresented: $isSearchPresented, prompt: "Search this document"))
+        // An open edit is committed before the body narrows to results, rather than left open on a
+        // row that's about to disappear.
+        .onChange(of: isSearchingBody) { _, searching in
+            if searching { finishEditing() }
         }
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
@@ -219,26 +236,46 @@ struct DocumentDetailView: View {
 
     @ViewBuilder
     private func content(for document: Document) -> some View {
-        List {
-            bodySection(for: document)
-            documentActionsSection(for: document)
-            // On a phone, half of a joint document carries its Auto transform strip here — under
-            // the row of actions it belongs beside — rather than pinned to the bottom of a pane
-            // that's only half a screen tall.
-            if showsInlineAutoTransform {
-                Section {
-                    AutoTransformBar(presets: model.documents.presets,
-                                     selected: model.autoTransformPreset(for: documentID),
-                                     onSelect: { model.setAutoTransform($0, for: documentID) })
-                        .listRowInsets(EdgeInsets())
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
+        ScrollViewReader { proxy in
+            List {
+                if isSearchingBody {
+                    searchResultsSection(for: document)
+                } else {
+                    bodySection(for: document)
+                    documentActionsSection(for: document)
+                }
+                // On a phone, half of a joint document carries its Auto transform strip here — under
+                // the row of actions it belongs beside — rather than pinned to the bottom of a pane
+                // that's only half a screen tall.
+                if showsInlineAutoTransform, !isSearchingBody {
+                    Section {
+                        AutoTransformBar(presets: model.documents.presets,
+                                         selected: model.autoTransformPreset(for: documentID),
+                                         onSelect: { model.setAutoTransform($0, for: documentID) })
+                            .listRowInsets(EdgeInsets())
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                    }
+                }
+                if !isSearchingBody { recordingsSection(for: document) }
+            }
+            .wwList()
+            .environment(\.editMode, $editMode)
+            .onChange(of: revealParagraphID) { _, id in
+                guard let id else { return }
+                // A beat for the whole body to be laid out again before scrolling into it.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    withAnimation(.snappy(duration: 0.3)) { proxy.scrollTo(id, anchor: .center) }
+                    withAnimation(.easeOut(duration: 0.2)) { flashParagraphID = id }
+                    revealParagraphID = nil
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
+                        withAnimation(.easeOut(duration: 0.6)) {
+                            if flashParagraphID == id { flashParagraphID = nil }
+                        }
+                    }
                 }
             }
-            recordingsSection(for: document)
         }
-        .wwList()
-        .environment(\.editMode, $editMode)
         // A section on the move holds the list still: the finger is carrying something, and the
         // list sliding under it would change what it's over.
         .scrollDisabled(sectionDrag != nil)
@@ -294,6 +331,45 @@ struct DocumentDetailView: View {
         .sheet(item: $editingPreset) { preset in
             PresetEditorView(preset: preset, isNew: false)
         }
+    }
+
+    // MARK: Search results
+
+    /// The body narrowed to the sections that say what was searched for, each marked where it says
+    /// it. Read-only on purpose — a result is somewhere to go, and tapping it goes there.
+    @ViewBuilder
+    private func searchResultsSection(for document: Document) -> some View {
+        let hits = document.paragraphs.filter { Document.text($0.text, matches: searchQuery) }
+        Section {
+            if hits.isEmpty {
+                Text("No section says “\(searchQuery)”.")
+                    .font(.callout)
+                    .foregroundStyle(WW.inkSecondary)
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+            }
+            ForEach(hits) { para in
+                Text(searchHighlighted(para.text, query: searchQuery))
+                    .font(InlineTextStyle.documentBody.font(transcriptTextSize))
+                    .lineSpacing(5)
+                    .foregroundStyle(WW.ink)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 8)
+                    .contentShape(Rectangle())
+                    .onTapGesture { reveal(para.id) }
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 20))
+            }
+        } header: {
+            WWSectionHeader(hits.count == 1 ? "1 section" : "\(hits.count) sections")
+        }
+    }
+
+    /// Leave the search and bring this section into view in the whole document.
+    private func reveal(_ id: UUID) {
+        searchText = ""
+        isSearchPresented = false
+        revealParagraphID = id
     }
 
     // MARK: Body section (paragraphs)
@@ -426,6 +502,13 @@ struct DocumentDetailView: View {
                 .foregroundStyle(WW.ink)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background { sectionFrameReader(para.id) }
+                // A section just found by a search, washed in amber for a moment so it's the one
+                // the eye lands on.
+                .background {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(WW.amber.opacity(flashParagraphID == para.id ? 0.22 : 0))
+                        .padding(-6)
+                }
         }
     }
 
@@ -1374,6 +1457,46 @@ struct TextImportItems: View {
         }
         Button(action: onFile) {
             Label("Import Text File…", systemImage: "doc.text")
+        }
+    }
+}
+
+// MARK: - Search
+
+/// `text` with every match of `query` washed in amber — the colour the graph uses for "this is the
+/// one you asked for" — so a search result shows where it matched, not just that it did. Matched
+/// the way the search itself matches: ignoring case and accents.
+func searchHighlighted(_ text: String, query: String) -> AttributedString {
+    var attributed = AttributedString(text)
+    let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !needle.isEmpty else { return attributed }
+    var from = text.startIndex
+    while from < text.endIndex,
+          let hit = text.range(of: needle, options: [.caseInsensitive, .diacriticInsensitive],
+                               range: from..<text.endIndex) {
+        if let range = Range<AttributedString.Index>(hit, in: attributed) {
+            attributed[range].backgroundColor = WW.amber.opacity(0.28)
+        }
+        from = hit.upperBound
+    }
+    return attributed
+}
+
+/// Pull-down search on a screen that has a navigation bar of its own. Half of a joint document has
+/// none — the pair's bar belongs to both halves — so there it's left off.
+private struct PullDownSearch: ViewModifier {
+    let enabled: Bool
+    @Binding var text: String
+    @Binding var isPresented: Bool
+    let prompt: String
+
+    func body(content: Content) -> some View {
+        if enabled {
+            content.searchable(text: $text, isPresented: $isPresented,
+                               placement: .navigationBarDrawer(displayMode: .automatic),
+                               prompt: prompt)
+        } else {
+            content
         }
     }
 }
@@ -2751,6 +2874,11 @@ struct InboxView: View {
     @StateObject private var tagRecorder = AudioRecorder()
     @State private var recordingTag: String?
 
+    // Search, pulled down from the top of the Inbox: narrows the feed to entries whose words (or
+    // name) contain it, on top of whatever tag is chosen.
+    @State private var searchText = ""
+    private var searchQuery: String { searchText.trimmingCharacters(in: .whitespacesAndNewlines) }
+
     private var inbox: Document? { model.documents.document(with: documentID) }
     /// Newest first — the Inbox reads as a capture feed, so the clip you just made is at the top.
     private var recordings: [Recording] {
@@ -2795,13 +2923,26 @@ struct InboxView: View {
         return recordings.filter { $0.tag == filterTag }
     }
 
+    /// The rows on screen: the tag's worth, narrowed by the search if there is one. Kept apart from
+    /// `visibleRecordings` on purpose — Copy All / Delete All speak for the whole tag, and a search
+    /// is only a way of looking.
+    private var listedRecordings: [Recording] {
+        guard !searchQuery.isEmpty else { return visibleRecordings }
+        return visibleRecordings.filter {
+            Document.text($0.transcript ?? "", matches: searchQuery)
+                || Document.text($0.name, matches: searchQuery)
+        }
+    }
+
     var body: some View {
         List {
-            ForEach(visibleRecordings) { recording in
+            ForEach(listedRecordings) { recording in
                 inboxRow(recording)
             }
         }
         .wwList()
+        .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .automatic),
+                    prompt: "Search Inbox")
         // The filter row rides above the list rather than scrolling with it: it's how you're
         // *reading* the Inbox, so it stays put while the entries move under it.
         .safeAreaInset(edge: .top, spacing: 0) { tagFilterBar() }
@@ -2880,6 +3021,10 @@ struct InboxView: View {
                 WWEmptyState(title: "Inbox is empty",
                              systemImage: "tray",
                              message: "Recordings from your Watch and the record button land here — as does text you import. Hold a tag above to record an entry filed under it.")
+            } else if !searchQuery.isEmpty, listedRecordings.isEmpty {
+                WWEmptyState(title: "No results",
+                             systemImage: "magnifyingglass",
+                             message: "No entry\(filterTag.map { " under “\($0)”" } ?? "") says “\(searchQuery)”.")
             } else if let filterTag, visibleRecordings.isEmpty {
                 WWEmptyState(title: "Nothing under “\(filterTag)”",
                              systemImage: "tag",
@@ -2975,7 +3120,8 @@ struct InboxView: View {
             onCopy: { copy(recording) },
             onRetranscribe: { Task { await model.transcribe(recordingID: recording.id, inDocument: documentID) } },
             moveTargets: documentTargets,
-            onMove: { target in model.documents.moveRecording(recording.id, from: documentID, to: target.id) },
+            // Filed, not just moved: the entry's words go onto the end of the document's body too.
+            onMove: { target in model.documents.fileRecordings([recording.id], from: documentID, into: target.id) },
             tagColor: tagColor(recording.tag)
         ) {
             if isEditing { transcriptEditBox() }
@@ -3448,7 +3594,8 @@ struct InboxView: View {
             },
             onPick: { target in
                 withAnimation(.snappy(duration: 0.22)) {
-                    model.documents.moveRecordings(ids, from: documentID, to: target.id)
+                    // The recordings *and* their transcripts — the body gets what they said.
+                    model.documents.fileRecordings(ids, from: documentID, into: target.id)
                     movingIDs = nil
                     exitSelection()
                 }

@@ -439,6 +439,37 @@ public final class DocumentStore: ObservableObject {
         touch(dstIdx)
     }
 
+    /// Inbox → document: move the entries *and* what they said. The recordings go into the
+    /// document's Recordings section as `moveRecordings` puts them, and each transcript is written
+    /// onto the end of the body, one paragraph per line, oldest entry first — an Inbox entry *is*
+    /// its words, and moving it somewhere should put them there. An entry not transcribed yet is
+    /// flagged to append itself the moment it is (`Recording.bodyDestination`). A graph takes the
+    /// entries as nodes instead (`adoptIntoGraph`), so its body is left alone.
+    public func fileRecordings(_ ids: Set<UUID>, from sourceID: UUID, into targetID: UUID) {
+        guard sourceID != targetID,
+              let source = document(with: sourceID),
+              let target = document(with: targetID) else { return }
+        let moving = source.recordings
+            .filter { ids.contains($0.id) }
+            .sorted { $0.createdAt < $1.createdAt }
+        guard !moving.isEmpty else { return }
+        moveRecordings(ids, from: sourceID, to: targetID)
+        guard !target.isGraph, let dstIdx = index(of: targetID) else { return }
+
+        var paragraphs: [Document.Paragraph] = []
+        for recording in moving {
+            let text = recording.transcript?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !text.isEmpty {
+                paragraphs += Document.paragraphs(fromLinesOf: text)
+            } else if recording.status != .done,
+                      let recIdx = documents[dstIdx].recordings.firstIndex(where: { $0.id == recording.id }) {
+                documents[dstIdx].recordings[recIdx].bodyDestination = .append
+            }
+        }
+        documents[dstIdx].paragraphs.append(contentsOf: paragraphs)
+        touch(dstIdx)
+    }
+
     // MARK: Document body (paragraphs)
 
     /// Append paragraphs to the bottom of the body — a text import, or a transcript arriving from

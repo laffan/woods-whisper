@@ -154,6 +154,47 @@ public struct Document: Identifiable, Codable, Hashable, Sendable {
         return blocks.isEmpty ? [] : blocks.map { Paragraph(text: $0) }
     }
 
+    // MARK: Search
+
+    /// Whether `text` contains `query`, the way a search field should read it: ignoring case and
+    /// accents, and trimming the query. An empty query matches everything.
+    public static func text(_ text: String, matches query: String) -> Bool {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else { return true }
+        return text.range(of: needle, options: [.caseInsensitive, .diacriticInsensitive]) != nil
+    }
+
+    /// Every piece of text this document holds that a search should reach: the title, the body's
+    /// paragraphs, a graph's nodes, and the recordings' transcripts.
+    public var searchableTexts: [String] {
+        [title] + paragraphs.map(\.text) + nodes.map(\.text) + recordings.compactMap(\.transcript)
+    }
+
+    /// Whether anything in this document matches `query`.
+    public func matches(_ query: String) -> Bool {
+        searchableTexts.contains { Document.text($0, matches: query) }
+    }
+
+    /// A short line around the first match of `query` in the document's content (the title aside —
+    /// a search result already shows it), for a result row to show *why* it matched.
+    public func searchExcerpt(for query: String, radius: Int = 40) -> String? {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else { return nil }
+        for text in searchableTexts.dropFirst() {
+            guard let hit = text.range(of: needle, options: [.caseInsensitive, .diacriticInsensitive])
+            else { continue }
+            let start = text.index(hit.lowerBound, offsetBy: -radius, limitedBy: text.startIndex)
+                ?? text.startIndex
+            let end = text.index(hit.upperBound, offsetBy: radius, limitedBy: text.endIndex)
+                ?? text.endIndex
+            let body = text[start..<end]
+                .replacingOccurrences(of: "\n", with: " ")
+                .trimmingCharacters(in: .whitespaces)
+            return (start > text.startIndex ? "…" : "") + body + (end < text.endIndex ? "…" : "")
+        }
+        return nil
+    }
+
     /// One section's text dropped into another's: `inserted` placed at `offset` characters into
     /// `base` (nil, or anything past the end, appends it). Whatever whitespace sat at the seam is
     /// replaced by a single space either side, so a merge reads as one run of prose rather than two
