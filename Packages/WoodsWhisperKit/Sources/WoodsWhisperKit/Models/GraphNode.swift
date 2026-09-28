@@ -51,6 +51,13 @@ public struct GraphNode: Identifiable, Codable, Hashable, Sendable {
     /// exactly like the ring round a group.
     public var colorID: String?
 
+    /// How wide the card was dragged out to by the handle at its lower-right corner, in canvas
+    /// points — nil for the canvas's standard card. Only the width is kept: the height follows the
+    /// words, reflowing to whatever the width leaves them. Like the colour, it's how the card is
+    /// drawn rather than what it says, and a graph saved before cards could be resized decodes
+    /// with none.
+    public var width: Double?
+
     public let createdAt: Date
 
     public init(
@@ -60,6 +67,7 @@ public struct GraphNode: Identifiable, Codable, Hashable, Sendable {
         position: GraphPoint = .zero,
         recordingID: UUID? = nil,
         colorID: String? = nil,
+        width: Double? = nil,
         createdAt: Date = Date()
     ) {
         self.id = id
@@ -68,6 +76,7 @@ public struct GraphNode: Identifiable, Codable, Hashable, Sendable {
         self.position = position
         self.recordingID = recordingID
         self.colorID = colorID
+        self.width = width
         self.createdAt = createdAt
     }
 
@@ -85,6 +94,15 @@ public struct GraphNode: Identifiable, Codable, Hashable, Sendable {
     /// text keeps the marker, so editing the node shows it again — and so does the outline this
     /// graph exports, where a `#` is a heading in its own right rather than a stray character.
     public var displayText: String { heading?.text ?? trimmedText }
+
+    /// Whether the node says one emoji and nothing else — drawn large, on a square card of its own
+    /// rather than a strip of text (see `GraphEmoji`). Worked out from the words every time, so
+    /// typing anything else into it turns it back into an ordinary card.
+    public var isEmojiOnly: Bool { GraphEmoji.isSingleEmoji(text) }
+
+    /// The words as plain text: what the card shows, without a heading's marker or the `==` round
+    /// a highlight. What **Copy** hands over.
+    public var plainText: String { GraphHighlight.stripped(displayText) }
 }
 
 /// Which way a parent's children hang off it — read from where they already sit, never decided.
@@ -226,7 +244,21 @@ extension Document {
     /// A node with no words yet — a clip still transcribing, a node you haven't typed into — isn't
     /// given a bullet of its own, and anything hanging off it moves up to take its place, so the
     /// outline never carries an empty line with children dangling under it.
-    public var outline: String {
+    public var outline: String { outlineText(of: rootNodes) }
+
+    /// One branch as Markdown — **Copy as Markdown**, from the menu a Control-click opens on a card.
+    ///
+    /// A node with nothing hanging off it is handed over as the words it holds, exactly as typed
+    /// (`# heading`, `==highlight==` and all): a single thought pasted into a note should arrive as
+    /// that thought, not as a one-item list. A node with a branch under it comes out as the same
+    /// outline the whole graph exports, starting from that node — the mind map's shape, flattened.
+    public func markdown(ofBranch id: UUID) -> String {
+        guard let root = node(with: id) else { return "" }
+        guard !children(of: id).isEmpty else { return root.trimmedText }
+        return outlineText(of: [root])
+    }
+
+    private func outlineText(of branch: [GraphNode]) -> String {
         var lines: [String] = []
         var seen: Set<UUID> = []
 
@@ -243,7 +275,7 @@ extension Document {
             }
         }
 
-        walk(rootNodes, depth: 0)
+        walk(branch, depth: 0)
         return lines.joined(separator: "\n")
     }
 

@@ -62,7 +62,7 @@ public final class AudioRecorder: NSObject, ObservableObject {
     public func start(to url: URL) throws -> URL {
         let session = AVAudioSession.sharedInstance()
         #if os(iOS)
-        try session.setCategory(.playAndRecord, mode: .default, options: [.duckOthers, .allowBluetooth])
+        try configureForCapture(session)
         #else
         try session.setCategory(.playAndRecord, mode: .default, options: [.duckOthers])
         #endif
@@ -131,6 +131,37 @@ public final class AudioRecorder: NSObject, ObservableObject {
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         return (url, duration)
     }
+
+    #if os(iOS)
+    /// Set the session up to record **alongside** whatever else is playing, rather than instead of
+    /// it — music or a podcast in your Bluetooth headphones carries on, at full volume, while you
+    /// dictate into the phone's own microphone.
+    ///
+    /// Three things make that work, and one thing used to stop it:
+    /// • **`mixWithOthers`**, so starting a clip doesn't interrupt the other app. (It replaces
+    ///   `duckOthers`, which kept it playing but turned it down for the length of every clip.)
+    /// • **`allowBluetoothA2DP`**, so headphones stay on the high-quality, output-only profile
+    ///   they're playing on. A2DP carries no microphone, so the input is the built-in one (or a
+    ///   wired one) — exactly the "dictate into the phone, listen in the headphones" case.
+    /// • **`defaultToSpeaker`**, so with no headphones at all, audio already coming out of the
+    ///   speaker isn't moved to the earpiece the moment recording starts.
+    /// • What stopped it was `allowBluetooth` (the hands-free profile). With it, the system
+    ///   prefers the headset's own microphone, which switches the headphones to call audio: the
+    ///   music drops to telephone quality or stops. So it's only asked for when the microphone
+    ///   picked in Settings *is* a Bluetooth headset's — then there's no way round the switch,
+    ///   since a headset can't play A2DP and record at once.
+    private func configureForCapture(_ session: AVAudioSession) throws {
+        var options: AVAudioSession.CategoryOptions = [.mixWithOthers, .allowBluetoothA2DP,
+                                                       .defaultToSpeaker]
+        try session.setCategory(.playAndRecord, mode: .default, options: options)
+        // A headset's microphone is only listed while the category allows the hands-free
+        // profile, so a chosen input that isn't here now is one of those.
+        guard let uid = Self.preferredInputUID,
+              !(session.availableInputs ?? []).contains(where: { $0.uid == uid }) else { return }
+        options.insert(.allowBluetooth)
+        try session.setCategory(.playAndRecord, mode: .default, options: options)
+    }
+    #endif
 
     /// Route capture to the user-selected microphone, if one is chosen and present.
     private func applyPreferredInput(to session: AVAudioSession) {

@@ -134,6 +134,12 @@ enum WW {
     static let amber = dynamicColor(light: UIColor(red: 0.725, green: 0.541, blue: 0.184, alpha: 1),
                                     dark: UIColor(red: 0.812, green: 0.655, blue: 0.333, alpha: 1))
 
+    /// A graph node's `==highlight==`: a marker-pen yellow laid behind the words. Brighter than
+    /// the palette around it on purpose — it's the one colour here that means "this bit, look" —
+    /// and see-through, so the ink reads on top of it in either theme.
+    static let highlighter = dynamicColor(light: UIColor(red: 1.000, green: 0.847, blue: 0.263, alpha: 0.55),
+                                          dark: UIColor(red: 0.855, green: 0.690, blue: 0.180, alpha: 0.45))
+
     /// Supporting hue for edit-ish actions and the transfer log category: muted slate blue.
     static let slate = dynamicColor(light: UIColor(red: 0.353, green: 0.478, blue: 0.553, alpha: 1),
                                     dark: UIColor(red: 0.545, green: 0.655, blue: 0.729, alpha: 1))

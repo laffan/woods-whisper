@@ -68,7 +68,10 @@ struct SettingsView: View {
             WWSectionHeader("Microphone")
         } footer: {
             WWFooter("Choose which microphone to record with — built-in, wired, or Bluetooth. "
-                     + "“Automatic” lets the system pick (usually the most recently connected).")
+                     + "“Automatic” records with the built-in (or a wired) microphone and leaves "
+                     + "whatever is playing in your Bluetooth headphones playing. Pick a Bluetooth "
+                     + "headset here to record through its own microphone instead — that switches "
+                     + "the headset to call audio while the clip runs.")
         }
         .listRowBackground(WW.surface)
     }

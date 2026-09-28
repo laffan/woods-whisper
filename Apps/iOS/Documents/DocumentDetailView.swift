@@ -4413,6 +4413,22 @@ struct GraphDocumentView: View {
     /// out from under the touch that's still recording into it.
     @State private var pendingTidyParents: Set<UUID> = []
 
+    /// **Branch isolation**: ⌥-click a card (or hold the ⌥ key beside the minimap and tap one) and
+    /// everything that isn't hanging off it fades away, its own parents included, so the canvas is
+    /// that one branch. Nil while the whole graph is showing. See `BranchIsolation`.
+    @State private var isolation: BranchIsolation?
+
+    /// A card being resized by the handle at its lower-right corner, while the drag runs. Written
+    /// back to the node when the finger (or the pointer) lets go — one edit, like a drag.
+    @State private var resizing: NodeResize?
+
+    /// Which list `menuNodeID` opens: the long press's actions, or the Control-click menu.
+    @State private var menuKind: NodeMenuKind = .actions
+
+    /// When a card last took a click for itself — ⌥ to isolate its branch, ⌃ to open its menu —
+    /// so the canvas, which can see the same tap, doesn't also read it as "put everything away".
+    @State private var nodeClickAt: Date = .distantPast
+
     // Title, sharing.
     @State private var showingRename = false
     @State private var renameText = ""
@@ -4446,6 +4462,11 @@ struct GraphDocumentView: View {
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { if !isEmbedded { toolbarContent(for: document) } }
+        // The canvas runs on under the navigation bar and the tab bar (see `canvas(for:)`), so on
+        // this screen neither draws its paper plate: the title, the ⋯ and the tabs float over the
+        // graph the way the keys and the minimap along the bottom already do. Half of a joint
+        // document leaves the pair's bar as it is — the prose half shares it.
+        .toolbarBackground(isEmbedded ? .automatic : .hidden, for: .navigationBar, .tabBar)
         // No bottom bar here. A graph has no record button — the hold on the canvas is it — and its
         // Auto transform is an app-wide setting ("Auto transform nodes", in Settings → Graphs)
         // rather than a per-document toggle, so the canvas runs all the way down to the edge.
@@ -4458,6 +4479,10 @@ struct GraphDocumentView: View {
             stopGlide()
             if recordingNodeID != nil { finishHoldRecording() }
             resetChain()
+            finishResize()
+            // The rest of the graph comes back — and makes room — on the way out, rather than
+            // leaving whatever the branch grew into sitting on top of it until the next visit.
+            exitIsolation(animated: false)
             phase = .idle
             gestureStart = nil
             isSelecting = false
@@ -4529,6 +4554,10 @@ struct GraphDocumentView: View {
             // up again per edge and per ring made that quadratic in the size of the graph.
             let boxes = cardBoxes(in: document)
             let lines = edges(of: document, boxes: boxes)
+            // How much of the canvas sits under the navigation bar at the top and the tab bar at
+            // the bottom. The canvas itself runs under both (`ignoresSafeArea`, below); what floats
+            // *on* it — the bottom row, the menus, the recording counter — is kept clear of them.
+            let chrome = geo.safeAreaInsets
             content(for: document, boxes: boxes, lines: lines)
                 .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
                 .background(alignment: .topLeading) { GraphGrid(pan: pan, scale: scale) }
@@ -4549,11 +4578,13 @@ struct GraphDocumentView: View {
                         selectionBar()
                         bottomControls(for: document, edges: lines)
                     }
+                    .padding(.bottom, chrome.bottom)
                 }
+                .overlay(alignment: .top) { isolationBar(for: document, below: chrome.top) }
                 .overlay { chainRing() }
-                .overlay { recordingReadout(in: geo.size) }
-                .overlay(alignment: .topLeading) { menuOverlay(for: document, in: geo.size) }
-                .overlay(alignment: .topLeading) { quickActions(for: document, in: geo.size) }
+                .overlay { recordingReadout(in: geo.size, chrome: chrome) }
+                .overlay(alignment: .topLeading) { menuOverlay(for: document, in: geo.size, chrome: chrome) }
+                .overlay(alignment: .topLeading) { quickActions(for: document, in: geo.size, chrome: chrome) }
                 .overlay {
                     if document.nodes.isEmpty {
                         WWEmptyState(title: "An empty canvas",
@@ -4573,6 +4604,11 @@ struct GraphDocumentView: View {
                 }
                 .onChange(of: geo.size) { _, size in canvasSize = size }
         }
+        // Under the bars, top and bottom: the graph is the whole screen, and the navigation bar and
+        // tab bar sit over it (their plates are hidden — see `body`). Only the container's safe
+        // area, not the keyboard's, so an open card still has the keyboard to push against. Half
+        // of a joint document stays inside its pane.
+        .ignoresSafeArea(.container, edges: isEmbedded ? [] : .vertical)
     }
 
     /// Everything drawn in canvas coordinates: the lines, the "+" on each of them, and the nodes.
@@ -4641,10 +4677,13 @@ struct GraphDocumentView: View {
     @ViewBuilder
     private func nodeView(_ node: GraphNode, in document: Document, center: CGPoint) -> some View {
         let isEditing = editingNodeID == node.id
+        let hidden = isHidden(node.id)
+        let width = cardWidth(of: node)
         let card = nodeCard(node, in: document, isEditing: isEditing)
             // The open editor is given a little more room than a card at rest: it has to hold the
-            // text *and* the action row along the bottom of its outline.
-            .frame(width: isEditing ? GraphCanvas.editingNodeWidth : GraphCanvas.nodeWidth,
+            // text *and* the action row along the bottom of its outline. A card resized wider than
+            // that keeps its width, so its words don't reflow the moment you open it.
+            .frame(width: isEditing ? max(GraphCanvas.editingNodeWidth, width) : width,
                    alignment: .leading)
             .background { sizeReader(for: node.id) }
 
@@ -4660,6 +4699,13 @@ struct GraphDocumentView: View {
                 // With a pointer, pointing at the card is enough. Dragging still moves the lot.
                 card
                     .onTapGesture {
+                        // ⌃ + click is the card's menu whatever mode the canvas is in: it's how a
+                        // pointer asks "what can I do with this one?".
+                        if isControlClick {
+                            nodeClickAt = Date()
+                            openMenu(for: node, kind: .context)
+                            return
+                        }
                         toggleSelection(of: node)
                         withAnimation(.snappy(duration: 0.15)) { tappedNodeID = node.id }
                     }
@@ -4673,6 +4719,11 @@ struct GraphDocumentView: View {
                     .onLongPressGesture(minimumDuration: 0.45, maximumDistance: 3) {
                         openMenu(for: node)
                     }
+                    // A single click, read for its modifiers: ⌥ isolates this card's branch, ⌃
+                    // opens its menu, and with neither held it's nothing — the half of a double
+                    // tap it usually is. Simultaneous, so the double tap above still sees both
+                    // halves of itself.
+                    .simultaneousGesture(TapGesture().onEnded { clickNode(node) })
                     // **High priority, and that's what makes a drag start when it starts.**
                     //
                     // Gesture modifiers on one view are tried in the order they were attached, and
@@ -4701,9 +4752,10 @@ struct GraphDocumentView: View {
             if !isEditing, !isPickingOut {
                 HoldablePlusButton(onTap: { addChild(to: node) },
                                    onHold: {
-                                       holdRecord(at: CGPoint(x: center.x + GraphCanvas.nodeWidth / 2,
+                                       holdRecord(at: CGPoint(x: center.x + width / 2,
                                                               y: center.y)) {
-                                           model.documents.addChildNode(to: node.id, in: documentID)
+                                           model.documents.addChildNode(to: node.id, in: documentID,
+                                                                        widths: measuredWidths)
                                        }
                                    },
                                    onRelease: {
@@ -4718,15 +4770,39 @@ struct GraphDocumentView: View {
                     .offset(x: HoldablePlusButton.target / 2)
             }
         }
+        // The resize handle, on top of the "+" where the two meet at the corner — and, like the
+        // "+", outside the card's own gestures, so its drag is its own from the first instant.
+        .overlay { resizeHandle(for: node, isEditing: isEditing) }
         // Hover is watched in every mode, not only while picking out: a pointer resting on a card
         // when ⌘ goes down has already sent its hover event, and won't send another.
         .onHover { inside in
             if inside { pointAt(node.id) } else { releaseQuickActions(of: node.id) }
         }
+        // Outside an isolated branch: faded out, and out of reach — a card you can't see is not a
+        // card a stray touch should land on. Faded rather than taken away, so it can fade back.
+        .opacity(hidden ? 0 : 1)
+        .allowsHitTesting(!hidden)
         .position(x: center.x + GraphCanvas.center, y: center.y + GraphCanvas.center)
         // Whatever is travelling rides over what isn't — the whole branch, not just the card under
         // the finger, and a fresh ⌥ copy over the original it came out of.
-        .zIndex(isEditing || draggingBranch.contains(node.id) ? 2 : 1)
+        .zIndex(isEditing || draggingBranch.contains(node.id) || resizing?.id == node.id ? 2 : 1)
+    }
+
+    /// How wide a card is drawn: the width it's being dragged to right now, else an emoji's square,
+    /// else the width it was resized to, else the standard card.
+    private func cardWidth(of node: GraphNode) -> CGFloat {
+        if let resizing, resizing.id == node.id { return resizing.width }
+        if showsAsEmoji(node) { return GraphCanvas.emojiCardSide }
+        return node.width.map { CGFloat($0) } ?? GraphCanvas.nodeWidth
+    }
+
+    /// Whether a card is drawn as its one emoji, large, on a square. Only while it's at rest: a
+    /// card being recorded into, rewritten or edited shows what's happening to it instead.
+    private func showsAsEmoji(_ node: GraphNode) -> Bool {
+        guard node.isEmojiOnly, editingNodeID != node.id, recordingNodeID != node.id else {
+            return false
+        }
+        return !transformState(of: node).running
     }
 
     /// A node: the same edit block a paragraph or an Inbox entry becomes, shrunk to a card.
@@ -4755,6 +4831,17 @@ struct GraphDocumentView: View {
                 }
                 WWInlineEditAction("Delete", "trash", tint: WW.ember) { deleteEditingNode() }
             }
+        } else if showsAsEmoji(node) {
+            // One emoji and nothing else: the emoji, large, on a square card — a marker on the
+            // map rather than a line of text. Type anything more into it and it's a card again.
+            Text(node.trimmedText)
+                .font(.system(size: GraphCanvas.emojiPointSize))
+                .frame(width: GraphCanvas.emojiCardSide, height: GraphCanvas.emojiCardSide)
+                .background { nodeBackground(node) }
+                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(nodeBorder(node), lineWidth: nodeBorderWidth(node)))
+                .overlay { isolationRing(node) }
+                .shadow(color: .black.opacity(0.08), radius: 6, y: 2)
         } else {
             nodeLabel(node, in: document)
                 .padding(.leading, 12)
@@ -4766,7 +4853,22 @@ struct GraphDocumentView: View {
                 .background { nodeBackground(node) }
                 .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .stroke(nodeBorder(node), lineWidth: nodeBorderWidth(node)))
+                .overlay { isolationRing(node) }
                 .shadow(color: .black.opacity(0.08), radius: 6, y: 2)
+        }
+    }
+
+    /// The mark of the card a branch was isolated from: a second ring just outside its border, so
+    /// "this is where the branch starts" reads at a glance whatever colour the card itself is —
+    /// and isn't mistaken for a selection, which is one ring, or the node list's amber flash.
+    @ViewBuilder
+    private func isolationRing(_ node: GraphNode) -> some View {
+        if isolation?.rootID == node.id {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(WW.moss.opacity(0.55), lineWidth: 1.5)
+                .padding(-5)
+                .allowsHitTesting(false)
+                .transition(.opacity)
         }
     }
 
@@ -4815,7 +4917,9 @@ struct GraphDocumentView: View {
             // Never truncated: a card is as tall as what was said into it. A transcript cut off at
             // six lines is a node you have to open to read, which is a node that no longer says
             // what it says — and the canvas has room in every direction to hold the whole thing.
-            Text(node.displayText)
+            // `==like this==` is drawn as a highlight, the markers left out the way a heading's
+            // are, and back in the text the moment the card is opened.
+            Text(highlighted(node.displayText))
                 .font(nodeFont(node.heading))
                 .foregroundStyle(WW.ink)
                 .fixedSize(horizontal: false, vertical: true)
@@ -4853,6 +4957,18 @@ struct GraphDocumentView: View {
         return (false, false)
     }
 
+    /// A card's words with every `==highlight==` drawn as one (`GraphHighlight`): the markers out,
+    /// and a marker-pen wash behind what they held.
+    private func highlighted(_ text: String) -> AttributedString {
+        var attributed = AttributedString()
+        for run in GraphHighlight.runs(in: text) {
+            var piece = AttributedString(run.text)
+            if run.isHighlighted { piece.backgroundColor = WW.highlighter }
+            attributed.append(piece)
+        }
+        return attributed
+    }
+
     /// The type a node's words are set in: the canvas's own size, or a heading's step up from
     /// it — bold, and as many points bigger as the marker asked for (`#` more than `##`).
     private func nodeFont(_ heading: GraphHeading?) -> Font {
@@ -4870,6 +4986,9 @@ struct GraphDocumentView: View {
         if dragMode.leavesGroups, draggingBranch.contains(node.id) { return WW.ember }
         if highlightedNodeID == node.id { return WW.amber }
         if dropTargetID == node.id || selectedNodeIDs.contains(node.id) { return WW.moss }
+        // The card an isolated branch hangs from: moss, with a second ring round it
+        // (`isolationRing`) — "you're working from here".
+        if isolation?.rootID == node.id { return WW.moss }
         return WW.paletteColor(node.colorID) ?? WW.hairline
     }
 
@@ -4877,7 +4996,7 @@ struct GraphDocumentView: View {
         if recordingNodeID == node.id || dropTargetID == node.id { return 2 }
         if dragMode.leavesGroups, draggingBranch.contains(node.id) { return 2 }
         if highlightedNodeID == node.id { return 3 }
-        if selectedNodeIDs.contains(node.id) { return 2 }
+        if selectedNodeIDs.contains(node.id) || isolation?.rootID == node.id { return 2 }
         // A coloured card is drawn a hair heavier, so the colour is a border rather than a tint on
         // a hairline nobody can see.
         return node.colorID == nil ? 1 : 1.5
@@ -4893,6 +5012,15 @@ struct GraphDocumentView: View {
     /// height of one with a word.
     private var measuredHeights: [UUID: Double] {
         nodeSizes.mapValues { Double($0.height) }
+    }
+
+    /// The same across: cards are resizable, and an emoji's is square. The card open for editing is
+    /// left out — it's drawn at the editor's width, not its own, and the arranging should space it
+    /// for the card it goes back to being.
+    private var measuredWidths: [UUID: Double] {
+        var widths = nodeSizes.mapValues { Double($0.width) }
+        if let editingNodeID { widths.removeValue(forKey: editingNodeID) }
+        return widths
     }
 
     /// Report each card's measured size so drops and the right-edge "+" line up with what's drawn.
@@ -4914,6 +5042,9 @@ struct GraphDocumentView: View {
         document.nodes.compactMap { node in
             guard let parentID = node.parentID,
                   let parentBox = boxes[parentID], let box = boxes[node.id] else { return nil }
+            // A line out of an isolated branch goes with whatever it led to — the root's own link
+            // up to its parent included.
+            guard !isHidden(node.id), !isHidden(parentID) else { return nil }
             let start = anchor(of: parentBox, facing: box)
             let end = anchor(of: box, facing: parentBox)
             return GraphEdgeLine(id: node.id,
@@ -4962,6 +5093,14 @@ struct GraphDocumentView: View {
     private func point(of node: GraphNode) -> CGPoint {
         // A node still looking for its place in a chain is wherever the finger is.
         if chainFollowingNodeID == node.id, let following = chainFollowPoint { return following }
+        // A card being resized is pinned by its top-left corner — the handle is at the other one —
+        // so its centre follows the width it's being dragged to and the height its words reflow
+        // to at that width.
+        if let resizing, resizing.id == node.id {
+            let height = nodeSizes[node.id]?.height ?? GraphCanvas.assumedCardSize.height
+            return CGPoint(x: resizing.origin.x + resizing.width / 2,
+                           y: resizing.origin.y + height / 2)
+        }
         let base = CGPoint(x: node.position.x, y: node.position.y)
         guard draggingBranch.contains(node.id) else { return base }
         return CGPoint(x: base.x + dragTranslation.width, y: base.y + dragTranslation.height)
@@ -5324,6 +5463,9 @@ struct GraphDocumentView: View {
     /// While selecting, neither tap makes anything: a tap on bare canvas there is "none of these",
     /// which is the one thing a box drawn round the wrong nodes needs.
     private func registerTap(at viewPoint: CGPoint) {
+        // A click a card has just answered — ⌥ isolating its branch, ⌃ opening its menu — was the
+        // card's, not the canvas's: putting everything away here would close the menu it opened.
+        guard Date().timeIntervalSince(nodeClickAt) > GraphCanvas.doubleTapWindow else { return }
         if isSecondTouch, !pickingOutThisTouch {
             addTypedNode(at: viewPoint)
             return
@@ -5368,10 +5510,11 @@ struct GraphDocumentView: View {
     /// belongs — so the one thing you actually need to watch is put where you can see it, and kept
     /// on screen if the hold wanders towards an edge.
     @ViewBuilder
-    private func recordingReadout(in size: CGSize) -> some View {
+    private func recordingReadout(in size: CGSize, chrome: EdgeInsets) -> some View {
         if recordingNodeID != nil, let anchor = recordingAnchor {
             let x: CGFloat = min(max(80, anchor.x), max(80, size.width - 80))
-            let y: CGFloat = max(34, anchor.y - 62)
+            // Never up under the navigation bar, which the canvas now runs beneath.
+            let y: CGFloat = max(chrome.top + 34, anchor.y - 62)
             HStack(spacing: 9) {
                 Circle()
                     .fill(WW.ember)
@@ -5488,7 +5631,9 @@ struct GraphDocumentView: View {
         marqueeOrigin = nil
         marqueeCurrent = nil
         guard let box, let document else { return }
-        let caught = document.nodes.filter { box.intersects(rect(of: $0, in: document)) }
+        let caught = document.nodes.filter {
+            !isHidden($0.id) && box.intersects(rect(of: $0, in: document))
+        }
         withAnimation(.snappy(duration: 0.2)) { selectedNodeIDs = Set(caught.map(\.id)) }
         if !caught.isEmpty { haptic() }
     }
@@ -5654,7 +5799,7 @@ struct GraphDocumentView: View {
                 }
                 if mode == .move, let dragged, let target,
                    model.documents.attachNode(dragged, to: target, in: documentID,
-                                              heights: measuredHeights) {
+                                              heights: measuredHeights, widths: measuredWidths) {
                     let name = latest.node(with: target)?.trimmedText ?? ""
                     wwLog("Hung a graph branch under “\(name.isEmpty ? "a node" : name)”", .general)
                     haptic()
@@ -5732,7 +5877,7 @@ struct GraphDocumentView: View {
         let center = point(of: node)
         let excluded = draggingBranch
         return document.nodes.first(where: { other in
-            guard !excluded.contains(other.id) else { return false }
+            guard !excluded.contains(other.id), !isHidden(other.id) else { return false }
             // A little generous around the edges: you're aiming a card with your fingertip, and the
             // card is what you can see — the centre landing *near* the target should count.
             return rect(of: other, in: document).insetBy(dx: -14, dy: -14).contains(center)
@@ -5756,10 +5901,87 @@ struct GraphDocumentView: View {
                       width: size.width, height: size.height)
     }
 
+    // MARK: Resizing a card
+
+    /// The handle at a card's lower-right corner: the border there thickens when the pointer comes
+    /// onto the card, and that thickened corner is what you drag. Wider or narrower only — the
+    /// height is the words' business, and they reflow to whatever width they're given.
+    ///
+    /// Shown for a pointer, since it's a hover that reveals it; without one there's no hover and a
+    /// corner that took drags would steal the ones meant to move the card. Not on an open editor,
+    /// and not on an emoji's card, whose square is its size.
+    @ViewBuilder
+    private func resizeHandle(for node: GraphNode, isEditing: Bool) -> some View {
+        let active = resizing?.id == node.id
+        if !isEditing, !showsAsEmoji(node), active || hoveredNodeID == node.id {
+            ZStack(alignment: .bottomTrailing) {
+                GraphCornerShape(radius: 12, reach: 10)
+                    .stroke(active ? WW.moss : (WW.paletteColor(node.colorID) ?? WW.inkTertiary),
+                            style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                    .allowsHitTesting(false)
+                Color.clear
+                    .frame(width: GraphCanvas.resizeGrab, height: GraphCanvas.resizeGrab)
+                    .contentShape(Rectangle())
+                    // Half over the corner, half past it, so the pointer can find it from outside
+                    // the card as well as in.
+                    .offset(x: GraphCanvas.resizeGrab / 4, y: GraphCanvas.resizeGrab / 4)
+                    // Being on the handle is being on the card: without this, the corner that
+                    // pokes past the card would count as leaving it and put the handle away under
+                    // the pointer.
+                    .onHover { inside in
+                        if inside { pointAt(node.id) } else { releaseQuickActions(of: node.id) }
+                    }
+                    .gesture(resizeDrag(node))
+                    .accessibilityLabel("Resize")
+            }
+            .transition(.opacity)
+        }
+    }
+
+    private func resizeDrag(_ node: GraphNode) -> some Gesture {
+        // The global space for the same reason a node drag uses it: the view the gesture is on is
+        // moving under the pointer as the card changes size.
+        DragGesture(minimumDistance: 0, coordinateSpace: .global)
+            .onChanged { value in
+                if resizing?.id != node.id { beginResize(of: node) }
+                guard var live = resizing else { return }
+                let width = live.startWidth + value.translation.width / scale
+                live.width = min(max(width, GraphCanvas.minNodeWidth), GraphCanvas.maxNodeWidth)
+                resizing = live
+            }
+            .onEnded { _ in finishResize() }
+    }
+
+    /// The first frame of a resize: note the corner that stays put, and the width it started from.
+    private func beginResize(of node: GraphNode) {
+        finishEditing()
+        menuNodeID = nil
+        let box = card(around: point(of: node), of: node.id)
+        resizing = NodeResize(id: node.id, origin: CGPoint(x: box.minX, y: box.minY),
+                              startWidth: box.width, width: box.width)
+    }
+
+    /// Let go: write the width back, with the centre that keeps the card's top-left corner where it
+    /// was. Let go within a few points of the standard width and the card simply goes back to
+    /// being a standard one.
+    private func finishResize() {
+        guard let live = resizing else { return }
+        resizing = nil
+        let height = nodeSizes[live.id]?.height ?? GraphCanvas.assumedCardSize.height
+        let standard = abs(live.width - GraphCanvas.nodeWidth) < GraphCanvas.resizeSnap
+        let width = standard ? GraphCanvas.nodeWidth : live.width
+        let center = GraphPoint(x: Double(live.origin.x + width / 2),
+                                y: Double(live.origin.y + height / 2))
+        model.documents.resizeNode(live.id, in: documentID,
+                                   width: standard ? nil : Double(width), position: center)
+        wwLog("Resized a graph node to \(Int(width.rounded())) points wide", .general)
+    }
+
     // MARK: Adding nodes from the "+" buttons
 
     private func addChild(to parent: GraphNode) {
-        guard let node = model.documents.addChildNode(to: parent.id, in: documentID) else { return }
+        guard let node = model.documents.addChildNode(to: parent.id, in: documentID,
+                                                      widths: measuredWidths) else { return }
         autoTidySiblings(of: node)
         startEditing(node)
     }
@@ -5854,7 +6076,8 @@ struct GraphDocumentView: View {
     /// "Tidy children": line this node's children up beside it, evenly spaced, each with its own
     /// branch in tow. The one bit of arrangement the canvas does for you, and only when asked.
     private func tidyChildren(of node: GraphNode) {
-        model.documents.tidyChildren(of: node.id, in: documentID, heights: measuredHeights)
+        model.documents.tidyChildren(of: node.id, in: documentID, heights: measuredHeights,
+                                     widths: measuredWidths)
         haptic()
         wwLog("Tidied the children of a graph node", .general)
     }
@@ -5874,7 +6097,8 @@ struct GraphDocumentView: View {
             pendingTidyParents.insert(parentID)
         } else {
             withAnimation(.snappy(duration: 0.25)) {
-                model.documents.tidyChildren(of: parentID, in: documentID, heights: measuredHeights)
+                model.documents.tidyChildren(of: parentID, in: documentID, heights: measuredHeights,
+                                             widths: measuredWidths)
             }
         }
     }
@@ -5885,7 +6109,8 @@ struct GraphDocumentView: View {
     private func autoTidyChildren(of parentID: UUID) {
         guard autoTidy else { return }
         withAnimation(.snappy(duration: 0.25)) {
-            model.documents.tidyChildren(of: parentID, in: documentID, heights: measuredHeights)
+            model.documents.tidyChildren(of: parentID, in: documentID, heights: measuredHeights,
+                                         widths: measuredWidths)
         }
     }
 
@@ -5898,9 +6123,11 @@ struct GraphDocumentView: View {
         pendingTidyParents = []
         guard let document else { return }
         let heights = measuredHeights
+        let widths = measuredWidths
         withAnimation(.snappy(duration: 0.25)) {
             for node in document.nodes where pending.contains(node.id) {
-                model.documents.tidyChildren(of: node.id, in: documentID, heights: heights)
+                model.documents.tidyChildren(of: node.id, in: documentID,
+                                             heights: heights, widths: widths)
             }
         }
     }
@@ -5913,17 +6140,88 @@ struct GraphDocumentView: View {
         }
     }
 
-    // MARK: The long-press dropdown
+    // MARK: The long-press dropdown, and the Control-click one
 
-    private func openMenu(for node: GraphNode) {
+    private func openMenu(for node: GraphNode, kind: NodeMenuKind = .actions) {
         finishEditing()
         haptic()
+        menuKind = kind
         withAnimation(.snappy(duration: 0.2)) { menuNodeID = node.id }
+    }
+
+    /// Whether the click that just landed was a ⌃-click: the Control key held on a keyboard, read
+    /// off the touch itself or off the keyboard as it's held.
+    private var isControlClick: Bool { keys.isControlDown || modifierKeys.isControlDown }
+
+    /// One click on a card, with the canvas out of picking-out mode. ⌃ opens the card's menu; ⌥ —
+    /// the real key or the one beside the minimap — isolates its branch, or, clicked again on the
+    /// card the branch hangs from, brings the rest of the graph back. A click with neither held is
+    /// the first half of a double tap, and is left to that.
+    private func clickNode(_ node: GraphNode) {
+        if isControlClick {
+            nodeClickAt = Date()
+            openMenu(for: node, kind: .context)
+        } else if isOptionEngaged || keys.isOptionDown {
+            nodeClickAt = Date()
+            toggleIsolation(on: node)
+        }
+    }
+
+    private func menuItems(for node: GraphNode, in document: Document) -> [NodeMenuItem] {
+        switch menuKind {
+        case .actions: return actionItems(for: node, in: document)
+        case .context: return contextItems(for: node, in: document)
+        }
+    }
+
+    /// What a ⌃-click on a card offers: take it out of the network, line its children up, or copy
+    /// it — as plain words, or as Markdown.
+    ///
+    /// **Copy** is this card's words as they read on the canvas, without a heading's `#` or a
+    /// highlight's `==`. **Copy as Markdown** is the markup too — and, when the card has a branch
+    /// under it, the whole branch as the outline the graph exports, starting from this card.
+    private func contextItems(for node: GraphNode, in document: Document) -> [NodeMenuItem] {
+        let hasChildren = !document.children(of: node.id).isEmpty
+        let markdown = document.markdown(ofBranch: node.id)
+        return [
+            NodeMenuItem(title: "Detach", icon: "scissors",
+                         enabled: node.parentID != nil || hasChildren) {
+                menuNodeID = nil
+                unlink([node.id])
+            },
+            NodeMenuItem(title: "Organize Children", icon: "rectangle.3.group",
+                         enabled: hasChildren) {
+                menuNodeID = nil
+                tidyChildren(of: node)
+            },
+            NodeMenuItem(title: "Copy", icon: "doc.on.doc", enabled: node.hasText) {
+                menuNodeID = nil
+                copyToPasteboard(node.plainText, what: "a graph node")
+            },
+            NodeMenuItem(title: "Copy as Markdown", icon: "doc.plaintext",
+                         enabled: !markdown.isEmpty) {
+                menuNodeID = nil
+                copyToPasteboard(markdown, what: hasChildren ? "a graph branch as Markdown"
+                                                             : "a graph node as Markdown")
+            }
+        ]
+    }
+
+    private func copyToPasteboard(_ text: String, what: String) {
+        #if canImport(UIKit)
+        UIPasteboard.general.string = text
+        #endif
+        haptic()
+        wwLog("Copied \(what) to clipboard", .general)
     }
 
     /// The actions a paragraph gets from a swipe, as a list under the node they apply to — there's
     /// no row to swipe on a canvas, so the long press opens them here instead.
-    private func menuItems(for node: GraphNode, in document: Document) -> [NodeMenuItem] {
+    ///
+    /// Isolating a branch is here as well as on ⌥-click: a finger with nothing to hold ⌥ down
+    /// shouldn't have to find the key beside the minimap to reach it.
+    private func actionItems(for node: GraphNode, in document: Document) -> [NodeMenuItem] {
+        let isOrigin = isolation?.rootID == node.id
         var items: [NodeMenuItem] = [
             NodeMenuItem(title: "Edit", icon: "pencil") { startEditing(node) },
             NodeMenuItem(title: "Add Child", icon: "plus") { addChild(to: node) },
@@ -5947,6 +6245,13 @@ struct GraphDocumentView: View {
             }
             items.insert(tidy, at: 2)
         }
+        // Last before Delete: it's about how you're looking at the graph, not about this card.
+        let isolate = NodeMenuItem(title: isOrigin ? "Show All Nodes" : "Isolate Branch",
+                                   icon: isOrigin ? "circle.dashed" : "scope") {
+            menuNodeID = nil
+            toggleIsolation(on: node)
+        }
+        items.insert(isolate, at: items.count - 1)
         return items
     }
 
@@ -5962,7 +6267,8 @@ struct GraphDocumentView: View {
     /// bottom is where "all of these" lives, and a control this close to one card should mean that
     /// card.
     @ViewBuilder
-    private func quickActions(for document: Document, in size: CGSize) -> some View {
+    private func quickActions(for document: Document, in size: CGSize,
+                              chrome: EdgeInsets) -> some View {
         // Two or more picked out and this stands down: the bar along the bottom is what a *set* of
         // nodes is worked with, and a control hovering over one of them would be offering to do
         // something to that one alone in the middle of choosing several.
@@ -6007,7 +6313,7 @@ struct GraphDocumentView: View {
                 }
             }
             .offset(x: min(max(view.x - width / 2, 8), max(size.width - width - 8, 8)),
-                    y: max(view.y - card / 2 - GraphCanvas.quickActionsLift, 8))
+                    y: max(view.y - card / 2 - GraphCanvas.quickActionsLift, chrome.top + 8))
             .transition(.opacity.combined(with: .scale(scale: 0.9, anchor: .bottom)))
             .allowsHitTesting(true)
         }
@@ -6060,11 +6366,13 @@ struct GraphDocumentView: View {
     }
 
     @ViewBuilder
-    private func menuOverlay(for document: Document, in size: CGSize) -> some View {
+    private func menuOverlay(for document: Document, in size: CGSize,
+                             chrome: EdgeInsets) -> some View {
         if let id = menuNodeID, let node = document.node(with: id) {
             let items = menuItems(for: node, in: document)
             let height = CGFloat(items.count) * 44 + 8
-            let origin = menuOrigin(for: node, in: document, size: size, height: height)
+            let origin = menuOrigin(for: node, in: document, size: size, height: height,
+                                    chrome: chrome)
             ZStack(alignment: .topLeading) {
                 Color.black.opacity(0.15)
                     .ignoresSafeArea()
@@ -6100,19 +6408,21 @@ struct GraphDocumentView: View {
         }
     }
 
-    /// Under the node it belongs to, nudged back onto the screen when that would hang it off an edge.
+    /// Under the node it belongs to, nudged back onto the screen when that would hang it off an edge
+    /// — or under one of the bars the canvas runs beneath.
     private func menuOrigin(for node: GraphNode, in document: Document,
-                            size: CGSize, height: CGFloat) -> CGPoint {
+                            size: CGSize, height: CGFloat, chrome: EdgeInsets) -> CGPoint {
         let center = point(of: node)
         let view = CGPoint(x: center.x * scale + pan.x, y: center.y * scale + pan.y)
         let cardHeight: CGFloat = (nodeSizes[node.id]?.height
                                     ?? GraphCanvas.assumedCardSize.height) * scale
         let margin: CGFloat = 12
+        let top: CGFloat = chrome.top + margin
         let maxX: CGFloat = max(margin, size.width - GraphCanvas.menuWidth - margin)
-        let maxY: CGFloat = max(margin, size.height - height - margin)
+        let maxY: CGFloat = max(top, size.height - chrome.bottom - height - margin)
         let x: CGFloat = view.x - GraphCanvas.menuWidth / 2
         let y: CGFloat = view.y + cardHeight / 2 + 10
-        return CGPoint(x: min(max(margin, x), maxX), y: min(max(margin, y), maxY))
+        return CGPoint(x: min(max(margin, x), maxX), y: min(max(top, y), maxY))
     }
 
     // MARK: Groups
@@ -6144,7 +6454,7 @@ struct GraphDocumentView: View {
         // Fewest members first: a ring is only ever pushed out by rings already worked out. The
         // member sets are built once here rather than per comparison — this runs on every frame of
         // a drag.
-        let inward = document.groups
+        let inward = visibleGroups(in: document)
             .map { (group: $0, members: liveMembers(of: $0, boxes: boxes)) }
             .sorted { $0.members.count < $1.members.count }
         var frames: [UUID: CGRect] = [:]
@@ -6375,7 +6685,8 @@ struct GraphDocumentView: View {
     /// cluster travelled, which says nothing about who's in it.
     private func updateGroupMembership(after moved: Set<UUID>, in document: Document,
                                        leaving: Bool = false) {
-        for group in document.groups {
+        // A ring faded out with the rest of an isolated graph isn't there to drop a card into.
+        for group in visibleGroups(in: document) {
             let frame = boundingBox(ofMembers: group.members.subtracting(moved), in: document)
             var members = group.members
             for id in moved {
@@ -6755,7 +7066,8 @@ struct GraphDocumentView: View {
     /// a ring in its own, with a box around what's on screen. Whether it's shown at all is
     /// `bottomControls`' business, since the row it sits in has to keep its shape without it.
     private func minimap(for document: Document, edges: [GraphEdgeLine]) -> some View {
-        GraphMinimap(nodes: document.nodes, edges: edges, rings: minimapRings(in: document),
+        GraphMinimap(nodes: visibleNodes(in: document), edges: edges,
+                     rings: minimapRings(in: document),
                      viewport: viewportInCanvas) { spot in
             center(on: spot, animated: false)
         }
@@ -6771,7 +7083,7 @@ struct GraphDocumentView: View {
     /// `groupRings`' nesting gap — that exists so two rings on the canvas read as one inside the
     /// other, and at this size the pair would be a single thick line either way.
     private func minimapRings(in document: Document) -> [GraphMinimap.Ring] {
-        document.groups.compactMap { group -> GraphMinimap.Ring? in
+        visibleGroups(in: document).compactMap { group -> GraphMinimap.Ring? in
             var frame: CGRect?
             for id in group.memberIDs {
                 guard let node = document.node(with: id) else { continue }
@@ -6804,7 +7116,8 @@ struct GraphDocumentView: View {
                          onDelete: { deleteSelection() },
                          onAlignLeft: { arrangeSelection("Align Left", GraphArrange.alignLeft) },
                          onAlignRight: { arrangeSelection("Align Right", GraphArrange.alignRight) },
-                         onTidy: { tidyFromKeyboard() })
+                         onTidy: { tidyFromKeyboard() },
+                         onEscape: { exitIsolation() })
             .frame(width: 0, height: 0)
         #else
         EmptyView()
@@ -6826,13 +7139,25 @@ struct GraphDocumentView: View {
     private func tidyFromKeyboard() {
         guard let document else { return }
         let heights = measuredHeights
+        let widths = measuredWidths
         let picked = document.nodeEntries.map(\.node.id).filter { selectedNodeIDs.contains($0) }
         withAnimation(.snappy(duration: 0.25)) {
-            if picked.isEmpty {
-                model.documents.tidyGraph(in: documentID, heights: heights)
+            if picked.isEmpty, isolation == nil {
+                model.documents.tidyGraph(in: documentID, heights: heights, widths: widths)
             } else {
-                for id in picked {
-                    model.documents.tidyChildren(of: id, in: documentID, heights: heights)
+                // With a branch isolated, "the whole graph" is the branch: tidying rows nobody can
+                // see would move cards behind your back. Roots first, as `tidyGraph` does it.
+                // Each row's direction is read before anything moves, for the reason `tidyGraph`
+                // gives.
+                let parents = picked.isEmpty
+                    ? document.nodeEntries.map(\.node.id).filter { !isHidden($0) }
+                    : picked
+                let axes = parents.reduce(into: [UUID: GraphBranchAxis]()) { axes, id in
+                    axes[id] = document.branchAxis(of: id)
+                }
+                for id in parents {
+                    model.documents.tidyChildren(of: id, in: documentID, heights: heights,
+                                                 widths: widths, axis: axes[id])
                 }
             }
         }
@@ -6906,7 +7231,9 @@ struct GraphDocumentView: View {
             WWHairline()
             nodeList(for: document)
         }
-        .background(WW.paper)
+        // Up under the bars, whose plates are hidden on this screen: the sidebar's paper goes as
+        // far as the canvas does beside it.
+        .background { WW.paper.ignoresSafeArea() }
     }
 
     /// The graph as an indented list, in the same order as the outline it exports — the way back to
@@ -6934,6 +7261,8 @@ struct GraphDocumentView: View {
     /// The sheet closes on its way (it's covering the answer); the sidebar stays.
     private func goTo(_ node: GraphNode) {
         if !showsNodeSidebar { showingNodeList = false }
+        // A node outside an isolated branch can't be shown without the rest of the graph.
+        if isHidden(node.id) { exitIsolation() }
         center(on: CGPoint(x: node.position.x, y: node.position.y))
         flash(node.id)
     }
@@ -6962,8 +7291,9 @@ struct GraphDocumentView: View {
                     .font(.system(size: 10))
                     .foregroundStyle(WW.inkTertiary)
             }
-            // The same words the card shows — a heading's marker is invisible here too.
-            Text(entry.node.hasText ? entry.node.displayText : "Empty node")
+            // The same words the card shows — a heading's marker is invisible here too, and a
+            // highlight is a highlight.
+            Text(entry.node.hasText ? highlighted(entry.node.displayText) : AttributedString("Empty node"))
                 .font(.subheadline)
                 .foregroundStyle(entry.node.hasText ? WW.ink : WW.inkTertiary)
                 .lineLimit(2)
@@ -6977,6 +7307,133 @@ struct GraphDocumentView: View {
         .contentShape(Rectangle())
     }
 
+    // MARK: Branch isolation
+
+    /// Whether a node is faded out behind an isolated branch.
+    private func isHidden(_ id: UUID) -> Bool {
+        isolation?.hiddenIDs.contains(id) ?? false
+    }
+
+    /// The nodes on show: all of them, or the isolated branch and whatever has been added to it.
+    private func visibleNodes(in document: Document) -> [GraphNode] {
+        guard let isolation else { return document.nodes }
+        return document.nodes.filter { !isolation.hiddenIDs.contains($0.id) }
+    }
+
+    /// The rings on show. A ring with any member faded out is faded out itself: drawn round only
+    /// the members still showing, it would claim a smaller group than the one it is.
+    private func visibleGroups(in document: Document) -> [GraphGroup] {
+        guard let isolation else { return document.groups }
+        return document.groups.filter { isolation.hiddenIDs.isDisjoint(with: $0.memberIDs) }
+    }
+
+    /// ⌥-click: isolate the branch hanging from `node` — or, on the card it already hangs from,
+    /// bring everything back. Isolating a different card while one branch is isolated brings the
+    /// graph back first (making room, as leaving always does) and then isolates the new one.
+    private func toggleIsolation(on node: GraphNode) {
+        if let current = isolation {
+            exitIsolation()
+            if current.rootID == node.id { return }
+        }
+        guard let document else { return }
+        finishEditing()
+        menuNodeID = nil
+        tappedNodeID = nil
+        let branch = Set(document.subtree(of: node.id))
+        let hidden = Set(document.nodes.map(\.id)).subtracting(branch)
+        let start = storedBounds(of: branch, in: document)
+        withAnimation(.easeInOut(duration: 0.3)) {
+            // What's picked out may be on either side of the line; start from nothing rather than
+            // keep a selection half of which can't be seen.
+            selectedNodeIDs = []
+            isolation = BranchIsolation(rootID: node.id, hiddenIDs: hidden, startBounds: start)
+        }
+        haptic(strong: true)
+        wwLog("Isolated a branch of \(branch.count) graph node\(branch.count == 1 ? "" : "s")",
+              .general)
+    }
+
+    /// Bring the rest of the graph back — pushed out of the way of whatever the branch grew into
+    /// while it was on its own (`GraphArrange.makeRoom`): whatever sat beyond one side of the
+    /// branch moves out by as much as the branch grew on that side, so the gaps it had are the
+    /// gaps it keeps. Nodes made while isolated count as the branch's, wherever they were put.
+    private func exitIsolation(animated: Bool = true) {
+        guard let current = isolation else { return }
+        guard let document else {
+            isolation = nil
+            return
+        }
+        let shown = Set(document.nodes.map(\.id)).subtracting(current.hiddenIDs)
+        var positions: [UUID: GraphPoint] = [:]
+        if let start = current.startBounds, let end = storedBounds(of: shown, in: document) {
+            var centers: [UUID: GraphPoint] = [:]
+            for node in document.nodes where current.hiddenIDs.contains(node.id) {
+                centers[node.id] = node.position
+            }
+            positions = GraphArrange.makeRoom(around: start, grownTo: end, for: centers)
+        }
+        let restore = {
+            isolation = nil
+            model.documents.moveNodes(positions, in: documentID)
+        }
+        if animated {
+            withAnimation(.easeInOut(duration: 0.35)) { restore() }
+            haptic()
+        } else {
+            restore()
+        }
+        wwLog(positions.isEmpty ? "Showed the whole graph again"
+                                : "Showed the whole graph again, moving \(positions.count) node\(positions.count == 1 ? "" : "s") to make room",
+              .general)
+    }
+
+    /// The cards of `ids` where they're stored — not where a drag has them this instant — as one
+    /// rectangle, at the sizes the canvas measured them.
+    private func storedBounds(of ids: Set<UUID>, in document: Document) -> GraphRect? {
+        var bounds: CGRect?
+        for node in document.nodes where ids.contains(node.id) {
+            let box = card(around: CGPoint(x: node.position.x, y: node.position.y), of: node.id)
+            bounds = bounds.map { $0.union(box) } ?? box
+        }
+        guard let bounds else { return nil }
+        return GraphRect(minX: Double(bounds.minX), minY: Double(bounds.minY),
+                         maxX: Double(bounds.maxX), maxY: Double(bounds.maxY))
+    }
+
+    /// Along the top while a branch is isolated: which branch, and the way back to the whole graph.
+    /// (⌥-clicking the card the branch hangs from again, or Escape on a keyboard, does the same.)
+    @ViewBuilder
+    private func isolationBar(for document: Document, below top: CGFloat) -> some View {
+        if let isolation {
+            let name = document.node(with: isolation.rootID)?.plainText ?? ""
+            HStack(spacing: 10) {
+                Image(systemName: "scope")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(WW.moss)
+                Text(name.isEmpty ? "One branch" : name)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(WW.ink)
+                    .lineLimit(1)
+                Button { exitIsolation() } label: {
+                    Text("Show All")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(WW.moss)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(WW.surface, in: Capsule())
+            .overlay(Capsule().stroke(WW.hairline, lineWidth: 1))
+            .shadow(color: .black.opacity(0.12), radius: 12, y: 3)
+            .frame(maxWidth: 420)
+            // Half of a joint document has its ⋯ floating in the top-right corner; stay clear of it.
+            .padding(.horizontal, isEmbedded ? 56 : 16)
+            .padding(.top, top + 8)
+            .transition(.move(edge: .top).combined(with: .opacity))
+        }
+    }
+
     // MARK: Placing the canvas
 
     /// Open onto the graph rather than onto wherever the origin happens to be: the first time the
@@ -6988,8 +7445,9 @@ struct GraphDocumentView: View {
     }
 
     private func centeringPan(for document: Document, in size: CGSize) -> CGPoint {
-        let xs = document.nodes.map(\.position.x)
-        let ys = document.nodes.map(\.position.y)
+        let nodes = visibleNodes(in: document)
+        let xs = nodes.map(\.position.x)
+        let ys = nodes.map(\.position.y)
         let focus: CGPoint
         if let minX = xs.min(), let maxX = xs.max(), let minY = ys.min(), let maxY = ys.max() {
             focus = CGPoint(x: (minX + maxX) / 2, y: (minY + maxY) / 2)
@@ -7058,10 +7516,28 @@ struct GraphDocumentView: View {
         }
     }
 
+    /// On an iPad the title sits at the leading end of the bar, beside the way back, rather than in
+    /// the middle of it: a bar that wide leaves a centred title marooned half a screen from the
+    /// arrow it belongs with. A phone's bar is narrow enough for the middle to be beside it.
+    private var titleLeadsTheBar: Bool {
+        #if canImport(UIKit)
+        return UIDevice.current.userInterfaceIdiom == .pad
+        #else
+        return false
+        #endif
+    }
+
     @ToolbarContentBuilder
     private func toolbarContent(for document: Document?) -> some ToolbarContent {
-        ToolbarItem(placement: .principal) {
-            titleButton(for: document)
+        if titleLeadsTheBar {
+            ToolbarItem(placement: .topBarLeading) {
+                titleButton(for: document)
+            }
+        }
+        if !titleLeadsTheBar {
+            ToolbarItem(placement: .principal) {
+                titleButton(for: document)
+            }
         }
         if let document {
             ToolbarItem(placement: .primaryAction) {
@@ -7166,6 +7642,36 @@ struct GraphDocumentView: View {
         var id: UUID { nodeID }
     }
 
+    /// One branch on its own: the card it hangs from, everything that was faded out to show it,
+    /// and where the branch's cards were when it was isolated — which is what leaving measures its
+    /// growth against.
+    ///
+    /// The faded set is fixed when the branch is isolated, and everything *else* is on show. So a
+    /// node made while isolated — a child, a root held onto the bare canvas, a ⌥ copy — is part of
+    /// what you're working on from the moment it appears, rather than vanishing because it doesn't
+    /// hang off the right card.
+    private struct BranchIsolation {
+        let rootID: UUID
+        let hiddenIDs: Set<UUID>
+        let startBounds: GraphRect?
+    }
+
+    /// A resize in progress: the card, the corner that stays put (its top-left, in canvas points),
+    /// and the width it started from and has been dragged to.
+    private struct NodeResize {
+        let id: UUID
+        let origin: CGPoint
+        let startWidth: CGFloat
+        var width: CGFloat
+    }
+
+    /// The two dropdowns a card has: the long press's list of actions, and the shorter one a
+    /// Control-click opens (Detach, Organize Children, Copy, Copy as Markdown).
+    private enum NodeMenuKind {
+        case actions
+        case context
+    }
+
     /// What a drag on a card turned out to be, decided by what was held when it began.
     private enum NodeDragMode {
         /// The card and its branch travel, and a drop on another card re-parents them.
@@ -7226,6 +7732,17 @@ enum GraphCanvas {
     }
     /// A node that's open for editing, which has an action row to fit as well as its text.
     static let editingNodeWidth: CGFloat = 280
+    /// How narrow and how wide a card can be dragged by its resize handle: narrow enough for a
+    /// word, wide enough for a paragraph to read as one.
+    static let minNodeWidth: CGFloat = 100
+    static let maxNodeWidth: CGFloat = 640
+    /// The resize handle's touch target, and how close to the standard width counts as it — let go
+    /// there and the card is a standard one again rather than one a few points off it.
+    static let resizeGrab: CGFloat = 28
+    static let resizeSnap: CGFloat = 6
+    /// A card that's a single emoji: the emoji's size, and the square it sits on.
+    static let emojiPointSize: CGFloat = 60
+    static let emojiCardSide: CGFloat = 96
     static let menuWidth: CGFloat = 210
     static let gridSpacing: CGFloat = 44
     static let minimapHeight: CGFloat = 76
@@ -7340,6 +7857,30 @@ private struct GraphEdgeShape: Shape {
                           control1: placed(edge.fromControl),
                           control2: placed(edge.toControl))
         }
+        return path
+    }
+}
+
+// MARK: - The resize handle
+
+/// The lower-right corner of a card's outline — the curve, and a short run of the two straight
+/// sides into it — as a path to stroke thick: the card's own border, thickening where it can be
+/// taken hold of. A circular arc standing in for the card's continuous corner, which at this weight
+/// of line is the same shape.
+private struct GraphCornerShape: Shape {
+    var radius: CGFloat
+    /// How far the thick line runs along each straight side past the end of the curve.
+    var reach: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        let r = min(radius, rect.width / 2, rect.height / 2)
+        var path = Path()
+        path.move(to: CGPoint(x: rect.maxX, y: rect.maxY - r - reach))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - r))
+        // From the right side round to the bottom: increasing angles run clockwise on screen.
+        path.addArc(center: CGPoint(x: rect.maxX - r, y: rect.maxY - r), radius: r,
+                    startAngle: .degrees(0), endAngle: .degrees(90), clockwise: false)
+        path.addLine(to: CGPoint(x: rect.maxX - r - reach, y: rect.maxY))
         return path
     }
 }
@@ -7588,6 +8129,8 @@ final class ModifierKeys {
     var isCommandDown = false
     var isOptionDown = false
     var isShiftDown = false
+    /// ⌃, which makes a click on a card open its menu.
+    var isControlDown = false
 }
 
 /// Whether a hardware modifier is down *right now* — as against what was held when a touch began,
@@ -7617,6 +8160,10 @@ final class ModifierKeyMonitor: ObservableObject {
     /// how you say "no, I really do want a line break". A `UITextView` is handed the same "\n"
     /// either way, so the only way to tell the two apart is to ask the keyboard what else is down.
     @Published private(set) var isShiftDown = false
+    /// ⌃, as it's held: a click on a card with it down opens that card's menu. Read at the moment
+    /// of the click, alongside what the touch itself carried — there's no soft key for it, since
+    /// a menu is what the long press already opens without one.
+    @Published private(set) var isControlDown = false
 
     /// The **soft keys**, held with a thumb where there's no keyboard to hold the real thing: ⌘ and
     /// ⌥ beside a canvas's minimap, and ⌘ again at the left of a plain document's Auto transform
@@ -7652,6 +8199,7 @@ final class ModifierKeyMonitor: ObservableObject {
             self?.report(command: false)
             self?.report(option: false)
             self?.report(shift: false)
+            self?.report(control: false)
         })
     }
 
@@ -7672,6 +8220,11 @@ final class ModifierKeyMonitor: ObservableObject {
         for code in [GCKeyCode.leftShift, GCKeyCode.rightShift] {
             input.button(forKeyCode: code)?.pressedChangedHandler = { [weak self] _, _, pressed in
                 self?.report(shift: pressed || Self.isDown(.leftShift, .rightShift))
+            }
+        }
+        for code in [GCKeyCode.leftControl, GCKeyCode.rightControl] {
+            input.button(forKeyCode: code)?.pressedChangedHandler = { [weak self] _, _, pressed in
+                self?.report(control: pressed || Self.isDown(.leftControl, .rightControl))
             }
         }
     }
@@ -7706,6 +8259,14 @@ final class ModifierKeyMonitor: ObservableObject {
         DispatchQueue.main.async { [weak self] in
             guard let self, self.isShiftDown != down else { return }
             self.isShiftDown = down
+        }
+    }
+
+    /// Nor does ⌃: it's read when a card is clicked, never drawn.
+    private func report(control down: Bool) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.isControlDown != down else { return }
+            self.isControlDown = down
         }
     }
 }
@@ -7766,6 +8327,7 @@ struct CommandKeyWatcher: UIViewRepresentable {
             keys.isCommandDown = event.modifierFlags.contains(.command)
             keys.isOptionDown = event.modifierFlags.contains(.alternate)
             keys.isShiftDown = event.modifierFlags.contains(.shift)
+            keys.isControlDown = event.modifierFlags.contains(.control)
             state = .failed          // never recognize; never take a touch from anything else
         }
 
@@ -7780,8 +8342,8 @@ struct CommandKeyWatcher: UIViewRepresentable {
 #if canImport(UIKit)
 /// The canvas's hardware-keyboard shortcuts, for anyone working with a keyboard attached:
 /// **Delete** removes the selected cards, **⌘←** and **⌘→** line them up by their left or right
-/// edges, and **⌘T** tidies — the selection's children, or the whole graph when nothing is picked
-/// out.
+/// edges, **⌘T** tidies — the selection's children, or the whole graph when nothing is picked
+/// out — and **Escape** brings the whole graph back from an isolated branch.
 ///
 /// UIKit's key commands rather than SwiftUI's `onKeyPress`, for one reason: the responder chain
 /// already answers the question "is the user typing?". A view that's first responder gets the keys;
@@ -7796,6 +8358,7 @@ struct GraphKeyCommands: UIViewRepresentable {
     let onAlignLeft: () -> Void
     let onAlignRight: () -> Void
     let onTidy: () -> Void
+    let onEscape: () -> Void
 
     func makeUIView(context: Context) -> KeyView {
         let view = KeyView()
@@ -7814,6 +8377,7 @@ struct GraphKeyCommands: UIViewRepresentable {
         view.onAlignLeft = onAlignLeft
         view.onAlignRight = onAlignRight
         view.onTidy = onTidy
+        view.onEscape = onEscape
         view.wantsKeys(isActive)
     }
 
@@ -7823,6 +8387,7 @@ struct GraphKeyCommands: UIViewRepresentable {
         var onAlignLeft: () -> Void = {}
         var onAlignRight: () -> Void = {}
         var onTidy: () -> Void = {}
+        var onEscape: () -> Void = {}
 
         private var holdingKeys = false
 
@@ -7853,7 +8418,9 @@ struct GraphKeyCommands: UIViewRepresentable {
                              action: #selector(alignLeft)),
                 UIKeyCommand(input: UIKeyCommand.inputRightArrow, modifierFlags: .command,
                              action: #selector(alignRight)),
-                UIKeyCommand(input: "t", modifierFlags: .command, action: #selector(tidy))
+                UIKeyCommand(input: "t", modifierFlags: .command, action: #selector(tidy)),
+                UIKeyCommand(input: UIKeyCommand.inputEscape, modifierFlags: [],
+                             action: #selector(escape))
             ]
             // Otherwise the system keeps the arrows for itself (focus movement) before this is asked.
             for command in commands { command.wantsPriorityOverSystemBehavior = true }
@@ -7864,6 +8431,7 @@ struct GraphKeyCommands: UIViewRepresentable {
         @objc private func alignLeft() { onAlignLeft() }
         @objc private func alignRight() { onAlignRight() }
         @objc private func tidy() { onTidy() }
+        @objc private func escape() { onEscape() }
     }
 }
 #endif

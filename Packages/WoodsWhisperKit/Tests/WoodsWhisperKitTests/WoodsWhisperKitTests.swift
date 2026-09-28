@@ -1344,6 +1344,200 @@ final class WoodsWhisperKitTests: XCTestCase {
         XCTAssertTrue(GraphArrange.distributeVertically(column).isEmpty)
     }
 
+    // MARK: Resizing a card
+
+    func testAWidthRoundTripsAndAnOlderNodeDecodesWithoutOne() throws {
+        let wide = GraphNode(text: "A long thought", width: 360)
+        let decoded = try JSONDecoder.iso.decode(GraphNode.self, from: JSONEncoder.iso.encode(wide))
+        XCTAssertEqual(decoded.width, 360)
+
+        let json = """
+        {"id":"\(UUID().uuidString)","text":"Camp","position":{"x":0,"y":0},\
+        "createdAt":"2026-07-31T14:30:05Z"}
+        """
+        XCTAssertNil(try JSONDecoder.iso.decode(GraphNode.self, from: Data(json.utf8)).width)
+    }
+
+    @MainActor
+    func testResizingStoresTheWidthAndTheCentreTogether() {
+        let name = "GraphResizeTests-\(UUID().uuidString)"
+        let store = DocumentStore(directoryName: name)
+        defer { removeStore(named: name) }
+
+        let graph = store.createDocument(title: "Route", kind: .graph)
+        let node = store.addRootNode(in: graph.id, text: "Camp")!
+        store.resizeNode(node.id, in: graph.id, width: 300, position: GraphPoint(x: 60, y: 10))
+        var stored = store.document(with: graph.id)?.node(with: node.id)
+        XCTAssertEqual(stored?.width, 300)
+        XCTAssertEqual(stored?.position, GraphPoint(x: 60, y: 10))
+
+        // Back to the standard card.
+        store.resizeNode(node.id, in: graph.id, width: nil, position: .zero)
+        stored = store.document(with: graph.id)?.node(with: node.id)
+        XCTAssertNil(stored?.width)
+    }
+
+    /// A column of children keeps its near edges in line with a wide card among them, and a wide
+    /// parent pushes its column out past its own edge.
+    @MainActor
+    func testTidySpacesCardsByTheirOwnWidths() {
+        let name = "GraphWidthTidyTests-\(UUID().uuidString)"
+        let store = DocumentStore(directoryName: name)
+        defer { removeStore(named: name) }
+
+        let graph = store.createDocument(title: "Route", kind: .graph)
+        let root = store.addRootNode(in: graph.id, text: "Camp")!
+        let narrow = store.addChildNode(to: root.id, in: graph.id, text: "Firewood")!
+        let wide = store.addChildNode(to: root.id, in: graph.id, text: "Water")!
+        store.resizeNode(wide.id, in: graph.id, width: 380, position: wide.position)
+
+        store.tidyChildren(of: root.id, in: graph.id)
+        var document = store.document(with: graph.id)!
+        // Standard cards: the column it has always been.
+        XCTAssertEqual(document.node(with: narrow.id)!.position.x,
+                       root.position.x + DocumentStore.childColumnOffset, accuracy: 0.001)
+        // The wide one's left edge is where the narrow one's is.
+        XCTAssertEqual(document.node(with: wide.id)!.position.x - 190,
+                       document.node(with: narrow.id)!.position.x - 90, accuracy: 0.001)
+
+        // A measured width (an emoji's square, say) wins over the stored one.
+        store.tidyChildren(of: root.id, in: graph.id, widths: [root.id: 96])
+        document = store.document(with: graph.id)!
+        XCTAssertEqual(document.node(with: narrow.id)!.position.x,
+                       root.position.x + 48 + DocumentStore.standardNodeGap + 90, accuracy: 0.001)
+    }
+
+    @MainActor
+    func testACopyKeepsItsCardsWidth() {
+        let name = "GraphWidthCopyTests-\(UUID().uuidString)"
+        let store = DocumentStore(directoryName: name)
+        defer { removeStore(named: name) }
+
+        let graph = store.createDocument(title: "Route", kind: .graph)
+        let node = store.addRootNode(in: graph.id, text: "Camp")!
+        store.resizeNode(node.id, in: graph.id, width: 240, position: .zero)
+        let map = store.duplicateNodes([node.id], in: graph.id)
+        let copy = store.document(with: graph.id)?.node(with: map[node.id]!)
+        XCTAssertEqual(copy?.width, 240)
+    }
+
+    // MARK: Highlights
+
+    func testAHighlightIsTheWordsBetweenTwoMarkers() {
+        XCTAssertEqual(GraphHighlight.runs(in: "pack ==the stove== first"), [
+            .init(text: "pack ", isHighlighted: false),
+            .init(text: "the stove", isHighlighted: true),
+            .init(text: " first", isHighlighted: false)
+        ])
+        XCTAssertEqual(GraphHighlight.runs(in: "==a== and ==b=="), [
+            .init(text: "a", isHighlighted: true),
+            .init(text: " and ", isHighlighted: false),
+            .init(text: "b", isHighlighted: true)
+        ])
+    }
+
+    /// Markdown's rules for emphasis: the words sit against the markers, on one line, and a marker
+    /// that opens nothing stays exactly as it was typed.
+    func testWhatIsNotAHighlight() {
+        for text in ["x == y", "== spaced ==", "====", "==open", "==across\nlines=="] {
+            XCTAssertEqual(GraphHighlight.runs(in: text), [.init(text: text, isHighlighted: false)],
+                           text)
+        }
+        // A stray pair ahead of a real one doesn't swallow it.
+        XCTAssertEqual(GraphHighlight.runs(in: "a == b ==c=="), [
+            .init(text: "a == b ", isHighlighted: false),
+            .init(text: "c", isHighlighted: true)
+        ])
+        XCTAssertTrue(GraphHighlight.runs(in: "").isEmpty)
+    }
+
+    func testPlainTextDropsTheHeadingAndHighlightMarkers() {
+        XCTAssertEqual(GraphHighlight.stripped("keep ==this== dry"), "keep this dry")
+        XCTAssertEqual(graphNode("# Camp ==tonight==").plainText, "Camp tonight")
+        XCTAssertEqual(graphNode("a == b").plainText, "a == b")
+    }
+
+    // MARK: Emoji cards
+
+    func testASingleEmojiIsAnEmojiCard() {
+        for text in ["🌲", " 🔥 ", "👍🏽", "👨‍👩‍👧", "🇳🇿", "❤️", "1️⃣"] {
+            XCTAssertTrue(GraphEmoji.isSingleEmoji(text), text)
+        }
+        XCTAssertTrue(graphNode("⛺️").isEmojiOnly)
+    }
+
+    func testAnythingMoreThanOneEmojiIsAnOrdinaryCard() {
+        // A text-style symbol, a digit, a letter, two emoji, an emoji with words, a heading.
+        for text in ["", "a", "1", "©", "❤", "🌲🌲", "🌲 camp", "# 🌲"] {
+            XCTAssertFalse(GraphEmoji.isSingleEmoji(text), text)
+        }
+    }
+
+    // MARK: Copy as Markdown
+
+    func testABranchCopiesAsTheOutlineFromThatNode() {
+        let root = graphNode("Trip")
+        let camp = graphNode("# Camp", parent: root.id, x: 330)
+        let wood = graphNode("==Dry== firewood", parent: camp.id, x: 660)
+        let water = graphNode("Water", parent: camp.id, x: 660, y: 90)
+        let doc = Document(title: "Route", kind: .graph, nodes: [root, camp, wood, water])
+
+        XCTAssertEqual(doc.markdown(ofBranch: camp.id), """
+        - # Camp
+          - ==Dry== firewood
+          - Water
+        """)
+        // A card on its own is its words as typed, not a one-item list.
+        XCTAssertEqual(doc.markdown(ofBranch: wood.id), "==Dry== firewood")
+        XCTAssertEqual(doc.markdown(ofBranch: UUID()), "")
+    }
+
+    // MARK: Leaving branch isolation
+
+    func testLeavingIsolationMovesTheRestOutByTheBranchsGrowth() {
+        let before = GraphRect(minX: 0, minY: 0, maxX: 200, maxY: 100)
+        // The branch grew 150 to the right and 80 downwards.
+        let after = GraphRect(minX: 0, minY: 0, maxX: 350, maxY: 180)
+        let right = UUID(), below = UUID(), corner = UUID(), left = UUID(), above = UUID()
+        let moved = GraphArrange.makeRoom(around: before, grownTo: after, for: [
+            right: GraphPoint(x: 400, y: 50),
+            below: GraphPoint(x: 100, y: 300),
+            corner: GraphPoint(x: 400, y: 300),
+            left: GraphPoint(x: -300, y: 50),
+            above: GraphPoint(x: 100, y: -200)
+        ])
+
+        XCTAssertEqual(moved[right], GraphPoint(x: 550, y: 50))
+        XCTAssertEqual(moved[below], GraphPoint(x: 100, y: 380))
+        XCTAssertEqual(moved[corner], GraphPoint(x: 550, y: 380))
+        // Nothing grew on the left or the top, so nothing there moves.
+        XCTAssertNil(moved[left])
+        XCTAssertNil(moved[above])
+    }
+
+    /// Making room only ever pushes out: a branch that shrank leaves the rest where it was.
+    func testLeavingIsolationNeverPullsTheRestIn() {
+        let before = GraphRect(minX: 0, minY: 0, maxX: 400, maxY: 300)
+        let after = GraphRect(minX: 100, minY: 50, maxX: 300, maxY: 200)
+        let moved = GraphArrange.makeRoom(around: before, grownTo: after, for: [
+            UUID(): GraphPoint(x: 600, y: 100),
+            UUID(): GraphPoint(x: -200, y: -200)
+        ])
+        XCTAssertTrue(moved.isEmpty)
+    }
+
+    func testLeavingIsolationPushesLeftAndUpWhenTheBranchGrewThatWay() {
+        let before = GraphRect(minX: 0, minY: 0, maxX: 200, maxY: 100)
+        let after = GraphRect(minX: -120, minY: -60, maxX: 200, maxY: 100)
+        let left = UUID(), above = UUID()
+        let moved = GraphArrange.makeRoom(around: before, grownTo: after, for: [
+            left: GraphPoint(x: -300, y: 50),
+            above: GraphPoint(x: 100, y: -200)
+        ])
+        XCTAssertEqual(moved[left], GraphPoint(x: -420, y: 50))
+        XCTAssertEqual(moved[above], GraphPoint(x: 100, y: -260))
+    }
+
     // MARK: Pairing / subnet math
 
     func testIPv4RoundTrips() {

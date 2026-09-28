@@ -69,3 +69,94 @@ public struct GraphHeading: Hashable, Sendable {
         return GraphHeading(level: level, text: body)
     }
 }
+
+// MARK: - Highlights
+
+/// Obsidian's highlight: `==like this==`, drawn on the canvas as the words with a marker-pen wash
+/// behind them and the `==` left out — the same bargain a heading's `#` makes. The stored text
+/// keeps the markers, so opening the card shows them again, and so does the outline it exports.
+///
+/// The rules are Markdown's for emphasis, which is what Obsidian's parser follows: the two markers
+/// have to be on the same line, with something between them, and the words have to sit *against*
+/// them — `==this==` is a highlight, `== this ==` is two pairs of equals signs someone typed. A
+/// marker that doesn't open a highlight stays in the text exactly as written.
+public enum GraphHighlight {
+    /// One stretch of a card's words: highlighted, or not.
+    public struct Run: Hashable, Sendable {
+        public let text: String
+        public let isHighlighted: Bool
+
+        public init(text: String, isHighlighted: Bool) {
+            self.text = text
+            self.isHighlighted = isHighlighted
+        }
+    }
+
+    public static let marker = "=="
+
+    /// `text` split into what's highlighted and what isn't, in order, with the markers taken out.
+    /// Text with no highlight in it comes back as a single plain run (none at all when it's empty).
+    public static func runs(in text: String) -> [Run] {
+        var runs: [Run] = []
+        var plain = ""
+        var rest = text[...]
+        while let open = rest.range(of: marker) {
+            let afterOpen = rest[open.upperBound...]
+            if let close = afterOpen.range(of: marker),
+               isHighlightable(afterOpen[..<close.lowerBound]) {
+                plain += rest[..<open.lowerBound]
+                if !plain.isEmpty { runs.append(Run(text: plain, isHighlighted: false)) }
+                plain = ""
+                runs.append(Run(text: String(afterOpen[..<close.lowerBound]), isHighlighted: true))
+                rest = afterOpen[close.upperBound...]
+            } else {
+                // Not a highlight: keep the marker as it was typed, and look again past it.
+                plain += rest[..<open.upperBound]
+                rest = afterOpen
+            }
+        }
+        plain += rest
+        if !plain.isEmpty { runs.append(Run(text: plain, isHighlighted: false)) }
+        return runs
+    }
+
+    /// The words with every highlight's markers taken off — what a plain-text copy of a card says.
+    public static func stripped(_ text: String) -> String {
+        runs(in: text).map(\.text).joined()
+    }
+
+    /// Whether what sits between two markers can be a highlight: something, on one line, that
+    /// neither starts nor ends with a space.
+    private static func isHighlightable(_ inner: Substring) -> Bool {
+        guard let first = inner.first, let last = inner.last else { return false }
+        return !first.isWhitespace && !last.isWhitespace && !inner.contains(where: \.isNewline)
+    }
+}
+
+// MARK: - A card that's a single emoji
+
+/// A node that says one emoji and nothing else is drawn as that emoji, large, on a square card —
+/// a marker on the map rather than a line of text. Anything more (a second emoji, a word, a `#`)
+/// and it's an ordinary card again.
+public enum GraphEmoji {
+    /// Whether `text`, trimmed, is exactly one emoji.
+    ///
+    /// "One" is one *character* as a reader counts them — a family, a flag, a skin tone or a
+    /// keycap is a single emoji built from several code points, and counts as one.
+    public static func isSingleEmoji(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count == 1, let character = trimmed.first else { return false }
+        return isEmoji(character)
+    }
+
+    /// Whether one character is drawn as an emoji. Most are emoji by default (😀, 🌲, a flag). A
+    /// handful of older symbols are *text* by default — ❤, ☺, and the digits a keycap is built
+    /// on — and only count when something asks for the emoji: the variation selector, a skin tone,
+    /// the keycap itself, a joined sequence. A bare digit or © is text, not a picture.
+    static func isEmoji(_ character: Character) -> Bool {
+        let scalars = character.unicodeScalars
+        guard let first = scalars.first else { return false }
+        if first.properties.isEmojiPresentation { return true }
+        return first.properties.isEmoji && scalars.count > 1
+    }
+}

@@ -147,6 +147,13 @@ the rest of the app depends on.
   the **⌘ button beside the minimap**. A soft key is a key: hold it with one thumb and tap the "+"
   with the other, it lets go the moment you lift, and a key held on one side of a split screen is
   held on both.
+- **Dictate while your headphones keep playing.** Recording no longer stops or turns down what's
+  playing in Bluetooth headphones. Capture mixes with other audio, keeps the headphones on their
+  high-quality (A2DP) connection, and records from the **iPhone's or iPad's own microphone** (or a
+  wired one). With no headphones, audio already on the speaker stays on the speaker. The one
+  exception is choosing a Bluetooth headset's microphone in **Settings → Microphone**. A headset
+  can't play music and record at the same time, so that switches it to call audio while a clip
+  runs.
 - **One red record button.** Recording isn't a toolbar glyph any more. In the **Inbox** and inside a
   **document** it's a plain red dot, centered above the bottom bar — nothing behind it, the text
   scrolling past underneath — and it does what the mic did there before: a clip filed into the
@@ -186,7 +193,7 @@ the rest of the app depends on.
   cards: **tap twice** to edit one in place — the row along the bottom of the open card opens with a
   **colour dot** and carries **Revise / Transform / Tidy Children**, and a red **trash** that
   deletes the node outright — or **long-press** for the actions a paragraph gets from a swipe (Edit,
-  Add Child, Revise, Transform, Delete) as a dropdown. **Return closes an open card**: a node is a
+  Add Child, Revise, Transform, Isolate Branch, Delete) as a dropdown. **Return closes an open card**: a node is a
   card rather than a page, so the key that ends a line ends the edit instead — exactly what **Done**
   does. **Shift + Return** puts a line break in for the times a card really does want two.
   **Drag** a node and its children
@@ -208,7 +215,12 @@ the rest of the app depends on.
   pinching to move around at the same time, and let go mid-drag for the canvas to coast to a stop.
   There's no bottom bar at all — the hold is the record button, and a graph's auto transform is an
   app-wide setting (**Settings → Graphs**) rather than a per-document toggle — so the canvas runs
-  all the way to the edge.
+  all the way to the edge. It runs on **under the navigation bar and the tab bar** too: on a graph
+  neither bar draws its paper plate, so the title, the **⋯** and the tabs float over the canvas the
+  way the keys and the minimap do, and the menus, the recording counter and the bottom row keep
+  clear of them. On an **iPad** the graph's title sits at the left of the bar, **beside the back
+  arrow**, rather than marooned in the middle of a bar that wide. (Half of a joint document stays
+  inside its pane, under the pair's own bar.)
 - **A colour for a card, and for a ring.** A **coloured dot** opens the palette in four places: at
   the head of a node's edit bar, in front of a group's name at the corner of its ring, in the
   **selection bar** (where it colours everything picked out at once), and in the group sheet, which
@@ -221,6 +233,41 @@ the rest of the app depends on.
   this a heading", and the size is what it turned into — and comes back the moment you open the node
   to edit it. (Three hashes or more isn't a size the canvas draws, so it stays ordinary text with
   the hashes showing.)
+- **Highlights.** Wrap words in **==** — `==like this==`, as in Obsidian — and the card draws them
+  with a marker-pen wash behind them, the markers left out the way a heading's **#** is; open the
+  card and they're back. The rules are Markdown's for emphasis: both markers on one line, the words
+  up against them (`== this ==` is just equals signs), and a marker that opens nothing stays as
+  typed. The node list shows the highlight too.
+- **Emoji cards.** A node that says **one emoji and nothing else** is drawn as that emoji, 60 points
+  tall, on a **square card** of its own — a marker on the map rather than a strip of text. Type
+  anything more into it (a second emoji, a word, a **#**) and it's an ordinary card again. A flag, a
+  family or a skin tone counts as one emoji; a bare digit or © doesn't.
+- **Resizing a card.** Rest the pointer on a card and its **lower-right corner thickens** — that
+  corner is a handle. Drag it to make the card wider or narrower (100 to 640 points); the words
+  reflow as you go and the card is always exactly as tall as they need, with its top-left corner
+  staying where it was. Let go within a few points of the standard width and it's a standard card
+  again. The width is saved with the node, carried by a **⌥** copy, and respected by **Tidy**,
+  **Auto Tidy** and a drop, which space cards by their real widths — a wide card's near edge lines
+  up with its narrower siblings'. (A hover is what reveals the handle, so it's there for a pointer —
+  a trackpad or mouse on an iPad — and a corner never steals a finger's drag.)
+- **Isolating a branch.** **⌥-click** a card — or hold the **⌥** key beside the minimap and tap one,
+  or long-press it → **Isolate Branch** — and everything that doesn't hang off it **fades away**,
+  its own parents included, so the canvas is that one branch. The card you clicked wears a **double
+  ring** so you can see where the branch starts, and a bar along the top names it with **Show All**
+  beside it. Work as usual: anything you add — children, a root held onto the bare canvas, a ⌥
+  copy — is part of what's showing. To come back, **Show All**, **⌥-click** the same card again, or
+  press **Escape**. The rest of the graph fades back in and **makes room** for whatever the branch
+  grew into: everything beyond one side of the branch slides out by exactly as much as the branch
+  grew on that side — right, left, up or down — so the gaps the rest of the graph had are the gaps
+  it keeps, and nothing is pulled in if the branch shrank. While a branch is isolated, **⌘T** with
+  nothing picked out tidies the branch rather than the hidden graph, a drop can only land on a card
+  you can see, a ring only shows if everything in it does, and picking a hidden node from **List
+  Nodes** brings the whole graph back first.
+- **Control-click a card** for a short menu of its own: **Detach** (out of the network — its parent
+  and children are joined up behind it, as a **⌘** drag does), **Organize Children** (Tidy
+  Children), **Copy** (its words as plain text, without a heading's **#** or a highlight's **==**)
+  and **Copy as Markdown** (the markup as typed — and for a card with a branch under it, the whole
+  branch as the same outline the graph exports, starting from that card).
 - **Three keys and a toggle, around the minimap.** **⌘** and **⌥** stacked at the canvas's bottom
   left; **⇧** over **Auto Tidy** at the bottom right — all four there whether or not the minimap
   is, two to a side so neither stack stands taller than the map between them.

@@ -631,6 +631,22 @@ public final class DocumentStore: ObservableObject {
         persistDocuments()
     }
 
+    /// Give a card the width its resize handle was dragged to (`nil` for the standard card), and the
+    /// centre that keeps its top-left corner where it was — a card is stored by its centre, so a
+    /// card that grows to the right and down has to move its centre to stay put at the other
+    /// corner. One save for both. Drawing rather than content, like the colour, so it doesn't bump
+    /// `updatedAt`.
+    public func resizeNode(_ nodeID: UUID, in documentID: UUID, width: Double?, position: GraphPoint) {
+        guard let docIdx = index(of: documentID),
+              let nodeIdx = documents[docIdx].nodes.firstIndex(where: { $0.id == nodeID })
+        else { return }
+        let node = documents[docIdx].nodes[nodeIdx]
+        guard node.width != width || node.position != position else { return }
+        documents[docIdx].nodes[nodeIdx].width = width
+        documents[docIdx].nodes[nodeIdx].position = position
+        persistDocuments()
+    }
+
     /// Point a node at the clip it was spoken into — or at nothing (`nil`), which is what "Revise"
     /// does before it records a replacement.
     public func linkNode(_ nodeID: UUID, toRecording recordingID: UUID?, in documentID: UUID) {
@@ -687,7 +703,7 @@ public final class DocumentStore: ObservableObject {
     /// the layout another.
     @discardableResult
     public func attachNode(_ nodeID: UUID, to parentID: UUID, in documentID: UUID,
-                           heights: [UUID: Double] = [:]) -> Bool {
+                           heights: [UUID: Double] = [:], widths: [UUID: Double] = [:]) -> Bool {
         guard reparentNode(nodeID, to: parentID, in: documentID),
               let docIdx = index(of: documentID),
               let parent = documents[docIdx].node(with: parentID),
@@ -711,7 +727,9 @@ public final class DocumentStore: ObservableObject {
             }
         }
 
-        let dx = parent.position.x + Self.childColumnOffset - node.position.x
+        let dx = parent.position.x
+            + columnOffset(from: parentID, to: nodeID, at: docIdx, widths: widths)
+            - node.position.x
         var dy = y - node.position.y
         for _ in 0..<Self.placementAttempts {
             guard collides(subtree: moving, movedByX: dx, y: dy, at: docIdx) else { break }
@@ -885,7 +903,8 @@ public final class DocumentStore: ObservableObject {
                              parentID: node.parentID.flatMap { map[$0] },
                              position: node.position,
                              recordingID: nil,
-                             colorID: node.colorID)
+                             colorID: node.colorID,
+                             width: node.width)
         }
         documents[docIdx].nodes.append(contentsOf: copies)
         touch(docIdx)
@@ -918,7 +937,8 @@ public final class DocumentStore: ObservableObject {
     /// Order is the point: a tidy moves a child's whole branch rigidly, so arranging a parent's row
     /// before the rows below it means each pass arranges cards its own parent has already placed.
     /// `nodeEntries` is exactly that order (roots first, depth first).
-    public func tidyGraph(in documentID: UUID, heights: [UUID: Double] = [:]) {
+    public func tidyGraph(in documentID: UUID, heights: [UUID: Double] = [:],
+                          widths: [UUID: Double] = [:]) {
         guard let docIdx = index(of: documentID) else { return }
         let parents = documents[docIdx].nodeEntries.map(\.node.id)
             .filter { !documents[docIdx].children(of: $0).isEmpty }
@@ -931,7 +951,7 @@ public final class DocumentStore: ObservableObject {
             axes[id] = documents[docIdx].branchAxis(of: id)
         }
         for id in parents {
-            tidyChildren(of: id, in: documentID, heights: heights, axis: axes[id])
+            tidyChildren(of: id, in: documentID, heights: heights, widths: widths, axis: axes[id])
         }
     }
 
@@ -940,14 +960,19 @@ public final class DocumentStore: ObservableObject {
     /// siblings already there; the layout takes it from there. A parent with no children yet has no
     /// direction to follow, so its first child goes out to the right, as it always has.
     @discardableResult
-    public func addChildNode(to parentID: UUID, in documentID: UUID, text: String = "") -> GraphNode? {
+    public func addChildNode(to parentID: UUID, in documentID: UUID, text: String = "",
+                             widths: [UUID: Double] = [:]) -> GraphNode? {
         guard let docIdx = index(of: documentID),
               let parent = documents[docIdx].node(with: parentID) else { return nil }
         let axis = documents[docIdx].branchAxis(of: parentID)
         let siblings = Double(documents[docIdx].children(of: parentID).count)
+        // Out past the parent's own edge — a card resized wide reaches further — by the standard
+        // gap, to the centre of a standard card.
+        let out = cardWidth(of: parentID, at: docIdx, widths: widths) / 2
+            + Self.standardNodeGap + Self.nodeCardWidth / 2
         // One step out along the row's own axis, and one place along it past what's already there.
         let position = axis.isHorizontal
-            ? GraphPoint(x: parent.position.x + axis.sign * Self.childColumnOffset,
+            ? GraphPoint(x: parent.position.x + axis.sign * out,
                          y: parent.position.y + siblings * Self.standardRowStep)
             : GraphPoint(x: parent.position.x + siblings * Self.childColumnOffset,
                          y: parent.position.y + axis.sign * Self.standardRowStep)
@@ -1020,13 +1045,15 @@ public final class DocumentStore: ObservableObject {
     /// `heights` is what the canvas has measured each card to be. A branch's extent is worked out
     /// from the **cards**, so what's left between two of them is a gap of visible air — spacing
     /// centres instead would leave a taller card overlapping its neighbour and a short one
-    /// marooned. Anything not in `heights` falls back to `nodeCardHeight`. Widths aren't measured
-    /// because they aren't variable: every card is drawn `nodeCardWidth` wide.
+    /// marooned. Anything not in `heights` falls back to `nodeCardHeight`. `widths` is the same
+    /// for the other axis — a card can be resized, and an emoji's is square — falling back to the
+    /// width a card was resized to, then `nodeCardWidth`.
     ///
     /// `axis` is for the one caller that can't read the direction off the layout when it needs it:
     /// see `tidyGraph`.
     public func tidyChildren(of parentID: UUID, in documentID: UUID,
                              heights: [UUID: Double] = [:],
+                             widths: [UUID: Double] = [:],
                              axis: GraphBranchAxis? = nil) {
         guard let docIdx = index(of: documentID),
               let parent = documents[docIdx].node(with: parentID) else { return }
@@ -1044,10 +1071,14 @@ public final class DocumentStore: ObservableObject {
             let bands = reaches.reduce(0.0) { $0 + $1.before + $1.after }
             let height = bands + Double(children.count - 1) * Self.tidyRowGap
             var cursor = parent.position.y - height / 2
-            let column = parent.position.x + axis.sign * Self.childColumnOffset
 
             for (child, reach) in zip(children, reaches) {
                 let y = cursor + reach.before
+                // Every card's near edge the same gap from the parent's, as in the row below: with
+                // cards of one width that's the one column it always was, and a card resized wider
+                // keeps its near edge in line rather than its centre.
+                let column = parent.position.x
+                    + axis.sign * columnOffset(from: parentID, to: child.id, at: docIdx, widths: widths)
                 translate(subtreeOf: child.id,
                           byX: column - child.position.x,
                           y: y - child.position.y,
@@ -1065,7 +1096,7 @@ public final class DocumentStore: ObservableObject {
             // cards *stacked* need much less (`tidyRowGap`), and that's true of a row going down
             // just as it is of a column going across.
             let spreads = children.map { child -> (before: Double, after: Double) in
-                let box = spread(ofSubtree: child.id, at: docIdx)
+                let box = spread(ofSubtree: child.id, at: docIdx, widths: widths)
                 return (child.position.x - box.left, box.right - child.position.x)
             }
             let bands = spreads.reduce(0.0) { $0 + $1.before + $1.after }
@@ -1110,23 +1141,41 @@ public final class DocumentStore: ObservableObject {
         return (top, bottom)
     }
 
-    /// The same across the page: how far left and right a branch reaches. Card widths aren't
-    /// measured the way heights are because they aren't variable — every card is drawn
-    /// `nodeCardWidth` wide, and only its height grows with what was said into it.
-    private func spread(ofSubtree id: UUID, at docIdx: Int) -> (left: Double, right: Double) {
+    /// The same across the page: how far left and right a branch reaches, card by card — each at
+    /// the width the canvas measured it (`widths`), or the width it was resized to, or the
+    /// standard card's.
+    private func spread(ofSubtree id: UUID, at docIdx: Int,
+                        widths: [UUID: Double]) -> (left: Double, right: Double) {
         var left = Double.greatestFiniteMagnitude
         var right = -Double.greatestFiniteMagnitude
-        let half = Self.nodeCardWidth / 2
         for nodeID in documents[docIdx].subtree(of: id) {
             guard let node = documents[docIdx].node(with: nodeID) else { continue }
+            let half = cardWidth(of: nodeID, at: docIdx, widths: widths) / 2
             left = min(left, node.position.x - half)
             right = max(right, node.position.x + half)
         }
         guard left <= right else {
             let x = documents[docIdx].node(with: id)?.position.x ?? 0
+            let half = Self.nodeCardWidth / 2
             return (x - half, x + half)
         }
         return (left, right)
+    }
+
+    /// How wide a card is drawn: what the canvas measured, where it handed that in, else the width
+    /// the card was resized to, else the standard card. (An emoji's square card is narrower than
+    /// any of those, and only the canvas knows it — which is what the measurement is for.)
+    private func cardWidth(of id: UUID, at docIdx: Int, widths: [UUID: Double]) -> Double {
+        widths[id] ?? documents[docIdx].node(with: id)?.width ?? Self.nodeCardWidth
+    }
+
+    /// Centre to centre, from a parent to a child sitting beside it: half of each card and the
+    /// standard gap between them — `childColumnOffset`, for two cards of the standard width.
+    private func columnOffset(from parentID: UUID, to childID: UUID, at docIdx: Int,
+                              widths: [UUID: Double]) -> Double {
+        cardWidth(of: parentID, at: docIdx, widths: widths) / 2
+            + Self.standardNodeGap
+            + cardWidth(of: childID, at: docIdx, widths: widths) / 2
     }
 
     /// Move a node and everything hanging off it, rigidly — the one way this store ever moves a
@@ -1145,8 +1194,9 @@ public final class DocumentStore: ObservableObject {
     /// branch all sit the same distance apart.
     public static let standardNodeGap: Double = 150
 
-    /// How wide the view draws a node card. Layout lives here rather than in the view because the
-    /// arranging does, and a gap between *cards* can't be worked out from centres alone.
+    /// How wide the view draws a standard node card — one nobody has resized. Layout lives here
+    /// rather than in the view because the arranging does, and a gap between *cards* can't be
+    /// worked out from centres alone.
     private static let nodeCardWidth: Double = 180
 
     /// How tall the view draws a card with a line in it. Layout lives here for the same reason the

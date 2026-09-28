@@ -24,6 +24,21 @@ public struct GraphNodeBox: Identifiable, Hashable, Sendable {
     public var maxY: Double { center.y + height / 2 }
 }
 
+/// A rectangle of canvas, in canvas points: the bounds of a set of cards.
+public struct GraphRect: Hashable, Sendable {
+    public var minX: Double
+    public var minY: Double
+    public var maxX: Double
+    public var maxY: Double
+
+    public init(minX: Double, minY: Double, maxX: Double, maxY: Double) {
+        self.minX = minX
+        self.minY = minY
+        self.maxX = maxX
+        self.maxY = maxY
+    }
+}
+
 /// Lining a selection up: the four arrangements a set of selected nodes can be put through, each
 /// returning the new **centres** of the nodes it actually moves.
 ///
@@ -99,6 +114,39 @@ public enum GraphArrange {
         for box in boxes {
             let center = place(box)
             if moved(box.center, to: center) { positions[box.id] = center }
+        }
+        return positions
+    }
+
+    // MARK: Making room (leaving branch isolation)
+
+    /// Push the rest of a graph out of the way of a branch that has grown — what leaving **branch
+    /// isolation** does. You worked on one branch with everything else faded out, and added to it;
+    /// now the rest comes back, and it mustn't come back on top of what you added.
+    ///
+    /// The rule is the one a spreadsheet uses to insert rows and columns: whatever sat beyond one
+    /// side of the branch's old bounds moves by however far the branch grew on that side, and no
+    /// further. Nodes to its right slide right by the growth on the right, nodes below slide down
+    /// by the growth underneath, a node off a corner takes both — so every gap the rest of the graph
+    /// had from the branch is the gap it still has, and the rest keeps its own shape. Nothing is
+    /// pulled *in* when the branch shrank: making room is all this is for.
+    ///
+    /// Which side a node is on is decided by its centre, and `before`/`after` are the branch's cards
+    /// as drawn — edges, not centres — so the growth measured is growth you could see.
+    public static func makeRoom(around before: GraphRect, grownTo after: GraphRect,
+                                for centers: [UUID: GraphPoint]) -> [UUID: GraphPoint] {
+        let left = min(after.minX - before.minX, 0)
+        let right = max(after.maxX - before.maxX, 0)
+        let up = min(after.minY - before.minY, 0)
+        let down = max(after.maxY - before.maxY, 0)
+        var positions: [UUID: GraphPoint] = [:]
+        for (id, center) in centers {
+            var dx = 0.0
+            var dy = 0.0
+            if center.x > before.maxX { dx = right } else if center.x < before.minX { dx = left }
+            if center.y > before.maxY { dy = down } else if center.y < before.minY { dy = up }
+            let target = GraphPoint(x: center.x + dx, y: center.y + dy)
+            if moved(center, to: target) { positions[id] = target }
         }
         return positions
     }
