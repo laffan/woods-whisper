@@ -246,15 +246,17 @@ the rest of the app depends on.
   corner is a handle. Drag it to make the card wider or narrower (100 to 640 points); the words
   reflow as you go and the card is always exactly as tall as they need, with its top-left corner
   staying where it was. Let go within a few points of the standard width and it's a standard card
-  again. The width is saved with the node, carried by a **⌥** copy, and respected by **Tidy**,
+  again. Resize a card that's part of a **selection** and **every selected card takes that width**,
+  each keeping its own top-left corner where it was (an emoji's square card excepted). The width is
+  saved with the node, carried by a **⌥** copy, and respected by **Tidy**,
   **Auto Tidy** and a drop, which space cards by their real widths — a wide card's near edge lines
   up with its narrower siblings'. (A hover is what reveals the handle, so it's there for a pointer —
   a trackpad or mouse on an iPad — and a corner never steals a finger's drag.)
 - **Isolating a branch.** **⌥-click** a card — or hold the **⌥** key beside the minimap and tap one,
   or long-press it → **Isolate Branch** — and everything that doesn't hang off it **fades away**,
   its own parents included, so the canvas is that one branch. The card you clicked wears a **double
-  ring** so you can see where the branch starts, and a bar along the top names it with **Show All**
-  beside it. Work as usual: anything you add — children, a root held onto the bare canvas, a ⌥
+  ring** so you can see where the branch starts, and a bar just beneath the navigation bar (and an
+  iPad's tab bar) names it with **Show All** beside it. Work as usual: anything you add — children, a root held onto the bare canvas, a ⌥
   copy — is part of what's showing. To come back, **Show All**, **⌥-click** the same card again, or
   press **Escape**. The rest of the graph fades back in and **makes room** for whatever the branch
   grew into: everything beyond one side of the branch slides out by exactly as much as the branch
@@ -264,8 +266,9 @@ the rest of the app depends on.
   you can see, a ring only shows if everything in it does, and picking a hidden node from **List
   Nodes** brings the whole graph back first.
 - **Control-click a card** for a short menu of its own: **Detach** (out of the network — its parent
-  and children are joined up behind it, as a **⌘** drag does), **Organize Children** (Tidy
-  Children), **Copy** (its words as plain text, without a heading's **#** or a highlight's **==**)
+  and children are joined up behind it, as a **⌘** drag does), **Detach with Children** (only the
+  line to its parent is cut, so the card and its whole branch become a tree of their own, where they
+  stand), **Organize Children** (Tidy Children), **Copy** (its words as plain text, without a heading's **#** or a highlight's **==**)
   and **Copy as Markdown** (the markup as typed — and for a card with a branch under it, the whole
   branch as the same outline the graph exports, starting from that card).
 - **Three keys and a toggle, around the minimap.** **⌘** and **⌥** stacked at the canvas's bottom

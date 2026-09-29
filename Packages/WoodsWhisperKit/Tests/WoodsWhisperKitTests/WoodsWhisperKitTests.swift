@@ -1377,6 +1377,29 @@ final class WoodsWhisperKitTests: XCTestCase {
         XCTAssertNil(stored?.width)
     }
 
+    /// A selection resized by one of its cards: every card takes that width, each keeping its own
+    /// place — and a card outside the selection is left alone.
+    @MainActor
+    func testResizingASelectionGivesEveryCardTheSameWidth() {
+        let name = "GraphResizeManyTests-\(UUID().uuidString)"
+        let store = DocumentStore(directoryName: name)
+        defer { removeStore(named: name) }
+
+        let graph = store.createDocument(title: "Route", kind: .graph)
+        let camp = store.addRootNode(in: graph.id, text: "Camp")!
+        let water = store.addRootNode(in: graph.id, text: "Water")!
+        let wood = store.addRootNode(in: graph.id, text: "Firewood")!
+        store.resizeNodes([camp.id: GraphPoint(x: 10, y: 0), water.id: GraphPoint(x: 10, y: 200)],
+                          in: graph.id, width: 320)
+
+        let document = store.document(with: graph.id)!
+        XCTAssertEqual(document.node(with: camp.id)?.width, 320)
+        XCTAssertEqual(document.node(with: water.id)?.width, 320)
+        XCTAssertEqual(document.node(with: water.id)?.position, GraphPoint(x: 10, y: 200))
+        XCTAssertNil(document.node(with: wood.id)?.width)
+        XCTAssertEqual(document.node(with: wood.id)?.position, wood.position)
+    }
+
     /// A column of children keeps its near edges in line with a wide card among them, and a wide
     /// parent pushes its column out past its own edge.
     @MainActor

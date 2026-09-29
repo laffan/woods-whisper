@@ -637,13 +637,23 @@ public final class DocumentStore: ObservableObject {
     /// corner. One save for both. Drawing rather than content, like the colour, so it doesn't bump
     /// `updatedAt`.
     public func resizeNode(_ nodeID: UUID, in documentID: UUID, width: Double?, position: GraphPoint) {
-        guard let docIdx = index(of: documentID),
-              let nodeIdx = documents[docIdx].nodes.firstIndex(where: { $0.id == nodeID })
-        else { return }
-        let node = documents[docIdx].nodes[nodeIdx]
-        guard node.width != width || node.position != position else { return }
-        documents[docIdx].nodes[nodeIdx].width = width
-        documents[docIdx].nodes[nodeIdx].position = position
+        resizeNodes([nodeID: position], in: documentID, width: width)
+    }
+
+    /// The same for several cards at once — a selection resized by any one of its cards' handles:
+    /// every one of them takes the same width, each with its own centre. One save for the lot.
+    public func resizeNodes(_ positions: [UUID: GraphPoint], in documentID: UUID, width: Double?) {
+        guard !positions.isEmpty, let docIdx = index(of: documentID) else { return }
+        var changed = false
+        for nodeIdx in documents[docIdx].nodes.indices {
+            let node = documents[docIdx].nodes[nodeIdx]
+            guard let position = positions[node.id],
+                  node.width != width || node.position != position else { continue }
+            documents[docIdx].nodes[nodeIdx].width = width
+            documents[docIdx].nodes[nodeIdx].position = position
+            changed = true
+        }
+        guard changed else { return }
         persistDocuments()
     }
 

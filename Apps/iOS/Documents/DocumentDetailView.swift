@@ -4547,6 +4547,21 @@ struct GraphDocumentView: View {
 
     @ViewBuilder
     private func canvas(for document: Document) -> some View {
+        // Two readers, because a view that ignores the safe area is told the safe area is nothing:
+        // its `safeAreaInsets` read zero. This one stays inside the safe area, and so can say how
+        // much of the screen the bars cover; the one in `canvasSurface` runs on under them, and is
+        // the canvas — its size, its coordinates, its gestures.
+        GeometryReader { outer in
+            // Nothing to keep clear of in half of a joint document, which stays inside its pane.
+            canvasSurface(for: document, chrome: isEmbedded ? EdgeInsets() : outer.safeAreaInsets)
+        }
+    }
+
+    /// The canvas itself, running on under the navigation bar and the tab bar. `chrome` is how much
+    /// of it those bars cover, top and bottom: what floats *on* the canvas — the bottom row, the
+    /// branch bar, the menus, the recording counter — is kept clear of them.
+    @ViewBuilder
+    private func canvasSurface(for document: Document, chrome: EdgeInsets) -> some View {
         GeometryReader { geo in
             // Every card's rectangle, worked out once for the whole pass and handed to everything
             // that needs one — the edges, the group rings, the cards, and the minimap, which draws
@@ -4554,10 +4569,6 @@ struct GraphDocumentView: View {
             // up again per edge and per ring made that quadratic in the size of the graph.
             let boxes = cardBoxes(in: document)
             let lines = edges(of: document, boxes: boxes)
-            // How much of the canvas sits under the navigation bar at the top and the tab bar at
-            // the bottom. The canvas itself runs under both (`ignoresSafeArea`, below); what floats
-            // *on* it — the bottom row, the menus, the recording counter — is kept clear of them.
-            let chrome = geo.safeAreaInsets
             content(for: document, boxes: boxes, lines: lines)
                 .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
                 .background(alignment: .topLeading) { GraphGrid(pan: pan, scale: scale) }
@@ -4785,13 +4796,14 @@ struct GraphDocumentView: View {
         .position(x: center.x + GraphCanvas.center, y: center.y + GraphCanvas.center)
         // Whatever is travelling rides over what isn't — the whole branch, not just the card under
         // the finger, and a fresh ⌥ copy over the original it came out of.
-        .zIndex(isEditing || draggingBranch.contains(node.id) || resizing?.id == node.id ? 2 : 1)
+        .zIndex(isEditing || draggingBranch.contains(node.id) || isResizing(node.id) ? 2 : 1)
     }
 
-    /// How wide a card is drawn: the width it's being dragged to right now, else an emoji's square,
-    /// else the width it was resized to, else the standard card.
+    /// How wide a card is drawn: the width it's being dragged to right now — this card's own
+    /// handle, or another selected card's — else an emoji's square, else the width it was resized
+    /// to, else the standard card.
     private func cardWidth(of node: GraphNode) -> CGFloat {
-        if let resizing, resizing.id == node.id { return resizing.width }
+        if let resizing, isResizing(node.id) { return resizing.width }
         if showsAsEmoji(node) { return GraphCanvas.emojiCardSide }
         return node.width.map { CGFloat($0) } ?? GraphCanvas.nodeWidth
     }
@@ -5096,10 +5108,9 @@ struct GraphDocumentView: View {
         // A card being resized is pinned by its top-left corner — the handle is at the other one —
         // so its centre follows the width it's being dragged to and the height its words reflow
         // to at that width.
-        if let resizing, resizing.id == node.id {
+        if let resizing, isResizing(node.id), let origin = resizing.origins[node.id] {
             let height = nodeSizes[node.id]?.height ?? GraphCanvas.assumedCardSize.height
-            return CGPoint(x: resizing.origin.x + resizing.width / 2,
-                           y: resizing.origin.y + height / 2)
+            return CGPoint(x: origin.x + resizing.width / 2, y: origin.y + height / 2)
         }
         let base = CGPoint(x: node.position.x, y: node.position.y)
         guard draggingBranch.contains(node.id) else { return base }
@@ -5947,34 +5958,62 @@ struct GraphDocumentView: View {
                 guard var live = resizing else { return }
                 let width = live.startWidth + value.translation.width / scale
                 live.width = min(max(width, GraphCanvas.minNodeWidth), GraphCanvas.maxNodeWidth)
+                if abs(live.width - live.startWidth) > 0.5 { live.hasMoved = true }
                 resizing = live
             }
             .onEnded { _ in finishResize() }
     }
 
-    /// The first frame of a resize: note the corner that stays put, and the width it started from.
+    /// Whether a card is being resized right now: the one whose handle is held, and — once the
+    /// handle has actually moved — the rest of the selection it belongs to. Waiting for the move
+    /// means a click on the handle that goes nowhere doesn't quietly even out the widths of every
+    /// card picked out.
+    private func isResizing(_ id: UUID) -> Bool {
+        guard let resizing, resizing.origins[id] != nil else { return false }
+        return id == resizing.id || resizing.hasMoved
+    }
+
+    /// The first frame of a resize: which cards it's resizing, the corner of each that stays put,
+    /// and the width the handle started from.
+    ///
+    /// A card that's part of a selection resizes the **whole selection**: every selected card takes
+    /// the width this one is dragged to, each pinned by its own top-left corner. (Not an emoji's
+    /// card, whose square is its size, and not a card faded out behind an isolated branch.)
     private func beginResize(of node: GraphNode) {
         finishEditing()
         menuNodeID = nil
-        let box = card(around: point(of: node), of: node.id)
-        resizing = NodeResize(id: node.id, origin: CGPoint(x: box.minX, y: box.minY),
-                              startWidth: box.width, width: box.width)
+        let others: Set<UUID> = selectedNodeIDs.contains(node.id) ? selectedNodeIDs : []
+        var origins: [UUID: CGPoint] = [:]
+        for member in document?.nodes ?? [] where member.id == node.id || others.contains(member.id) {
+            guard member.id == node.id || (!showsAsEmoji(member) && !isHidden(member.id)) else {
+                continue
+            }
+            let box = card(around: point(of: member), of: member.id)
+            origins[member.id] = CGPoint(x: box.minX, y: box.minY)
+        }
+        let start = card(around: point(of: node), of: node.id).width
+        resizing = NodeResize(id: node.id, origins: origins, startWidth: start, width: start)
     }
 
-    /// Let go: write the width back, with the centre that keeps the card's top-left corner where it
-    /// was. Let go within a few points of the standard width and the card simply goes back to
-    /// being a standard one.
+    /// Let go: write the width back to every card that took it, each with the centre that keeps its
+    /// top-left corner where it was. Let go within a few points of the standard width and they
+    /// simply go back to being standard cards.
     private func finishResize() {
         guard let live = resizing else { return }
         resizing = nil
-        let height = nodeSizes[live.id]?.height ?? GraphCanvas.assumedCardSize.height
+        guard live.hasMoved else { return }
         let standard = abs(live.width - GraphCanvas.nodeWidth) < GraphCanvas.resizeSnap
         let width = standard ? GraphCanvas.nodeWidth : live.width
-        let center = GraphPoint(x: Double(live.origin.x + width / 2),
-                                y: Double(live.origin.y + height / 2))
-        model.documents.resizeNode(live.id, in: documentID,
-                                   width: standard ? nil : Double(width), position: center)
-        wwLog("Resized a graph node to \(Int(width.rounded())) points wide", .general)
+        var centers: [UUID: GraphPoint] = [:]
+        for (id, origin) in live.origins {
+            // Measured at the width they were being drawn at, which is the width they're taking.
+            let height = nodeSizes[id]?.height ?? GraphCanvas.assumedCardSize.height
+            centers[id] = GraphPoint(x: Double(origin.x + width / 2),
+                                     y: Double(origin.y + height / 2))
+        }
+        model.documents.resizeNodes(centers, in: documentID, width: standard ? nil : Double(width))
+        wwLog("Resized \(centers.count) graph node\(centers.count == 1 ? "" : "s") to "
+              + "\(Int(width.rounded())) points wide", .general)
     }
 
     // MARK: Adding nodes from the "+" buttons
@@ -6174,8 +6213,19 @@ struct GraphDocumentView: View {
         }
     }
 
-    /// What a ⌃-click on a card offers: take it out of the network, line its children up, or copy
-    /// it — as plain words, or as Markdown.
+    /// "Detach with Children": cut the one line between this card and its parent, and nothing else.
+    /// The card becomes a root with its whole branch still hanging off it — a tree of its own,
+    /// where it stands — where plain Detach takes the card out alone and joins its children up to
+    /// the parent it left.
+    private func detachBranch(_ node: GraphNode) {
+        guard model.documents.reparentNode(node.id, to: nil, in: documentID) else { return }
+        haptic(strong: true)
+        let size = document.map { $0.subtree(of: node.id).count } ?? 1
+        wwLog("Detached a graph branch of \(size) node\(size == 1 ? "" : "s")", .general)
+    }
+
+    /// What a ⌃-click on a card offers: take it out of the network — alone, or with its branch —
+    /// line its children up, or copy it, as plain words or as Markdown.
     ///
     /// **Copy** is this card's words as they read on the canvas, without a heading's `#` or a
     /// highlight's `==`. **Copy as Markdown** is the markup too — and, when the card has a branch
@@ -6188,6 +6238,11 @@ struct GraphDocumentView: View {
                          enabled: node.parentID != nil || hasChildren) {
                 menuNodeID = nil
                 unlink([node.id])
+            },
+            NodeMenuItem(title: "Detach with Children", icon: "arrow.triangle.branch",
+                         enabled: node.parentID != nil) {
+                menuNodeID = nil
+                detachBranch(node)
             },
             NodeMenuItem(title: "Organize Children", icon: "rectangle.3.group",
                          enabled: hasChildren) {
@@ -7429,7 +7484,8 @@ struct GraphDocumentView: View {
             .frame(maxWidth: 420)
             // Half of a joint document has its ⋯ floating in the top-right corner; stay clear of it.
             .padding(.horizontal, isEmbedded ? 56 : 16)
-            .padding(.top, top + 8)
+            // Just clear of the bars — beneath the tab bar too, where an iPad draws it at the top.
+            .padding(.top, top + 5)
             .transition(.move(edge: .top).combined(with: .opacity))
         }
     }
@@ -7656,13 +7712,17 @@ struct GraphDocumentView: View {
         let startBounds: GraphRect?
     }
 
-    /// A resize in progress: the card, the corner that stays put (its top-left, in canvas points),
-    /// and the width it started from and has been dragged to.
+    /// A resize in progress: the card whose handle is held, every card taking its width (that
+    /// card and the rest of its selection) by the corner of each that stays put — its top-left, in
+    /// canvas points — and the width the handle started from and has been dragged to.
     private struct NodeResize {
         let id: UUID
-        let origin: CGPoint
+        let origins: [UUID: CGPoint]
         let startWidth: CGFloat
         var width: CGFloat
+        /// Whether the handle has gone anywhere yet. Until it has, the rest of the selection keeps
+        /// its own widths, and letting go writes nothing.
+        var hasMoved = false
     }
 
     /// The two dropdowns a card has: the long press's list of actions, and the shorter one a
