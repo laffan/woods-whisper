@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 import AVFoundation
 import UniformTypeIdentifiers
 import WoodsWhisperKit
@@ -95,6 +96,7 @@ struct DocumentDetailView: View {
     @State private var shareItem: ShareItem?
     @State private var audioShareItem: AudioShareItem?
     @State private var documentFileShare: DocumentFileShareItem?
+    @State private var linkShare: DocumentLinkShareItem?
 
     // Document rename (tap the title)
     @State private var showingRename = false
@@ -173,6 +175,9 @@ struct DocumentDetailView: View {
             ActivityView(activityItems: [item.url])
         }
         .sheet(item: $documentFileShare) { item in
+            ActivityView(activityItems: [item.url])
+        }
+        .sheet(item: $linkShare) { item in
             ActivityView(activityItems: [item.url])
         }
         .fileImporter(isPresented: $showingTextImporter,
@@ -973,6 +978,7 @@ struct DocumentDetailView: View {
         Button { shareDocumentFile(document) } label: {
             Label("Share as Woods Whisper File", systemImage: "arrow.up.doc")
         }
+        DocumentLinkMenu(document: document) { url in linkShare = DocumentLinkShareItem(url: url) }
         JointDocumentMenuItem(isJoined: isJoined,
                               onCreate: createJointCounterpart,
                               onSeparate: separateJoint)
@@ -2387,6 +2393,12 @@ struct AudioShareItem: Identifiable {
 /// Wraps an exported `.wwdoc` file URL so it can drive a `.sheet(item:)` share presentation
 /// (share the whole document — audio + edited transcriptions — as one file).
 struct DocumentFileShareItem: Identifiable {
+    let id = UUID()
+    let url: URL
+}
+
+/// Wraps a document's `woodswhisper://` link so **Share Link…** can drive a `.sheet(item:)`.
+struct DocumentLinkShareItem: Identifiable {
     let id = UUID()
     let url: URL
 }
@@ -3976,6 +3988,58 @@ struct JointDocumentMenuItem: View {
     }
 }
 
+/// **Document Link**, in the **⋯** menu of a document and of a graph: the
+/// `woodswhisper://document/<id>` link that opens this document from anywhere that follows a link —
+/// a note, a reminder, a calendar event, a message to yourself. (The widget's rows have always used
+/// it; this is the same link, handed to you.)
+///
+/// Three ways to take it: **Copy Link**, the bare URL; **Copy Markdown Link**,
+/// `[Title](woodswhisper://…)`, for a notes app that reads Markdown and would otherwise show a
+/// string of hex rather than a name; and **Share Link…**, the share sheet. A submenu, so the three
+/// sit together without making either menu longer by three rows.
+@MainActor
+struct DocumentLinkMenu: View {
+    let document: Document
+    let onShare: (URL) -> Void
+
+    var body: some View {
+        let url = woodsWhisperDocumentURL(id: document.id)
+        Menu {
+            Button { copyLink(url) } label: {
+                Label("Copy Link", systemImage: "link")
+            }
+            Button { copyMarkdownLink() } label: {
+                Label("Copy Markdown Link", systemImage: "doc.plaintext")
+            }
+            Button { onShare(url) } label: {
+                Label("Share Link…", systemImage: "square.and.arrow.up")
+            }
+        } label: {
+            Label("Document Link", systemImage: "link")
+        }
+    }
+
+    /// The URL as a URL *and* as text, so an app that pastes links gets a link and one that only
+    /// takes text still gets the address.
+    private func copyLink(_ url: URL) {
+        #if canImport(UIKit)
+        UIPasteboard.general.setItems([[UTType.url.identifier: url,
+                                        UTType.utf8PlainText.identifier: url.absoluteString]])
+        #endif
+        WWHaptics.medium()
+        wwLog("Copied the link to “\(document.title)”", .general)
+    }
+
+    private func copyMarkdownLink() {
+        #if canImport(UIKit)
+        UIPasteboard.general.string = woodsWhisperDocumentMarkdownLink(id: document.id,
+                                                                       title: document.title)
+        #endif
+        WWHaptics.medium()
+        wwLog("Copied a Markdown link to “\(document.title)”", .general)
+    }
+}
+
 /// Carries whatever the editor's Share button is handing to the system share sheet — the
 /// transcript's text or the recording's audio file — through one `.sheet(item:)`.
 private struct ShareTarget: Identifiable {
@@ -4434,6 +4498,12 @@ struct GraphDocumentView: View {
     @State private var renameText = ""
     @State private var shareItem: ShareItem?
     @State private var documentFileShare: DocumentFileShareItem?
+    @State private var linkShare: DocumentLinkShareItem?
+
+    /// Whether the pasteboard holds nodes — what **Paste Nodes** and a card's **Paste as Child**
+    /// are greyed by. Watched rather than asked each time: a menu is drawn before it's opened, and
+    /// an app you've been away in can hand back a different pasteboard (see `refreshPasteability`).
+    @State private var canPasteNodes = false
 
     private var document: Document? { model.documents.document(with: documentID) }
 
@@ -4518,6 +4588,20 @@ struct GraphDocumentView: View {
         .sheet(item: $documentFileShare) { item in
             ActivityView(activityItems: [item.url])
         }
+        .sheet(item: $linkShare) { item in
+            ActivityView(activityItems: [item.url])
+        }
+        .onAppear { refreshPasteability() }
+        #if canImport(UIKit)
+        // Copying here, or anywhere else in the app, changes the pasteboard while this canvas is
+        // up; coming back from another app (or another device, by Universal Clipboard) can too.
+        .onReceive(NotificationCenter.default.publisher(for: UIPasteboard.changedNotification)) { _ in
+            refreshPasteability()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+            refreshPasteability()
+        }
+        #endif
         .sheet(isPresented: Binding(get: { labelingGroupID != nil },
                                     set: { if !$0 { labelingGroupID = nil } })) {
             groupSheet()
@@ -4930,12 +5014,8 @@ struct GraphDocumentView: View {
             // six lines is a node you have to open to read, which is a node that no longer says
             // what it says — and the canvas has room in every direction to hold the whole thing.
             // `==like this==` is drawn as a highlight, the markers left out the way a heading's
-            // are, and back in the text the moment the card is opened.
-            Text(highlighted(node.displayText))
-                .font(nodeFont(node.heading))
-                .foregroundStyle(WW.ink)
-                .fixedSize(horizontal: false, vertical: true)
-                .multilineTextAlignment(.leading)
+            // are, and back in the text the moment the card is opened. So is a `>` quotation.
+            nodeText(node)
         } else {
             switch recording(for: node, in: document)?.status {
             case .transcribing:
@@ -4953,6 +5033,60 @@ struct GraphDocumentView: View {
                     .foregroundStyle(WW.inkTertiary)
             }
         }
+    }
+
+    /// A card's words as the canvas draws them: one run of text, or — when some of it is quoted
+    /// with `>` — the ordinary stretches and the quotations in turn (`GraphQuote`). A quotation is
+    /// set in from a bar down its left edge, a bar for each level it's nested, in the quieter ink a
+    /// quotation reads in; the bar takes the card's own colour where it has one. The markers are
+    /// left out, as a heading's are, and are back the moment the card is opened.
+    @ViewBuilder
+    private func nodeText(_ node: GraphNode) -> some View {
+        let blocks = node.quoteBlocks
+        if blocks.contains(where: \.isQuote) {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
+                    if block.isQuote {
+                        nodeRun(block.text, heading: node.heading)
+                            .foregroundStyle(WW.inkSecondary)
+                            .padding(.leading, CGFloat(block.depth) * GraphCanvas.quoteIndent)
+                            // An overlay takes the size of the words it sits on, so the bars run
+                            // exactly as tall as the quotation does.
+                            .overlay(alignment: .leading) {
+                                quoteBars(depth: block.depth,
+                                          color: WW.paletteColor(node.colorID) ?? WW.inkTertiary)
+                            }
+                    } else {
+                        nodeRun(block.text, heading: node.heading)
+                            .foregroundStyle(WW.ink)
+                    }
+                }
+            }
+        } else {
+            nodeRun(node.displayText, heading: node.heading)
+                .foregroundStyle(WW.ink)
+        }
+    }
+
+    /// One stretch of a card's words: highlights drawn, at the card's size (or its heading's),
+    /// and never truncated.
+    private func nodeRun(_ text: String, heading: GraphHeading?) -> some View {
+        Text(highlighted(text))
+            .font(nodeFont(heading))
+            .fixedSize(horizontal: false, vertical: true)
+            .multilineTextAlignment(.leading)
+    }
+
+    /// The bars down a quotation's left edge — one for each level it's nested.
+    private func quoteBars(depth: Int, color: Color) -> some View {
+        HStack(spacing: GraphCanvas.quoteIndent - GraphCanvas.quoteBarWidth) {
+            ForEach(0..<depth, id: \.self) { _ in
+                RoundedRectangle(cornerRadius: GraphCanvas.quoteBarWidth / 2, style: .continuous)
+                    .fill(color)
+                    .frame(width: GraphCanvas.quoteBarWidth)
+            }
+        }
+        .allowsHitTesting(false)
     }
 
     /// Whether this node's words are being rewritten right now, and whether that rewrite is still
@@ -6032,6 +6166,102 @@ struct GraphDocumentView: View {
         startEditing(node)
     }
 
+    // MARK: Copying and pasting nodes
+
+    /// Whether the pasteboard has nodes on it, asked again — see `canPasteNodes`.
+    private func refreshPasteability() {
+        let hasNodes = GraphPasteboard.hasNodes
+        if canPasteNodes != hasNodes { canPasteNodes = hasNodes }
+    }
+
+    /// Put cards on the pasteboard — to paste into another graph, or elsewhere in this one — with
+    /// what they say beside them as text for anywhere else (`GraphClipboard`).
+    private func copyNodes(_ ids: Set<UUID>, what: String) {
+        guard let document, let clipboard = GraphClipboard(copying: ids, from: document) else { return }
+        GraphPasteboard.copy(clipboard)
+        canPasteNodes = true
+        haptic()
+        wwLog("Copied \(what) to clipboard", .general)
+    }
+
+    /// **Copy Branch**: the card and everything hanging off it.
+    private func copyBranch(of node: GraphNode) {
+        guard let document else { return }
+        let branch = Set(document.subtree(of: node.id))
+        copyNodes(branch, what: "a graph branch of \(branch.count) node\(branch.count == 1 ? "" : "s")")
+    }
+
+    /// ⌘C, and **Copy** in the selection bar: the cards picked out. Links between them are kept, so
+    /// picking out a whole branch copies it as one.
+    private func copySelection() {
+        let ids = selectedNodeIDs
+        guard !ids.isEmpty else { return }
+        copyNodes(ids, what: "\(ids.count) graph node\(ids.count == 1 ? "" : "s")")
+    }
+
+    /// ⌘V, and **⋯ → Paste Nodes**. With exactly one card picked out, what's pasted hangs off it —
+    /// the card you're on is where a paste goes, as in any mind map. Otherwise it's put down in the
+    /// middle of the screen, as roots of their own.
+    private func pasteNodes() {
+        if selectedNodeIDs.count == 1, let parentID = selectedNodeIDs.first {
+            pasteNodes(under: parentID)
+            return
+        }
+        guard let clipboard = GraphPasteboard.read() else { return }
+        let spot = GraphPoint(x: Double(viewportInCanvas.midX), y: Double(viewportInCanvas.midY))
+        let map = withAnimation(.snappy(duration: 0.25)) {
+            model.documents.pasteNodes(clipboard, in: documentID, at: spot)
+        }
+        didPaste(map)
+    }
+
+    /// **Paste as Child**: what's on the pasteboard, hung off this card the way a drop hangs a
+    /// branch — and, with Auto tidy on, the card's children lined up round the arrivals.
+    private func pasteNodes(under parentID: UUID) {
+        menuNodeID = nil
+        guard let clipboard = GraphPasteboard.read() else { return }
+        let map = withAnimation(.snappy(duration: 0.25)) {
+            model.documents.pasteNodes(clipboard, in: documentID, under: parentID,
+                                       heights: measuredHeights, widths: measuredWidths)
+        }
+        guard !map.isEmpty else { return }
+        autoTidyChildren(of: parentID)
+        didPaste(map)
+    }
+
+    /// What every paste does once its cards are down: bring them into view if they landed out of
+    /// it, and ring the first of them for a moment so the eye finds what arrived.
+    private func didPaste(_ map: [UUID: UUID]) {
+        guard !map.isEmpty, let document else { return }
+        let arrived = Set(map.values)
+        let pasted = document.nodes.filter { arrived.contains($0.id) }
+        let xs = pasted.map(\.position.x)
+        let ys = pasted.map(\.position.y)
+        if let minX = xs.min(), let maxX = xs.max(), let minY = ys.min(), let maxY = ys.max() {
+            let middle = CGPoint(x: (minX + maxX) / 2, y: (minY + maxY) / 2)
+            if !viewportInCanvas.contains(middle) { center(on: middle) }
+        }
+        // The top card of what arrived: the one nothing else that arrived hangs off.
+        let first = pasted
+            .filter { node in node.parentID.map { !arrived.contains($0) } ?? true }
+            .min { ($0.position.y, $0.position.x) < ($1.position.y, $1.position.x) }
+        if let first { flash(first.id) } else { haptic() }
+        wwLog("Pasted \(map.count) graph node\(map.count == 1 ? "" : "s")", .general)
+    }
+
+    // MARK: Turning a branch
+
+    /// **Rotate Clockwise** / **Rotate Anticlockwise**: everything hanging off this card swings a
+    /// quarter-turn round it, and is tidied in its new direction (`DocumentStore.rotateBranch`).
+    private func rotateBranch(of node: GraphNode, clockwise: Bool) {
+        withAnimation(.snappy(duration: 0.3)) {
+            model.documents.rotateBranch(of: node.id, clockwise: clockwise, in: documentID,
+                                         heights: measuredHeights, widths: measuredWidths)
+        }
+        haptic()
+        wwLog("Turned a graph branch \(clockwise ? "clockwise" : "anticlockwise")", .general)
+    }
+
     // MARK: Editing a node in place
 
     private func startEditing(_ node: GraphNode) {
@@ -6225,11 +6455,18 @@ struct GraphDocumentView: View {
     }
 
     /// What a ⌃-click on a card offers: take it out of the network — alone, or with its branch —
-    /// line its children up, or copy it, as plain words or as Markdown.
+    /// line its children up, turn its branch, copy it, or paste onto it.
     ///
-    /// **Copy** is this card's words as they read on the canvas, without a heading's `#` or a
-    /// highlight's `==`. **Copy as Markdown** is the markup too — and, when the card has a branch
-    /// under it, the whole branch as the outline the graph exports, starting from this card.
+    /// **Rotate Clockwise** and **Rotate Anticlockwise** swing everything hanging off the card a
+    /// quarter-turn round it — a branch growing to the right grows downwards after one turn
+    /// clockwise — and tidy it in its new direction.
+    ///
+    /// **Copy** is this card, and its words as they read on the canvas (without a heading's `#`, a
+    /// highlight's `==` or a quotation's `>`) for anywhere that takes text. **Copy Branch** is the
+    /// card and everything under it, with the branch's outline as its text. Either pastes into any
+    /// graph as cards. **Copy as Markdown** is text only: the markup too — and, when the card has a
+    /// branch under it, the whole branch as the outline the graph exports, starting from this card.
+    /// **Paste as Child** hangs whatever cards were copied off this one.
     private func contextItems(for node: GraphNode, in document: Document) -> [NodeMenuItem] {
         let hasChildren = !document.children(of: node.id).isEmpty
         let markdown = document.markdown(ofBranch: node.id)
@@ -6249,15 +6486,30 @@ struct GraphDocumentView: View {
                 menuNodeID = nil
                 tidyChildren(of: node)
             },
+            NodeMenuItem(title: "Rotate Clockwise", icon: "rotate.right", enabled: hasChildren) {
+                menuNodeID = nil
+                rotateBranch(of: node, clockwise: true)
+            },
+            NodeMenuItem(title: "Rotate Anticlockwise", icon: "rotate.left", enabled: hasChildren) {
+                menuNodeID = nil
+                rotateBranch(of: node, clockwise: false)
+            },
             NodeMenuItem(title: "Copy", icon: "doc.on.doc", enabled: node.hasText) {
                 menuNodeID = nil
-                copyToPasteboard(node.plainText, what: "a graph node")
+                copyNodes([node.id], what: "a graph node")
+            },
+            NodeMenuItem(title: "Copy Branch", icon: "square.on.square", enabled: hasChildren) {
+                menuNodeID = nil
+                copyBranch(of: node)
             },
             NodeMenuItem(title: "Copy as Markdown", icon: "doc.plaintext",
                          enabled: !markdown.isEmpty) {
                 menuNodeID = nil
                 copyToPasteboard(markdown, what: hasChildren ? "a graph branch as Markdown"
                                                              : "a graph node as Markdown")
+            },
+            NodeMenuItem(title: "Paste as Child", icon: "doc.on.clipboard", enabled: canPasteNodes) {
+                pasteNodes(under: node.id)
             }
         ]
     }
@@ -6293,12 +6545,35 @@ struct GraphDocumentView: View {
                 model.documents.deleteNode(node.id, in: documentID)
             }
         ]
-        if !document.children(of: node.id).isEmpty {
+        let hasChildren = !document.children(of: node.id).isEmpty
+        if hasChildren {
             let tidy = NodeMenuItem(title: "Tidy Children", icon: "rectangle.3.group") {
                 menuNodeID = nil
                 tidyChildren(of: node)
             }
             items.insert(tidy, at: 2)
+        }
+        // Copying, for a finger with no ⌃ to click with: a card with a branch copies the branch —
+        // what a copy of it to put somewhere else usually means — and the selection bar's Copy is
+        // there for a card on its own. Paste appears only when there's something to paste.
+        let copy: NodeMenuItem
+        if hasChildren {
+            copy = NodeMenuItem(title: "Copy Branch", icon: "square.on.square") {
+                menuNodeID = nil
+                copyBranch(of: node)
+            }
+        } else {
+            copy = NodeMenuItem(title: "Copy", icon: "doc.on.doc") {
+                menuNodeID = nil
+                copyNodes([node.id], what: "a graph node")
+            }
+        }
+        items.insert(copy, at: items.count - 1)
+        if canPasteNodes {
+            let paste = NodeMenuItem(title: "Paste as Child", icon: "doc.on.clipboard") {
+                pasteNodes(under: node.id)
+            }
+            items.insert(paste, at: items.count - 1)
         }
         // Last before Delete: it's about how you're looking at the graph, not about this card.
         let isolate = NodeMenuItem(title: isOrigin ? "Show All Nodes" : "Isolate Branch",
@@ -6852,8 +7127,9 @@ struct GraphDocumentView: View {
     private func selectionBar() -> some View {
         if isSelecting || !selectedNodeIDs.isEmpty {
             VStack(spacing: 10) {
-                // Tighter than it was: the colour dot makes four controls in this row, and the dot
-                // brings 9 points of its own padding, so the gaps still read as gaps on a phone.
+                // Tighter than it was: the colour dot and Copy make five controls in this row, and
+                // the dot brings 9 points of its own padding, so the gaps still read as gaps on a
+                // phone.
                 HStack(spacing: 10) {
                     VStack(alignment: .leading, spacing: 1) {
                         Text(selectedNodeIDs.isEmpty ? "Select nodes"
@@ -6888,6 +7164,18 @@ struct GraphDocumentView: View {
                         .accessibilityLabel("Group")
                     }
                     if !selectedNodeIDs.isEmpty {
+                        // The cards picked out, to paste into another graph (or elsewhere in this
+                        // one) — ⌘C, for a finger.
+                        Button { copySelection() } label: {
+                            Label("Copy", systemImage: "doc.on.doc")
+                                .labelStyle(.iconOnly)
+                                .font(.system(size: 17))
+                                .foregroundStyle(WW.moss)
+                                .frame(width: 40, height: 34)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Copy")
                         Button { deleteSelection() } label: {
                             Label("Delete", systemImage: "trash")
                                 .labelStyle(.iconOnly)
@@ -7172,7 +7460,11 @@ struct GraphDocumentView: View {
                          onAlignLeft: { arrangeSelection("Align Left", GraphArrange.alignLeft) },
                          onAlignRight: { arrangeSelection("Align Right", GraphArrange.alignRight) },
                          onTidy: { tidyFromKeyboard() },
-                         onEscape: { exitIsolation() })
+                         onEscape: { exitIsolation() },
+                         canCopy: !selectedNodeIDs.isEmpty,
+                         canPaste: canPasteNodes,
+                         onCopy: { copySelection() },
+                         onPaste: { pasteNodes() })
             .frame(width: 0, height: 0)
         #else
         EmptyView()
@@ -7346,9 +7638,10 @@ struct GraphDocumentView: View {
                     .font(.system(size: 10))
                     .foregroundStyle(WW.inkTertiary)
             }
-            // The same words the card shows — a heading's marker is invisible here too, and a
-            // highlight is a highlight.
-            Text(entry.node.hasText ? highlighted(entry.node.displayText) : AttributedString("Empty node"))
+            // The same words the card shows — a heading's marker is invisible here too, and so is a
+            // quotation's `>`, and a highlight is a highlight.
+            Text(entry.node.hasText ? highlighted(GraphQuote.stripped(entry.node.displayText))
+                                    : AttributedString("Empty node"))
                 .font(.subheadline)
                 .foregroundStyle(entry.node.hasText ? WW.ink : WW.inkTertiary)
                 .lineLimit(2)
@@ -7620,10 +7913,15 @@ struct GraphDocumentView: View {
         Button { shareDocumentFile(document) } label: {
             Label("Share as Woods Whisper File", systemImage: "arrow.up.doc")
         }
+        DocumentLinkMenu(document: document) { url in linkShare = DocumentLinkShareItem(url: url) }
         JointDocumentMenuItem(isJoined: isJoined,
                               onCreate: createJointCounterpart,
                               onSeparate: separateJoint)
         Divider()
+        Button { pasteNodes() } label: {
+            Label("Paste Nodes", systemImage: "doc.on.clipboard")
+        }
+        .disabled(!canPasteNodes)
         Button {
             if isSelecting { endSelecting() } else { beginSelecting() }
         } label: {
@@ -7725,8 +8023,8 @@ struct GraphDocumentView: View {
         var hasMoved = false
     }
 
-    /// The two dropdowns a card has: the long press's list of actions, and the shorter one a
-    /// Control-click opens (Detach, Organize Children, Copy, Copy as Markdown).
+    /// The two dropdowns a card has: the long press's list of actions, and the one a Control-click
+    /// opens (Detach, Organize Children, the two Rotates, the Copies and Paste as Child).
     private enum NodeMenuKind {
         case actions
         case context
@@ -7803,6 +8101,10 @@ enum GraphCanvas {
     /// A card that's a single emoji: the emoji's size, and the square it sits on.
     static let emojiPointSize: CGFloat = 60
     static let emojiCardSide: CGFloat = 96
+    /// A `>` quotation on a card: how far in each level sets it, and how thick the bar down its
+    /// left edge is — the rest of each step is air between the bar and the words.
+    static let quoteIndent: CGFloat = 12
+    static let quoteBarWidth: CGFloat = 3
     static let menuWidth: CGFloat = 210
     static let gridSpacing: CGFloat = 44
     static let minimapHeight: CGFloat = 76
@@ -8171,6 +8473,53 @@ struct HoldablePlusButton: View {
     }
 }
 
+// MARK: - Nodes on the pasteboard
+
+/// Graph nodes on the system pasteboard: a `GraphClipboard` under its own type, with the words
+/// beside it as plain text for anywhere that isn't a canvas.
+///
+/// The system's pasteboard rather than one the app keeps for itself, so a copy outlives the app
+/// being closed, reaches every graph (the other half of a joint document included), and follows you
+/// to another device by Universal Clipboard — and so copying anything else, anywhere, replaces it,
+/// the way a clipboard is expected to behave.
+@MainActor
+enum GraphPasteboard {
+    /// Put nodes on the pasteboard, in place of whatever was there.
+    static func copy(_ clipboard: GraphClipboard) {
+        #if canImport(UIKit)
+        guard let data = clipboard.encoded() else { return }
+        var item: [String: Any] = [GraphClipboard.typeIdentifier: data]
+        let text = clipboard.text
+        if !text.isEmpty { item[UTType.utf8PlainText.identifier] = text }
+        UIPasteboard.general.setItems([item])
+        #endif
+    }
+
+    /// Whether there are nodes to paste. Asking after the *type* doesn't read what's there, so it
+    /// never raises the system's "Allow Paste" prompt — which is what lets a menu grey its Paste
+    /// without asking.
+    static var hasNodes: Bool {
+        #if canImport(UIKit)
+        return UIPasteboard.general.contains(pasteboardTypes: [GraphClipboard.typeIdentifier])
+        #else
+        return false
+        #endif
+    }
+
+    /// The nodes on the pasteboard, if there are any. Reading is what can raise the system's
+    /// prompt (for nodes copied on another device), and a paste is always asked for, so it's the
+    /// moment the prompt belongs to.
+    static func read() -> GraphClipboard? {
+        #if canImport(UIKit)
+        guard let data = UIPasteboard.general.data(forPasteboardType: GraphClipboard.typeIdentifier)
+        else { return nil }
+        return GraphClipboard(data: data)
+        #else
+        return nil
+        #endif
+    }
+}
+
 // MARK: - The ⌘ and ⌥ keys
 
 /// Which modifiers were held when the touch in progress began — what turns a drag on the canvas
@@ -8403,7 +8752,11 @@ struct CommandKeyWatcher: UIViewRepresentable {
 /// The canvas's hardware-keyboard shortcuts, for anyone working with a keyboard attached:
 /// **Delete** removes the selected cards, **⌘←** and **⌘→** line them up by their left or right
 /// edges, **⌘T** tidies — the selection's children, or the whole graph when nothing is picked
-/// out — and **Escape** brings the whole graph back from an isolated branch.
+/// out — and **Escape** brings the whole graph back from an isolated branch. **⌘C** copies the
+/// selected cards and **⌘V** pastes nodes; those two aren't key commands of this view's own but
+/// the system's standard Copy and Paste, answered here (`copy(_:)`, `paste(_:)`) — so they're the
+/// same ⌘C and ⌘V as everywhere else, Edit menu included, and a text view that has the keyboard
+/// answers them for its text instead.
 ///
 /// UIKit's key commands rather than SwiftUI's `onKeyPress`, for one reason: the responder chain
 /// already answers the question "is the user typing?". A view that's first responder gets the keys;
@@ -8419,6 +8772,12 @@ struct GraphKeyCommands: UIViewRepresentable {
     let onAlignRight: () -> Void
     let onTidy: () -> Void
     let onEscape: () -> Void
+    /// Whether ⌘C has anything to copy (cards picked out) and ⌘V anything to paste (nodes on the
+    /// pasteboard) — what the system asks before offering either, the Edit menu included.
+    let canCopy: Bool
+    let canPaste: Bool
+    let onCopy: () -> Void
+    let onPaste: () -> Void
 
     func makeUIView(context: Context) -> KeyView {
         let view = KeyView()
@@ -8438,6 +8797,10 @@ struct GraphKeyCommands: UIViewRepresentable {
         view.onAlignRight = onAlignRight
         view.onTidy = onTidy
         view.onEscape = onEscape
+        view.canCopy = canCopy
+        view.canPaste = canPaste
+        view.onCopy = onCopy
+        view.onPaste = onPaste
         view.wantsKeys(isActive)
     }
 
@@ -8448,6 +8811,10 @@ struct GraphKeyCommands: UIViewRepresentable {
         var onAlignRight: () -> Void = {}
         var onTidy: () -> Void = {}
         var onEscape: () -> Void = {}
+        var canCopy = false
+        var canPaste = false
+        var onCopy: () -> Void = {}
+        var onPaste: () -> Void = {}
 
         private var holdingKeys = false
 
@@ -8492,6 +8859,17 @@ struct GraphKeyCommands: UIViewRepresentable {
         @objc private func alignRight() { onAlignRight() }
         @objc private func tidy() { onTidy() }
         @objc private func escape() { onEscape() }
+
+        // The system's own Copy and Paste — ⌘C, ⌘V and the Edit menu — find their way here while
+        // this view holds the keyboard, and are offered only when there's something to do.
+        override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+            if action == #selector(UIResponderStandardEditActions.copy(_:)) { return canCopy }
+            if action == #selector(UIResponderStandardEditActions.paste(_:)) { return canPaste }
+            return super.canPerformAction(action, withSender: sender)
+        }
+
+        override func copy(_ sender: Any?) { onCopy() }
+        override func paste(_ sender: Any?) { onPaste() }
     }
 }
 #endif

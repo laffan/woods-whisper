@@ -7,8 +7,13 @@ import UIKit
 
 struct DocumentsView: View {
     @EnvironmentObject private var model: AppModel
-    /// "Open this document" requests arriving from outside the app (the Recent Documents widget).
+    /// "Open this document" requests arriving from outside the app (the Recent Documents widget, or
+    /// a document link tapped in another app).
     @ObservedObject private var opener = DocumentLauncher.shared
+    /// A link that arrived for a document the list can't open: one in the Trash, or one this device
+    /// doesn't have at all. Said out loud, since a tap in another app that lands on the plain list
+    /// reads as the link being broken.
+    @State private var unreachableLink: UnreachableLink?
     @State private var renameTarget: Document?
     @State private var renameText = ""
     // The New Document dialog: a title and the Document / Graph toggle, which is the one thing
@@ -198,6 +203,20 @@ struct DocumentsView: View {
                     model.documents.setParagraphs(Document.paragraphs(from: editingText), in: doc.id)
                 }
             }
+            .alert(Text(unreachableLink?.title ?? ""),
+                   isPresented: Binding(get: { unreachableLink != nil },
+                                        set: { if !$0 { unreachableLink = nil } }),
+                   presenting: unreachableLink) { link in
+                switch link {
+                case .trashed(let doc):
+                    Button("Restore and Open") { restoreAndOpen(doc) }
+                    Button("Cancel", role: .cancel) { }
+                case .missing:
+                    Button("OK", role: .cancel) { }
+                }
+            } message: { link in
+                Text(link.message)
+            }
             // Widget deep link: both hooks are needed — onChange for requests while this tab is
             // visible, onAppear for one that switched tabs before this view existed (the pending
             // id waits in the launcher until then).
@@ -232,15 +251,32 @@ struct DocumentsView: View {
         }
     }
 
-    /// Push the document a widget tap asked for, replacing whatever was on the stack. Skips ids
-    /// that no longer exist (deleted or trashed since the widget snapshot was taken) — the list
-    /// itself is the sensible landing spot then.
+    /// Push the document a widget tap or a document link asked for, replacing whatever was on the
+    /// stack. An id the list can't open lands here, on the list, with a word about why: a document
+    /// in the Trash can be brought back and opened in one go; one this device has never had (a link
+    /// made on another device) or has deleted for good can't.
     private func openPendingDocument() {
         guard let id = opener.pendingDocumentID else { return }
         opener.pendingDocumentID = nil
-        guard model.documents.document(with: id) != nil else { return }
+        guard model.documents.document(with: id) != nil else {
+            if let trashed = model.documents.trash.first(where: { $0.id == id }) {
+                unreachableLink = .trashed(trashed)
+            } else {
+                unreachableLink = .missing
+            }
+            wwLog("A document link pointed at a document that isn't in the list", .general)
+            return
+        }
         if selectionMode { exitSelection() }
         path = [.document(id)]
+    }
+
+    /// "Restore and Open", for a link to a document in the Trash.
+    private func restoreAndOpen(_ doc: Document) {
+        model.documents.restoreFromTrash(doc)
+        if selectionMode { exitSelection() }
+        path = [.document(doc.id)]
+        wwLog("Restored “\(doc.title)” from the Trash to open a link", .general)
     }
 
     /// One document row with its swipe actions, shared by the Pinned and Documents sections.
@@ -499,6 +535,31 @@ struct DocumentsView: View {
     enum Route: Hashable {
         case document(UUID)
         case trash
+    }
+
+    /// Why a document link couldn't be followed — see `openPendingDocument`.
+    enum UnreachableLink {
+        /// It's in the Trash, and can come back.
+        case trashed(Document)
+        /// Nothing here by that id: a link made on another device (documents don't travel with
+        /// their links), or to a document since deleted for good.
+        case missing
+
+        var title: String {
+            switch self {
+            case .trashed(let doc): return "“\(doc.title)” is in the Trash"
+            case .missing: return "Document not found"
+            }
+        }
+
+        var message: String {
+            switch self {
+            case .trashed:
+                return "This link points to a document you deleted. Restore it to open it."
+            case .missing:
+                return "This link points to a document that isn't on this device. A link opens a document on the device it came from — to send the document itself, use Share as Woods Whisper File."
+            }
+        }
     }
 }
 

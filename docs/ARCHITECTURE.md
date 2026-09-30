@@ -77,6 +77,20 @@ storage, and connectivity code without the model dependencies.
   text — so editing shows it again, and the exported outline keeps a Markdown heading as a Markdown
   heading — while `GraphNode.displayText` is what the canvas and the node list draw. Three hashes or
   more isn't a size the canvas has, so it stays plain text rather than losing a marker to nothing.
+  **`GraphQuote`** does the same for `>`: it splits a card's text line by line into ordinary
+  stretches and quotations (`blocks(in:)`, with `>>` / `> >` a quotation one level deeper), markers
+  off, for the canvas to draw each quotation behind a bar. A line without a marker *ends* the
+  quotation (Markdown's lazy continuation would let it run on, which on a card reads as the quote
+  swallowing the next line), and a marker with nothing after it stays as typed. `plainText` drops
+  the markers along with the heading's and the highlight's; the outline keeps them, where
+  `- > words` is a quotation inside a bullet.
+- **`GraphClipboard`** — nodes on their way between graphs: the copied nodes (links inside the set
+  kept, a link out of it cut, no `recordingID`) and every ring whose members all came along. It keeps
+  the *original* ids; each paste mints its own (`instantiated(offsetBy:_:)`), which is what lets one
+  copy be pasted again and again, and it cuts a parent loop or a duplicated node on the way in,
+  since a pasteboard is outside the app's hands. It travels on the system pasteboard as JSON under
+  `com.woodswhisper.graph-nodes`, with `text` beside it — one card's plain words, or the outline of
+  several — so any other app, or a document's Import from Clipboard, gets the words.
 - **`GraphGroup`** — a ring drawn round a handful of nodes, with an optional label and `colorID`.
   Deliberately *not* structure: no parent, nothing hangs off it, and the outline walks past it — it's the
   mind-map equivalent of circling a cluster in pencil, which is why membership is a plain list of
@@ -325,6 +339,15 @@ transform — `scaleEffect(anchor: .topLeading)` then `offset` — so a canvas p
   Inserting a node on an edge is the same idea in miniature — the branch below slides out by a
   node's width and the new node takes the middle of the widened gap, so it has the room the "+" had.
   Both go through one rigid `translate(subtreeOf:)`, which is why nothing below ever gets scrambled.
+  **Turning a branch** (`rotateBranch(of:clockwise:in:)`, the ⌃-click menu's two Rotates) is the one
+  place a direction *is* decided, and it's decided by the user: every node below the card swings a
+  quarter-turn round it (`quarterTurn` — clockwise on a y-down canvas takes `(dx, dy)` to
+  `(−dy, dx)`), which turns every row's direction with it, and then each row in the branch is
+  tidied, its direction read *after* the turn. Two things differ from `tidyGraph`. The rows go
+  **deepest first**: `tidyChildren` spaces siblings by the extent of the branch hanging off each,
+  which is only right once those branches have their final shape — roots-down, a column turned into
+  a row is spaced by its old overlapping footprint and the rows below then spill into their
+  neighbours. And nothing outside the branch moves, the card itself included.
   **Auto tidy** (the toggle at the minimap's right, stored app-wide as `graphAutoTidy` for the same
   reason the minimap's own switch is) simply calls that same tidy from every place a node is added
   with a parent, and from the one place an abandoned empty node is removed again. It has one rule of
@@ -412,7 +435,20 @@ hierarchy, and Delete must not take cards off a canvas nobody is looking at), an
 when it *changes* — asserting first responder on every update would drag the keyboard back from the
 document half of a joint document each time the canvas redrew. The delete keys are matched by character (`\u{8}` backspace, `\u{7F}` forward delete)
 rather than by a named constant, and every command sets `wantsPriorityOverSystemBehavior` so the
-system doesn't keep the arrows for focus movement.
+system doesn't keep the arrows for focus movement. ⌘C and ⌘V are *not* key commands of the view's
+own: the view overrides the standard edit actions `copy(_:)` and `paste(_:)` and answers
+`canPerformAction` from `canCopy` / `canPaste`, so they're the system's own Copy and Paste — the
+Edit menu included — and an open node's text view answers them for its text instead.
+
+**Copying and pasting nodes.** `GraphPasteboard` (in the app) writes and reads a `GraphClipboard` on
+the system pasteboard, so a copy reaches every graph and survives the app closing. Whether there's
+anything to paste is asked by *type* (`contains(pasteboardTypes:)`), which never raises the
+system's paste prompt, and re-asked on `UIPasteboard.changedNotification` and on becoming active —
+a menu is drawn before it's opened, and another app can change the pasteboard in the meantime.
+`DocumentStore.pasteNodes(_:in:at:)` puts the copy down with its middle on a point, sliding it a
+row at a time until it's clear of what's there; `pasteNodes(_:in:under:)` hangs each pasted root
+off a card through `attachNode`, the same placement a drop gets, and the canvas follows it with the
+drop's auto tidy.
 
 **Keeping a drag cheap (iOS).** A drag writes its translation to view state on every frame, so the
 whole canvas body re-runs sixty times a second — which is fine only if one pass is linear in the
@@ -622,3 +658,12 @@ way to give it several tap targets. A row's `OpenDocumentIntent` sets `openAppWh
 performs in the app's own process and reaches `DocumentLauncher`. `ContentView` watches that
 launcher (rather than `onOpenURL` alone) so both routes switch to the Documents tab, and
 `DocumentsView` consumes the id and pushes the document.
+
+The same `woodswhisper://document/<uuid>` link is what a document's **⋯ → Document Link** hands out
+(`DocumentLinkMenu`: Copy Link, Copy Markdown Link via `woodsWhisperDocumentMarkdownLink`, Share
+Link…), so a link pasted into another app arrives by the same `onOpenURL` path as a widget tap. It
+carries the id and nothing else: a rename doesn't break it, and a link opened where that id isn't
+in the list says why (`DocumentsView.UnreachableLink`) — a document in the Trash is offered back
+with **Restore and Open**, and one this device doesn't have is reported as such rather than
+silently dropped. The custom scheme is the only option for an app with no web domain of its own
+(universal links need one), so whether a pasted link is *tappable* is up to the app it's pasted into.

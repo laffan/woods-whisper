@@ -133,6 +133,121 @@ public enum GraphHighlight {
     }
 }
 
+// MARK: - Blockquotes
+
+/// Markdown's blockquote: a line that opens with `>` is drawn on the canvas as a quotation — set in
+/// from a bar down its left edge, in a quieter ink — with the marker left out, the same bargain a
+/// heading's `#` and a highlight's `==` make. The stored text keeps it, so opening the card shows it
+/// again, and so does the outline the graph exports (where `- > words` is a quotation inside a
+/// bullet, which is Markdown in its own right).
+///
+/// It goes **line by line**, as Markdown does: a card can say something and then quote something,
+/// and consecutive quoted lines run together into one quotation. `>>` — or `> >` — is a quotation
+/// inside a quotation, and gets a second bar. The space after a `>` is optional, as it is in
+/// Markdown.
+///
+/// One rule is stricter than Markdown's: a line *without* the marker ends the quotation. Markdown
+/// lets a paragraph run on into the quote above it ("lazy continuation"); on a card that reads as
+/// the quote swallowing the next line, which is never what someone typing a line under a quote
+/// meant. And a marker with nothing after it isn't a quotation — it's someone half way through
+/// typing one — so it stays in the text exactly as typed, as a heading's lone `#` does.
+public enum GraphQuote {
+    /// One stretch of a card's lines: ordinary text (`depth` 0), or a quotation `depth` deep.
+    public struct Block: Hashable, Sendable {
+        public let text: String
+        public let depth: Int
+
+        public init(text: String, depth: Int) {
+            self.text = text
+            self.depth = depth
+        }
+
+        public var isQuote: Bool { depth > 0 }
+    }
+
+    public static let marker: Character = ">"
+
+    /// `text` split into ordinary stretches and quotations, in order, with the markers taken off.
+    /// Text with no quotation in it comes back as one plain block (none at all when it's empty).
+    public static func blocks(in text: String) -> [Block] {
+        // Most cards quote nothing; don't take them apart line by line to find that out.
+        guard text.contains(marker) else {
+            let plain = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return plain.isEmpty ? [] : [Block(text: plain, depth: 0)]
+        }
+
+        var blocks: [Block] = []
+        var said: [Substring] = []      // the current run, markers off
+        var typed: [Substring] = []     // the same lines, as typed
+        var depth = 0
+
+        func appendPlain(_ text: String) {
+            guard !text.isEmpty else { return }
+            if let last = blocks.last, !last.isQuote {
+                blocks[blocks.count - 1] = Block(text: last.text + "\n" + text, depth: 0)
+            } else {
+                blocks.append(Block(text: text, depth: 0))
+            }
+        }
+
+        func flush() {
+            defer { said = []; typed = [] }
+            let body = said.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            if depth == 0 {
+                appendPlain(body)
+            } else if body.isEmpty {
+                // Markers with nothing after them: not a quotation yet, so the text as it was typed.
+                appendPlain(typed.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines))
+            } else {
+                blocks.append(Block(text: body, depth: depth))
+            }
+        }
+
+        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            let (lineDepth, rest) = parse(line)
+            if lineDepth != depth, !typed.isEmpty { flush() }
+            depth = lineDepth
+            said.append(rest)
+            typed.append(line)
+        }
+        flush()
+        return blocks
+    }
+
+    /// Whether any of `text` is a quotation — the question the canvas asks before drawing a card
+    /// as blocks rather than as one run of text.
+    public static func containsQuote(_ text: String) -> Bool {
+        blocks(in: text).contains(where: \.isQuote)
+    }
+
+    /// The words with every quotation's markers taken off, one block to a line — what a plain-text
+    /// copy of a card says, and what the node list shows.
+    public static func stripped(_ text: String) -> String {
+        guard text.contains(marker) else { return text }
+        return blocks(in: text).map(\.text).joined(separator: "\n")
+    }
+
+    /// How many quotation markers open `line`, and what's left once they (and the one optional
+    /// space after each) are taken off. Leading spaces before the first marker are allowed, and so
+    /// are spaces between nested ones: `> > this` is as deep as `>> this`.
+    static func parse(_ line: Substring) -> (depth: Int, rest: Substring) {
+        var rest = line.drop(while: { $0 == " " || $0 == "\t" })
+        guard rest.first == marker else { return (0, line) }
+        var depth = 0
+        while rest.first == marker {
+            depth += 1
+            rest = rest.dropFirst()
+            let spaced = rest.drop(while: { $0 == " " || $0 == "\t" })
+            if spaced.first == marker {
+                rest = spaced                    // another marker: nested
+            } else if rest.first == " " {
+                rest = rest.dropFirst()          // the one space Markdown lets a marker take
+            }
+        }
+        return (depth, rest)
+    }
+}
+
 // MARK: - A card that's a single emoji
 
 /// A node that says one emoji and nothing else is drawn as that emoji, large, on a square card —

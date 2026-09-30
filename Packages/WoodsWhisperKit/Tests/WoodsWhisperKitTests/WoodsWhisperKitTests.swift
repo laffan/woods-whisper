@@ -786,6 +786,29 @@ final class WoodsWhisperKitTests: XCTestCase {
         XCTAssertNil(woodsWhisperDocumentID(from: URL(string: "https://document/\(UUID().uuidString)")!))
     }
 
+    /// Copy Markdown Link: the document's name as the link text, and the same link Copy Link hands
+    /// out behind it — which still opens the document.
+    func testAMarkdownLinkNamesTheDocumentAndCarriesItsLink() {
+        let id = UUID()
+        let link = woodsWhisperDocumentMarkdownLink(id: id, title: "Field Notes")
+        XCTAssertEqual(link, "[Field Notes](woodswhisper://document/\(id.uuidString))")
+
+        let address = String(link[link.index(after: link.firstIndex(of: "(")!)..<link.lastIndex(of: ")")!])
+        XCTAssertEqual(woodsWhisperDocumentID(from: URL(string: address)!), id)
+    }
+
+    /// A title can't break the link it names: brackets and backslashes are escaped, a line break
+    /// becomes a space, and a document with no title is still something to click.
+    func testAMarkdownLinkEscapesWhatWouldBreakIt() {
+        let id = UUID()
+        let url = woodsWhisperDocumentURL(id: id).absoluteString
+        XCTAssertEqual(woodsWhisperDocumentMarkdownLink(id: id, title: #"Plan [draft] \ v2"#),
+                       #"[Plan \[draft\] \\ v2]("# + url + ")")
+        XCTAssertEqual(woodsWhisperDocumentMarkdownLink(id: id, title: "Two\nlines"),
+                       "[Two lines](\(url))")
+        XCTAssertEqual(woodsWhisperDocumentMarkdownLink(id: id, title: "  "), "[Untitled](\(url))")
+    }
+
     // MARK: Graph documents
 
     /// A node with just the two things these tests care about: what it says and where it hangs.
@@ -1478,6 +1501,327 @@ final class WoodsWhisperKitTests: XCTestCase {
         XCTAssertEqual(GraphHighlight.stripped("keep ==this== dry"), "keep this dry")
         XCTAssertEqual(graphNode("# Camp ==tonight==").plainText, "Camp tonight")
         XCTAssertEqual(graphNode("a == b").plainText, "a == b")
+    }
+
+    // MARK: Blockquotes
+
+    func testAQuoteIsTheLinesThatOpenWithAMarker() {
+        XCTAssertEqual(GraphQuote.blocks(in: "Camp tonight\n> the creek is high\n> after rain"), [
+            .init(text: "Camp tonight", depth: 0),
+            .init(text: "the creek is high\nafter rain", depth: 1)
+        ])
+        // The space after the marker is optional, as it is in Markdown.
+        XCTAssertEqual(GraphQuote.blocks(in: ">no space"), [.init(text: "no space", depth: 1)])
+        XCTAssertTrue(GraphQuote.containsQuote("> quoted"))
+        XCTAssertFalse(GraphQuote.containsQuote("plain"))
+    }
+
+    func testQuotesNestAndBreakTheWayMarkdownsDo() {
+        // `>>` and `> >` are the same depth, and a run at one depth is one quotation.
+        XCTAssertEqual(GraphQuote.blocks(in: "> outer\n>> inner\n> > also inner"), [
+            .init(text: "outer", depth: 1),
+            .init(text: "inner\nalso inner", depth: 2)
+        ])
+        // A quoted empty line is a paragraph break inside the quotation…
+        XCTAssertEqual(GraphQuote.blocks(in: "> a\n>\n> b"), [.init(text: "a\n\nb", depth: 1)])
+        // …and a blank line between two is two quotations.
+        XCTAssertEqual(GraphQuote.blocks(in: "> a\n\n> b"), [
+            .init(text: "a", depth: 1),
+            .init(text: "b", depth: 1)
+        ])
+        // A line without the marker ends the quotation rather than running on into it.
+        XCTAssertEqual(GraphQuote.blocks(in: "> quoted\nnot quoted"), [
+            .init(text: "quoted", depth: 1),
+            .init(text: "not quoted", depth: 0)
+        ])
+    }
+
+    /// A marker that opens nothing, or one that isn't at the start of a line, stays as typed.
+    func testWhatIsNotAQuote() {
+        for text in [">", "a > b", "x\n>\ny", "-> next"] {
+            XCTAssertEqual(GraphQuote.blocks(in: text), [.init(text: text, depth: 0)], text)
+            XCTAssertFalse(GraphQuote.containsQuote(text), text)
+        }
+        XCTAssertTrue(GraphQuote.blocks(in: "").isEmpty)
+    }
+
+    /// Invisible on the card, still there in the text — and in the outline, where `- > words` is a
+    /// quotation inside a bullet. A plain-text copy leaves it out with the other markers.
+    func testAQuoteHidesItsMarkerButKeepsItInTheText() {
+        let node = graphNode("> by the ==creek==")
+        XCTAssertEqual(node.trimmedText, "> by the ==creek==")
+        XCTAssertEqual(node.plainText, "by the creek")
+        XCTAssertEqual(node.quoteBlocks, [.init(text: "by the ==creek==", depth: 1)])
+        XCTAssertEqual(Document(title: "Trip", kind: .graph, nodes: [node]).outline,
+                       "- > by the ==creek==")
+        XCTAssertEqual(graphNode("# Camp\n> by the creek").plainText, "Camp\nby the creek")
+    }
+
+    // MARK: Copying nodes between graphs (Copy / Paste)
+
+    func testACopyKeepsItsBranchAndLeavesItsParentAndTapeBehind() {
+        let root = graphNode("Trip")
+        var camp = graphNode("Camp", parent: root.id, x: 330)
+        camp.recordingID = UUID()
+        camp.colorID = "violet"
+        let wood = graphNode("Firewood", parent: camp.id, x: 660)
+        let doc = Document(title: "Route", kind: .graph, nodes: [root, camp, wood])
+
+        let clipboard = GraphClipboard(copying: [camp.id, wood.id], from: doc)!
+        XCTAssertEqual(clipboard.nodes.count, 2)
+        let copiedCamp = clipboard.nodes.first { $0.id == camp.id }!
+        XCTAssertNil(copiedCamp.parentID)                          // the parent stayed behind
+        XCTAssertNil(copiedCamp.recordingID)                       // and so did the tape
+        XCTAssertEqual(copiedCamp.colorID, "violet")               // but not how it's drawn
+        XCTAssertEqual(clipboard.nodes.first { $0.id == wood.id }?.parentID, camp.id)
+        XCTAssertNil(GraphClipboard(copying: [UUID()], from: doc))
+    }
+
+    /// A ring comes along only when everything in it did.
+    func testACopyCarriesOnlyTheGroupsItHoldsWhole() {
+        let a = graphNode("A"), b = graphNode("B", y: 90), c = graphNode("C", y: 180)
+        let whole = GraphGroup(label: "Both", memberIDs: [a.id, b.id], colorID: "amber")
+        let split = GraphGroup(label: "Split", memberIDs: [b.id, c.id])
+        let doc = Document(title: "Route", kind: .graph, nodes: [a, b, c], groups: [whole, split])
+
+        let clipboard = GraphClipboard(copying: [a.id, b.id], from: doc)!
+        XCTAssertEqual(clipboard.groups.map(\.label), ["Both"])
+    }
+
+    func testTheClipboardsTextIsOneCardsWordsOrTheOutline() {
+        let camp = graphNode("# Camp ==tonight==")
+        let wood = graphNode("Firewood", parent: camp.id, x: 330)
+        let doc = Document(title: "Route", kind: .graph, nodes: [camp, wood])
+
+        XCTAssertEqual(GraphClipboard(copying: [camp.id], from: doc)?.text, "Camp tonight")
+        XCTAssertEqual(GraphClipboard(copying: [camp.id, wood.id], from: doc)?.text,
+                       "- # Camp ==tonight==\n  - Firewood")
+    }
+
+    func testTheClipboardRoundTripsAndRefusesAnythingElse() {
+        // Whole seconds: the pasteboard's dates are ISO 8601, which keeps no fractions of one.
+        let made = Date(timeIntervalSince1970: 1_785_000_000)
+        let camp = GraphNode(text: "Camp", createdAt: made)
+        let wood = GraphNode(text: "Firewood", parentID: camp.id, position: GraphPoint(x: 330, y: 0),
+                             colorID: "amber", width: 240, createdAt: made)
+        let doc = Document(title: "Route", kind: .graph, nodes: [camp, wood],
+                           groups: [GraphGroup(memberIDs: [camp.id, wood.id])])
+        let clipboard = GraphClipboard(copying: [camp.id, wood.id], from: doc)!
+
+        XCTAssertEqual(GraphClipboard(data: clipboard.encoded()!), clipboard)
+        XCTAssertNil(GraphClipboard(data: Data("not nodes".utf8)))
+    }
+
+    /// Every paste mints its own ids, so one copy can be pasted again and again — and the links
+    /// and rings inside it follow the new ones.
+    func testEachPasteMintsItsOwnIDs() {
+        let camp = graphNode("Camp")
+        let wood = graphNode("Firewood", parent: camp.id, x: 330, y: 20)
+        let doc = Document(title: "Route", kind: .graph, nodes: [camp, wood],
+                           groups: [GraphGroup(label: "Night", memberIDs: [camp.id, wood.id])])
+        let clipboard = GraphClipboard(copying: [camp.id, wood.id], from: doc)!
+
+        let first = clipboard.instantiated(offsetBy: 100, 50)
+        let second = clipboard.instantiated(offsetBy: 0, 0)
+        XCTAssertTrue(Set(first.map.values).isDisjoint(with: second.map.values))
+        XCTAssertTrue(Set(first.map.values).isDisjoint(with: [camp.id, wood.id]))
+
+        let pastedWood = first.nodes.first { $0.id == first.map[wood.id] }!
+        XCTAssertEqual(pastedWood.parentID, first.map[camp.id])
+        XCTAssertEqual(pastedWood.position, GraphPoint(x: 430, y: 70))
+        XCTAssertEqual(first.groups.first?.members, Set(first.map.values))
+        XCTAssertEqual(first.groups.first?.label, "Night")
+    }
+
+    /// What comes off a pasteboard is taken on trust only so far: a loop of parents is cut, and a
+    /// node listed twice is pasted once.
+    func testAPasteCutsALoopAndSkipsADuplicate() {
+        let a = UUID(), b = UUID()
+        let clipboard = GraphClipboard(nodes: [
+            GraphNode(id: a, text: "A", parentID: b),
+            GraphNode(id: b, text: "B", parentID: a),
+            GraphNode(id: b, text: "B again", parentID: a)
+        ])
+        let pasted = clipboard.instantiated(offsetBy: 0, 0)
+        XCTAssertEqual(pasted.nodes.count, 2)
+        let graph = Document(title: "Route", kind: .graph, nodes: pasted.nodes)
+        XCTAssertEqual(graph.rootNodes.count, 1)                   // one of the two was cut loose
+        XCTAssertEqual(graph.nodeEntries.count, 2)                 // and the other hangs off it
+    }
+
+    @MainActor
+    func testPastingIntoAnotherGraphPutsTheCopyWhereAsked() {
+        let name = "GraphPasteTests-\(UUID().uuidString)"
+        let store = DocumentStore(directoryName: name)
+        defer { removeStore(named: name) }
+
+        let source = store.createDocument(title: "Route", kind: .graph)
+        let camp = store.addRootNode(in: source.id, text: "Camp")!
+        let wood = store.addChildNode(to: camp.id, in: source.id, text: "Firewood")!
+        let target = store.createDocument(title: "Plan", kind: .graph)
+        let clipboard = GraphClipboard(copying: [camp.id, wood.id],
+                                       from: store.document(with: source.id)!)!
+
+        let map = store.pasteNodes(clipboard, in: target.id, at: GraphPoint(x: 1000, y: 500))
+        let pasted = store.document(with: target.id)!
+
+        XCTAssertEqual(pasted.nodes.count, 2)
+        let pastedCamp = pasted.node(with: map[camp.id]!)!
+        let pastedWood = pasted.node(with: map[wood.id]!)!
+        XCTAssertEqual(pastedWood.parentID, pastedCamp.id)
+        XCTAssertEqual(pastedWood.text, "Firewood")
+        // The middle of what was copied is where it was asked to go.
+        XCTAssertEqual((pastedCamp.position.x + pastedWood.position.x) / 2, 1000, accuracy: 0.001)
+        XCTAssertEqual(pastedCamp.position.y, 500, accuracy: 0.001)
+        // And the graph it came out of is untouched.
+        XCTAssertEqual(store.document(with: source.id)?.nodes.count, 2)
+    }
+
+    /// Pasted onto cards already there, the copy slides down the page until it's clear of them.
+    @MainActor
+    func testAPasteSlidesClearOfWhatIsAlreadyThere() {
+        let name = "GraphPasteTests-\(UUID().uuidString)"
+        let store = DocumentStore(directoryName: name)
+        defer { removeStore(named: name) }
+
+        let graph = store.createDocument(title: "Route", kind: .graph)
+        let camp = store.addRootNode(in: graph.id, text: "Camp")!
+        let clipboard = GraphClipboard(copying: [camp.id], from: store.document(with: graph.id)!)!
+
+        let map = store.pasteNodes(clipboard, in: graph.id, at: camp.position)
+        let copy = store.document(with: graph.id)!.node(with: map[camp.id]!)!
+        XCTAssertEqual(copy.position.x, camp.position.x, accuracy: 0.001)
+        XCTAssertEqual(copy.position.y, camp.position.y + DocumentStore.standardRowStep,
+                       accuracy: 0.001)
+    }
+
+    /// Paste as Child: the copied branch hangs off the card, beside it, with its shape intact.
+    @MainActor
+    func testPastingAsAChildHangsTheBranchOffTheCard() {
+        let name = "GraphPasteTests-\(UUID().uuidString)"
+        let store = DocumentStore(directoryName: name)
+        defer { removeStore(named: name) }
+
+        let source = store.createDocument(title: "Route", kind: .graph)
+        let camp = store.addRootNode(in: source.id, text: "Camp")!
+        let wood = store.addChildNode(to: camp.id, in: source.id, text: "Firewood")!
+        let clipboard = GraphClipboard(copying: [camp.id, wood.id],
+                                       from: store.document(with: source.id)!)!
+        let target = store.createDocument(title: "Plan", kind: .graph)
+        let trip = store.addRootNode(in: target.id, text: "Trip")!
+
+        let map = store.pasteNodes(clipboard, in: target.id, under: trip.id)
+        let document = store.document(with: target.id)!
+        let pastedCamp = document.node(with: map[camp.id]!)!
+        let pastedWood = document.node(with: map[wood.id]!)!
+
+        XCTAssertEqual(pastedCamp.parentID, trip.id)
+        XCTAssertEqual(pastedWood.parentID, pastedCamp.id)
+        XCTAssertEqual(pastedCamp.position.x, trip.position.x + DocumentStore.childColumnOffset,
+                       accuracy: 0.001)
+        XCTAssertEqual(pastedWood.position.x - pastedCamp.position.x,
+                       wood.position.x - camp.position.x, accuracy: 0.001)
+    }
+
+    // MARK: Turning a branch (Rotate Clockwise / Anticlockwise)
+
+    func testAQuarterTurnClockwiseTakesRightToDown() {
+        let pivot = GraphPoint(x: 10, y: 10)
+        XCTAssertEqual(DocumentStore.quarterTurn(GraphPoint(x: 11, y: 10), about: pivot, clockwise: true),
+                       GraphPoint(x: 10, y: 11))
+        XCTAssertEqual(DocumentStore.quarterTurn(GraphPoint(x: 11, y: 10), about: pivot, clockwise: false),
+                       GraphPoint(x: 10, y: 9))
+    }
+
+    /// Camp, with Firewood and Water in a column to its right, each with one card of its own —
+    /// tidied, so the layout is the one a tidy settles on.
+    @MainActor
+    private func turnableGraph(in store: DocumentStore)
+        -> (graph: UUID, root: UUID, first: UUID, second: UUID, grandchild: UUID) {
+        let graph = store.createDocument(title: "Route", kind: .graph)
+        let root = store.addRootNode(in: graph.id, text: "Camp")!
+        let first = store.addChildNode(to: root.id, in: graph.id, text: "Firewood")!
+        let second = store.addChildNode(to: root.id, in: graph.id, text: "Water")!
+        let grandchild = store.addChildNode(to: first.id, in: graph.id, text: "By the log")!
+        _ = store.addChildNode(to: second.id, in: graph.id, text: "The creek")!
+        store.tidyGraph(in: graph.id)
+        return (graph.id, root.id, first.id, second.id, grandchild.id)
+    }
+
+    @MainActor
+    func testRotatingClockwiseTurnsARightwardBranchDownward() {
+        let name = "GraphRotateTests-\(UUID().uuidString)"
+        let store = DocumentStore(directoryName: name)
+        defer { removeStore(named: name) }
+        let g = turnableGraph(in: store)
+        let rootBefore = store.document(with: g.graph)!.node(with: g.root)!.position
+
+        store.rotateBranch(of: g.root, clockwise: true, in: g.graph)
+        let document = store.document(with: g.graph)!
+        let root = document.node(with: g.root)!
+        let first = document.node(with: g.first)!
+        let second = document.node(with: g.second)!
+
+        XCTAssertEqual(root.position, rootBefore, "the pivot stays where it is")
+        XCTAssertEqual(document.branchAxis(of: g.root), .down)
+        XCTAssertEqual(document.branchAxis(of: g.first), .down, "the branches within turn too")
+        // Tidied as a row under the pivot: level, centred, a card's width of air apart…
+        XCTAssertEqual(first.position.y, second.position.y, accuracy: 0.001)
+        XCTAssertEqual(first.position.y, root.position.y + 28 + 30 + 28, accuracy: 0.001)
+        XCTAssertEqual((first.position.x + second.position.x) / 2, root.position.x, accuracy: 0.001)
+        XCTAssertEqual(abs(first.position.x - second.position.x), 180 + 150, accuracy: 0.001)
+        // …and turned, not re-ordered: the top of the column swings round to the right.
+        XCTAssertGreaterThan(first.position.x, second.position.x)
+        XCTAssertGreaterThan(document.node(with: g.grandchild)!.position.y, first.position.y)
+    }
+
+    @MainActor
+    func testATurnAndItsOppositeComeBackToWhereTheyStarted() {
+        let name = "GraphRotateTests-\(UUID().uuidString)"
+        let store = DocumentStore(directoryName: name)
+        defer { removeStore(named: name) }
+        let g = turnableGraph(in: store)
+        let before = store.document(with: g.graph)!.nodes
+
+        store.rotateBranch(of: g.root, clockwise: true, in: g.graph)
+        store.rotateBranch(of: g.root, clockwise: false, in: g.graph)
+        assertSamePositions(store.document(with: g.graph)!.nodes, before)
+
+        for _ in 0..<4 { store.rotateBranch(of: g.root, clockwise: true, in: g.graph) }
+        assertSamePositions(store.document(with: g.graph)!.nodes, before)
+    }
+
+    /// Only what hangs off the card turns: its siblings and everything above stay put, and a card
+    /// with nothing under it has nothing to turn.
+    @MainActor
+    func testTurningABranchLeavesTheRestOfTheGraphAlone() {
+        let name = "GraphRotateTests-\(UUID().uuidString)"
+        let store = DocumentStore(directoryName: name)
+        defer { removeStore(named: name) }
+        let g = turnableGraph(in: store)
+        let before = store.document(with: g.graph)!
+
+        store.rotateBranch(of: g.grandchild, clockwise: true, in: g.graph)
+        assertSamePositions(store.document(with: g.graph)!.nodes, before.nodes)
+
+        store.rotateBranch(of: g.first, clockwise: false, in: g.graph)
+        let after = store.document(with: g.graph)!
+        XCTAssertEqual(after.node(with: g.first)?.position, before.node(with: g.first)?.position)
+        XCTAssertEqual(after.node(with: g.second)?.position, before.node(with: g.second)?.position)
+        XCTAssertEqual(after.branchAxis(of: g.first), .up)
+    }
+
+    private func assertSamePositions(_ nodes: [GraphNode], _ expected: [GraphNode],
+                                     file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertEqual(nodes.count, expected.count, file: file, line: line)
+        for node in expected {
+            guard let now = nodes.first(where: { $0.id == node.id }) else {
+                XCTFail("\(node.text) went missing", file: file, line: line)
+                continue
+            }
+            XCTAssertEqual(now.position.x, node.position.x, accuracy: 0.001, node.text, file: file, line: line)
+            XCTAssertEqual(now.position.y, node.position.y, accuracy: 0.001, node.text, file: file, line: line)
+        }
     }
 
     // MARK: Emoji cards

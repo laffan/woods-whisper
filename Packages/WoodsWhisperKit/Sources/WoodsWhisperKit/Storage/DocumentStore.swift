@@ -941,6 +941,141 @@ public final class DocumentStore: ObservableObject {
         return map
     }
 
+    // MARK: Pasting nodes (copied from this graph or another)
+
+    /// Put copied nodes down on a graph's canvas, the middle of them at `center` — **Paste Nodes**
+    /// and ⌘V with nothing picked out. Hands back which pasted node came from which copied one.
+    ///
+    /// Where they land is a place nothing else is: if `center` would put them on top of cards that
+    /// are already there, they're slid down the page a row at a time until they're clear (and put
+    /// at `center` after all if a dozen rows don't find anywhere). The ones they'd have covered
+    /// are what you were looking at.
+    @discardableResult
+    public func pasteNodes(_ clipboard: GraphClipboard, in documentID: UUID,
+                           at center: GraphPoint) -> [UUID: UUID] {
+        guard !clipboard.isEmpty, let docIdx = index(of: documentID),
+              documents[docIdx].isGraph else { return [:] }
+        let middle = clipboard.center
+        let pasted = clipboard.instantiated(offsetBy: center.x - middle.x, center.y - middle.y)
+        documents[docIdx].nodes.append(contentsOf: pasted.nodes)
+        documents[docIdx].groups.append(contentsOf: pasted.groups)
+
+        let arriving = Set(pasted.nodes.map(\.id))
+        let clear = (0...Self.placementAttempts)
+            .map { Double($0) * Self.standardRowStep }
+            .first { !collides(subtree: arriving, movedByX: 0, y: $0, at: docIdx) } ?? 0
+        if clear != 0 {
+            for idx in documents[docIdx].nodes.indices
+            where arriving.contains(documents[docIdx].nodes[idx].id) {
+                documents[docIdx].nodes[idx].position.y += clear
+            }
+        }
+        touch(docIdx)
+        return pasted.map
+    }
+
+    /// Paste copied nodes as children of `parentID` — a card's **Paste as Child**, and ⌘V with one
+    /// card picked out. Every root of what was copied hangs off that card, each with its branch,
+    /// and is put where a **drop** would put it (`attachNode`): out beside the card, below the
+    /// children already there, clear of anything else.
+    @discardableResult
+    public func pasteNodes(_ clipboard: GraphClipboard, in documentID: UUID,
+                           under parentID: UUID,
+                           heights: [UUID: Double] = [:],
+                           widths: [UUID: Double] = [:]) -> [UUID: UUID] {
+        guard !clipboard.isEmpty, let docIdx = index(of: documentID),
+              documents[docIdx].isGraph,
+              let parent = documents[docIdx].node(with: parentID) else { return [:] }
+        // Start them round the card they're joining; each root is then placed properly below.
+        let middle = clipboard.center
+        let pasted = clipboard.instantiated(offsetBy: parent.position.x - middle.x,
+                                            parent.position.y - middle.y)
+        documents[docIdx].nodes.append(contentsOf: pasted.nodes)
+        documents[docIdx].groups.append(contentsOf: pasted.groups)
+
+        // The pasted roots in the order the copy read — top to bottom, then across — so they
+        // arrive under the card in that order.
+        let roots = Document(title: "", kind: .graph, nodes: pasted.nodes).rootNodes
+        for root in roots {
+            attachNode(root.id, to: parentID, in: documentID, heights: heights, widths: widths)
+        }
+        touch(docIdx)
+        return pasted.map
+    }
+
+    // MARK: Turning a branch
+
+    /// Turn everything hanging off a node a quarter-turn round it — **Rotate Clockwise** and
+    /// **Rotate Anticlockwise**, from the menu a ⌃-click opens on a card — and tidy what turned.
+    ///
+    /// The node is the pivot and stays exactly where it is; every node below it swings round it,
+    /// branches within the branch included, so a mind map growing to the right grows downwards
+    /// after one turn clockwise, to the left after two, and upwards after three. It's a turn, not
+    /// a re-ordering: a column read top to bottom becomes a row read right to left, the way a
+    /// picture of it would if you turned the page.
+    ///
+    /// Then every row in the branch is tidied, which is what makes the turn usable: cards aren't
+    /// square, so a column's spacing turned on its side leaves a row of cards overlapping each
+    /// other. Each row's direction is read **after** the turn — which is how the tidy knows which
+    /// way it now runs (`Document.branchAxis(of:)`) — and before anything moves. The rows are done
+    /// **deepest first**, so by the time a row is spaced, the branches hanging off its cards have
+    /// already been drawn in and are measured at the size they'll keep.
+    ///
+    /// Nothing outside the branch moves. A branch that now reaches across its neighbours can be
+    /// given room with **Organize Children** on the node above it.
+    public func rotateBranch(of nodeID: UUID, clockwise: Bool, in documentID: UUID,
+                             heights: [UUID: Double] = [:], widths: [UUID: Double] = [:]) {
+        guard let docIdx = index(of: documentID),
+              let pivot = documents[docIdx].node(with: nodeID) else { return }
+
+        // Depth below the pivot, level by level — the pivot at 0.
+        var depths: [UUID: Int] = [nodeID: 0]
+        var level = [nodeID]
+        while !level.isEmpty {
+            var next: [UUID] = []
+            for id in level {
+                for child in documents[docIdx].nodes where child.parentID == id {
+                    guard depths[child.id] == nil else { continue }     // cycle guard
+                    depths[child.id] = (depths[id] ?? 0) + 1
+                    next.append(child.id)
+                }
+            }
+            level = next
+        }
+        guard depths.count > 1 else { return }            // nothing hangs off it to turn
+
+        for idx in documents[docIdx].nodes.indices {
+            let node = documents[docIdx].nodes[idx]
+            guard node.id != nodeID, depths[node.id] != nil else { continue }
+            documents[docIdx].nodes[idx].position =
+                Self.quarterTurn(node.position, about: pivot.position, clockwise: clockwise)
+        }
+
+        // Rows at the same depth hang off different cards and move nothing of each other's, so
+        // only the depth decides the order.
+        let parents = depths.keys
+            .filter { id in documents[docIdx].nodes.contains { $0.parentID == id } }
+            .sorted { depths[$0, default: 0] > depths[$1, default: 0] }
+        let axes = parents.reduce(into: [UUID: GraphBranchAxis]()) { axes, id in
+            axes[id] = documents[docIdx].branchAxis(of: id)
+        }
+        for id in parents {
+            tidyChildren(of: id, in: documentID, heights: heights, widths: widths, axis: axes[id])
+        }
+        touch(docIdx)
+    }
+
+    /// `point` a quarter-turn round `pivot`. The canvas's y runs *down* the screen, so clockwise —
+    /// as you see it — takes right to down, down to left: `(dx, dy)` becomes `(−dy, dx)`.
+    nonisolated static func quarterTurn(_ point: GraphPoint, about pivot: GraphPoint,
+                                        clockwise: Bool) -> GraphPoint {
+        let dx = point.x - pivot.x
+        let dy = point.y - pivot.y
+        return clockwise
+            ? GraphPoint(x: pivot.x - dy, y: pivot.y + dx)
+            : GraphPoint(x: pivot.x + dy, y: pivot.y - dx)
+    }
+
     /// Tidy the whole graph — every node that has children, from the roots down, which is what ⌘T
     /// does with nothing picked out.
     ///

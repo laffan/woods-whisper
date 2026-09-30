@@ -193,7 +193,8 @@ the rest of the app depends on.
   cards: **tap twice** to edit one in place — the row along the bottom of the open card opens with a
   **colour dot** and carries **Revise / Transform / Tidy Children**, and a red **trash** that
   deletes the node outright — or **long-press** for the actions a paragraph gets from a swipe (Edit,
-  Add Child, Revise, Transform, Isolate Branch, Delete) as a dropdown. **Return closes an open card**: a node is a
+  Add Child, Revise, Transform, Copy — **Copy Branch** for a card with a branch — Isolate Branch,
+  Delete, and **Paste as Child** when there are cards on the clipboard) as a dropdown. **Return closes an open card**: a node is a
   card rather than a page, so the key that ends a line ends the edit instead — exactly what **Done**
   does. **Shift + Return** puts a line break in for the times a card really does want two.
   **Drag** a node and its children
@@ -238,6 +239,14 @@ the rest of the app depends on.
   card and they're back. The rules are Markdown's for emphasis: both markers on one line, the words
   up against them (`== this ==` is just equals signs), and a marker that opens nothing stays as
   typed. The node list shows the highlight too.
+- **Quotations.** Start a line with **>** — `> like this`, as in Markdown — and the card draws it
+  as a quotation: set in from a bar down its left edge, in a quieter ink (the bar takes the card's
+  colour if it has one), with the **>** left out and back the moment you open the card. It goes line
+  by line, so a card can say something and then quote something; lines in a row that each open with
+  **>** are one quotation, a quoted empty line (`>` on its own) is a paragraph break inside it, and
+  **>>** (or `> >`) is a quotation inside a quotation, with a second bar. A line *without* the
+  marker ends the quotation — stricter than Markdown, which would let it run on — and a **>** with
+  nothing after it stays as typed. Copy leaves the markers out; the outline keeps them.
 - **Emoji cards.** A node that says **one emoji and nothing else** is drawn as that emoji, 60 points
   tall, on a **square card** of its own — a marker on the map rather than a strip of text. Type
   anything more into it (a second emoji, a word, a **#**) and it's an ordinary card again. A flag, a
@@ -265,12 +274,24 @@ the rest of the app depends on.
   nothing picked out tidies the branch rather than the hidden graph, a drop can only land on a card
   you can see, a ring only shows if everything in it does, and picking a hidden node from **List
   Nodes** brings the whole graph back first.
-- **Control-click a card** for a short menu of its own: **Detach** (out of the network — its parent
+- **Control-click a card** for a menu of its own: **Detach** (out of the network — its parent
   and children are joined up behind it, as a **⌘** drag does), **Detach with Children** (only the
   line to its parent is cut, so the card and its whole branch become a tree of their own, where they
-  stand), **Organize Children** (Tidy Children), **Copy** (its words as plain text, without a heading's **#** or a highlight's **==**)
-  and **Copy as Markdown** (the markup as typed — and for a card with a branch under it, the whole
-  branch as the same outline the graph exports, starting from that card).
+  stand), **Organize Children** (Tidy Children), **Rotate Clockwise** and **Rotate Anticlockwise**
+  (below), **Copy** (the card — to paste into any graph — and its words as plain text for anywhere
+  else, without a heading's **#**, a highlight's **==** or a quotation's **>**), **Copy Branch**
+  (the card and everything hanging off it), **Copy as Markdown** (text only: the markup as typed —
+  and for a card with a branch under it, the whole branch as the same outline the graph exports,
+  starting from that card) and **Paste as Child** (see *Copy and paste between graphs*).
+- **Turning a branch.** **Rotate Clockwise** swings everything hanging off a card a quarter-turn
+  round it, and tidies it: a branch growing to the right grows downwards, one growing downwards
+  grows to the left, and so on round; **Rotate Anticlockwise** goes the other way (right to up). The
+  card itself is the pivot and stays exactly where it is, and the whole branch turns — branches
+  within it included — so it's a turn rather than a re-ordering: a column read top to bottom comes
+  out as a row read right to left, the way it would if you turned the page, and turning it back
+  puts it back. Then each row in the branch is tidied in its new direction — cards aren't square, so
+  a column turned on its side needs re-spacing. Nothing outside the branch moves; if it now reaches
+  across its neighbours, **Organize Children** on the card above gives it room.
 - **Three keys and a toggle, around the minimap.** **⌘** and **⌥** stacked at the canvas's bottom
   left; **⇧** over **Auto Tidy** at the bottom right — all four there whether or not the minimap
   is, two to a side so neither stack stands taller than the map between them.
@@ -322,8 +343,10 @@ the rest of the app depends on.
 - **With a keyboard attached.** **Delete** removes the selected cards. **⌘←** and **⌘→** line them
   up by their left or right edges — the right-hand one isn't in the bar, since four buttons is
   already a row, but the keyboard has a side for each. **⌘T** tidies: the selected cards' children,
-  or, with nothing picked out, every row in the graph from the roots down. None of them fire while
-  you're typing into a node — the keys belong to the text then.
+  or, with nothing picked out, every row in the graph from the roots down. **⌘C** copies the
+  selected cards and **⌘V** pastes — onto the one card picked out, as its children, or in the middle
+  of the screen. None of them fire while you're typing into a node — the keys belong to the text
+  then.
 - **Groups.** Select a few nodes and tap **Group**: a dashed ring is drawn round them, and it
   follows them wherever they go. A sheet opens on the new ring — its **name**, its **colour**, and
   **Ungroup** — and tapping the name at a ring's corner opens the same one again. The **dot** beside
@@ -358,6 +381,22 @@ the rest of the app depends on.
   with your finger. The copy is unlinked from what it came out of, though links *inside* what you
   copied survive, so a cluster keeps its shape. It carries the words but not the recording behind
   them: the clip stays with the node that was spoken into.
+- **Copy and paste between graphs.** Cards travel from one graph to another — or to elsewhere in the
+  same one — on the ordinary clipboard. Copy a card (**Copy** in its ⌃-click menu), a card with its
+  whole branch (**Copy Branch**, in the ⌃-click menu and the long-press dropdown), or
+  whatever's picked out (**Copy** in the selection bar, or **⌘C**). Then in any graph: **⋯ → Paste
+  Nodes** (or **⌘V**) puts them down in the middle of the screen, sliding down clear of any cards
+  already there; **Paste as Child** on a card hangs them off that card, placed the way a drop places
+  a branch (with Auto Tidy lining the row up after) — and so do **Paste Nodes** and **⌘V** when
+  exactly one card is picked out. The top card of what arrived rings itself in amber for a moment,
+  and the canvas slides over to it if it landed off screen. What comes across
+  is what an **⌥** copy carries: the words, the links *inside* what you copied (a branch stays a
+  branch; what it hung from stays behind), each card's colour and width, and a group's ring when
+  every card in it came along — but not the recordings, which stay with the document they were
+  spoken into. The words go onto the clipboard too (one card's words, or the outline of several), so
+  pasting into another app, or into a document with **Import from Clipboard**, gives you the text.
+  It's the system clipboard, so a copy survives closing the app, and copying anything else replaces
+  it.
 - **Finding your way around a graph.** A **minimap** can sit along the bottom, the keys at its
   left and Auto Tidy at its right — **off to begin with**, since the canvas's whole point is that it
   runs to the edge and a map of a graph you can already see is a strip of screen spent on nothing;
@@ -432,6 +471,17 @@ the rest of the app depends on.
   File** exports a single `.wwdoc` file bundling the audio *and* the current edited transcriptions.
   Send it to another device (AirDrop, Files, Messages…) and open it there to rebuild the document —
   no network round-trip. Woods Whisper registers `.wwdoc` so it can both create and receive them.
+- **Link to a document from other apps.** Every document and graph has a link of its own —
+  `woodswhisper://document/…` — under **⋯ → Document Link**: **Copy Link** for the bare address,
+  **Copy Markdown Link** for `[Title](woodswhisper://document/…)` (for a notes app that reads
+  Markdown, such as Obsidian, where it reads as the document's name), or **Share Link…** for the
+  share sheet. Put it in a note, a reminder, a calendar event or a message to yourself, and tapping
+  it opens Woods Whisper on that document — both halves, for a joint document. The link is the
+  document's id, so renaming the document doesn't break it. It opens the document on the device
+  it's on: a link to something in the **Trash** offers **Restore and Open**, and a link to a
+  document this device doesn't have says so (to send the document itself, share it as a Woods
+  Whisper file). Whether a pasted link is tappable is up to the app it's pasted into — one that
+  only turns web addresses into links will show it as text.
 - **Share audio in.** Send an audio file to Woods Whisper from the iOS share sheet / "Open in…"; it's
   imported into the Inbox and transcribed like any other recording.
 - **Import text you already have.** Not everything starts as speech. The **⋯** menu — top right of a

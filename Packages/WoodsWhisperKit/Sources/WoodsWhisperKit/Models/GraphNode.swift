@@ -100,9 +100,13 @@ public struct GraphNode: Identifiable, Codable, Hashable, Sendable {
     /// typing anything else into it turns it back into an ordinary card.
     public var isEmojiOnly: Bool { GraphEmoji.isSingleEmoji(text) }
 
-    /// The words as plain text: what the card shows, without a heading's marker or the `==` round
-    /// a highlight. What **Copy** hands over.
-    public var plainText: String { GraphHighlight.stripped(displayText) }
+    /// The words as plain text: what the card shows, without a heading's marker, the `==` round a
+    /// highlight or the `>` in front of a quotation. What **Copy** hands over.
+    public var plainText: String { GraphHighlight.stripped(GraphQuote.stripped(displayText)) }
+
+    /// The card's words in the stretches it's drawn in — ordinary text and quotations
+    /// (`GraphQuote`) — with the heading's marker already off.
+    public var quoteBlocks: [GraphQuote.Block] { GraphQuote.blocks(in: displayText) }
 }
 
 /// Which way a parent's children hang off it — read from where they already sit, never decided.
