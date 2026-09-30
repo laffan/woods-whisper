@@ -192,9 +192,8 @@ the rest of the app depends on.
 - **Working with nodes.** Nodes are the same edit blocks as everywhere else, shrunk to
   cards: **tap twice** to edit one in place — the row along the bottom of the open card opens with a
   **colour dot** and carries **Revise / Transform / Tidy Children**, and a red **trash** that
-  deletes the node outright — or **long-press** for the actions a paragraph gets from a swipe (Edit,
-  Add Child, Revise, Transform, Copy — **Copy Branch** for a card with a branch — Isolate Branch,
-  Delete, and **Paste as Child** when there are cards on the clipboard) as a dropdown. **Return closes an open card**: a node is a
+  deletes the node outright — or **long-press** it (or **⌃-click** it, with a pointer) for the
+  card's menu, below. **Return closes an open card**: a node is a
   card rather than a page, so the key that ends a line ends the edit instead — exactly what **Done**
   does. **Shift + Return** puts a line break in for the times a card really does want two.
   **Drag** a node and its children
@@ -204,7 +203,7 @@ the rest of the app depends on.
   they're attached to: a pair side by side reads as a straight line, one sitting high or low as an S
   rather than a diagonal cut across the gap. Nodes stay
   exactly where you put them — nothing rearranges them behind your back, though **Tidy Children**
-  (in a node's edit bar, and in its long-press menu) will line a node's children up beside it on
+  (in a node's edit bar, and in its menu) will line a node's children up beside it on
   request, each with its own branch in tow, and **Auto Tidy** below will do it every time by itself.
   A card is never truncated: it's as tall as what was said into it, since a transcript cut off at
   six lines is a node you have to open to read. The **"+"** centred on a node's right edge — half in,
@@ -274,24 +273,34 @@ the rest of the app depends on.
   nothing picked out tidies the branch rather than the hidden graph, a drop can only land on a card
   you can see, a ring only shows if everything in it does, and picking a hidden node from **List
   Nodes** brings the whole graph back first.
-- **Control-click a card** for a menu of its own: **Detach** (out of the network — its parent
-  and children are joined up behind it, as a **⌘** drag does), **Detach with Children** (only the
-  line to its parent is cut, so the card and its whole branch become a tree of their own, where they
-  stand), **Organize Children** (Tidy Children), **Rotate Clockwise** and **Rotate Anticlockwise**
-  (below), **Copy** (the card — to paste into any graph — and its words as plain text for anywhere
-  else, without a heading's **#**, a highlight's **==** or a quotation's **>**), **Copy Branch**
-  (the card and everything hanging off it), **Copy as Markdown** (text only: the markup as typed —
-  and for a card with a branch under it, the whole branch as the same outline the graph exports,
-  starting from that card) and **Paste as Child** (see *Copy and paste between graphs*).
-- **Turning a branch.** **Rotate Clockwise** swings everything hanging off a card a quarter-turn
+- **The card's menu.** A **long press** on a card opens it, and so does a **⌃-click** — one menu,
+  whichever way you ask: **Edit**, **Add Child**, **Revise**, **Transform**, **Tidy Children**,
+  **Rotate ▸**, **Copy ▸**, **Paste as Child**, **Detach ▸**, **Isolate Branch** and **Delete**. A
+  row with a **▸** has more than one version, and tapping it opens them in place beneath it (tap it
+  again, or another one, to fold it away):
+  - **Rotate ▸ Clockwise / Anticlockwise** — see *Turning a branch*.
+  - **Copy ▸ Card** — the card, to paste into any graph, with its words as plain text for anywhere
+    else (without a heading's **#**, a highlight's **==** or a quotation's **>**); **Branch** — the
+    card and everything hanging off it; **As Markdown** — text only, the markup as typed, and for a
+    card with a branch under it the whole branch as the same outline the graph exports, starting
+    from that card. **Paste as Child** is its partner (see *Copy and paste between graphs*).
+  - **Detach ▸ Card Only** — out of the network, its parent and children joined up behind it, as a
+    **⌘** drag does; **With Children** — only the line to its parent is cut, so the card and its
+    whole branch become a tree of their own, where they stand.
+
+  What can't apply to this card right now is greyed rather than left out — Tidy Children and Rotate
+  with no children, Paste as Child with nothing copied — so the menu is the same shape every time
+  and a command is where it was last time. Where the menu is taller than the room it has (half of
+  a joint document on a phone), it scrolls.
+- **Turning a branch.** **Rotate ▸ Clockwise** swings everything hanging off a card a quarter-turn
   round it, and tidies it: a branch growing to the right grows downwards, one growing downwards
-  grows to the left, and so on round; **Rotate Anticlockwise** goes the other way (right to up). The
+  grows to the left, and so on round; **Anticlockwise** goes the other way (right to up). The
   card itself is the pivot and stays exactly where it is, and the whole branch turns — branches
   within it included — so it's a turn rather than a re-ordering: a column read top to bottom comes
   out as a row read right to left, the way it would if you turned the page, and turning it back
   puts it back. Then each row in the branch is tidied in its new direction — cards aren't square, so
   a column turned on its side needs re-spacing. Nothing outside the branch moves; if it now reaches
-  across its neighbours, **Organize Children** on the card above gives it room.
+  across its neighbours, **Tidy Children** on the card above gives it room.
 - **Three keys and a toggle, around the minimap.** **⌘** and **⌥** stacked at the canvas's bottom
   left; **⇧** over **Auto Tidy** at the bottom right — all four there whether or not the minimap
   is, two to a side so neither stack stands taller than the map between them.
@@ -382,8 +391,8 @@ the rest of the app depends on.
   copied survive, so a cluster keeps its shape. It carries the words but not the recording behind
   them: the clip stays with the node that was spoken into.
 - **Copy and paste between graphs.** Cards travel from one graph to another — or to elsewhere in the
-  same one — on the ordinary clipboard. Copy a card (**Copy** in its ⌃-click menu), a card with its
-  whole branch (**Copy Branch**, in the ⌃-click menu and the long-press dropdown), or
+  same one — on the ordinary clipboard. Copy a card (**Copy ▸ Card** in its menu), a card with its
+  whole branch (**Copy ▸ Branch**), or
   whatever's picked out (**Copy** in the selection bar, or **⌘C**). Then in any graph: **⋯ → Paste
   Nodes** (or **⌘V**) puts them down in the middle of the screen, sliding down clear of any cards
   already there; **Paste as Child** on a card hangs them off that card, placed the way a drop places

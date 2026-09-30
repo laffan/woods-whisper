@@ -250,7 +250,7 @@ extension Document {
     /// outline never carries an empty line with children dangling under it.
     public var outline: String { outlineText(of: rootNodes) }
 
-    /// One branch as Markdown — **Copy as Markdown**, from the menu a Control-click opens on a card.
+    /// One branch as Markdown — **Copy ▸ As Markdown**, in a card's menu.
     ///
     /// A node with nothing hanging off it is handed over as the words it holds, exactly as typed
     /// (`# heading`, `==highlight==` and all): a single thought pasted into a note should arrive as

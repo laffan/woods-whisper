@@ -1723,7 +1723,7 @@ final class WoodsWhisperKitTests: XCTestCase {
                        wood.position.x - camp.position.x, accuracy: 0.001)
     }
 
-    // MARK: Turning a branch (Rotate Clockwise / Anticlockwise)
+    // MARK: Turning a branch (Rotate ▸ Clockwise / Anticlockwise)
 
     func testAQuarterTurnClockwiseTakesRightToDown() {
         let pivot = GraphPoint(x: 10, y: 10)
@@ -1840,7 +1840,7 @@ final class WoodsWhisperKitTests: XCTestCase {
         }
     }
 
-    // MARK: Copy as Markdown
+    // MARK: Copy ▸ As Markdown
 
     func testABranchCopiesAsTheOutlineFromThatNode() {
         let root = graphNode("Trip")

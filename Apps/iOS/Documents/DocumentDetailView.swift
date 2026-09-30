@@ -4441,7 +4441,8 @@ struct GraphDocumentView: View {
     @State private var editingText = ""
     @State private var editingSelection = NSRange(location: 0, length: 0)
 
-    // The long-press dropdown, the transform picker, and the transforms running right now.
+    // The card's menu (a long press or a ⌃-click), the transform picker, and the transforms
+    // running right now.
     @State private var menuNodeID: UUID?
     @State private var transformTargetID: UUID?
     @State private var transformingNodeIDs: Set<UUID> = []
@@ -4486,8 +4487,9 @@ struct GraphDocumentView: View {
     /// back to the node when the finger (or the pointer) lets go — one edit, like a drag.
     @State private var resizing: NodeResize?
 
-    /// Which list `menuNodeID` opens: the long press's actions, or the Control-click menu.
-    @State private var menuKind: NodeMenuKind = .actions
+    /// The submenu open in the card's menu (Rotate, Copy or Detach), by its row's id — nil with
+    /// none open. One at a time, as in the system's own menus.
+    @State private var openSubmenuID: String?
 
     /// When a card last took a click for itself — ⌥ to isolate its branch, ⌃ to open its menu —
     /// so the canvas, which can see the same tap, doesn't also read it as "put everything away".
@@ -4798,7 +4800,7 @@ struct GraphDocumentView: View {
                         // pointer asks "what can I do with this one?".
                         if isControlClick {
                             nodeClickAt = Date()
-                            openMenu(for: node, kind: .context)
+                            openMenu(for: node)
                             return
                         }
                         toggleSelection(of: node)
@@ -6184,7 +6186,7 @@ struct GraphDocumentView: View {
         wwLog("Copied \(what) to clipboard", .general)
     }
 
-    /// **Copy Branch**: the card and everything hanging off it.
+    /// **Copy ▸ Branch**: the card and everything hanging off it.
     private func copyBranch(of node: GraphNode) {
         guard let document else { return }
         let branch = Set(document.subtree(of: node.id))
@@ -6251,7 +6253,7 @@ struct GraphDocumentView: View {
 
     // MARK: Turning a branch
 
-    /// **Rotate Clockwise** / **Rotate Anticlockwise**: everything hanging off this card swings a
+    /// **Rotate ▸ Clockwise** / **Anticlockwise**: everything hanging off this card swings a
     /// quarter-turn round it, and is tidied in its new direction (`DocumentStore.rotateBranch`).
     private func rotateBranch(of node: GraphNode, clockwise: Bool) {
         withAnimation(.snappy(duration: 0.3)) {
@@ -6409,12 +6411,12 @@ struct GraphDocumentView: View {
         }
     }
 
-    // MARK: The long-press dropdown, and the Control-click one
+    // MARK: A card's menu — a long press, or a ⌃-click
 
-    private func openMenu(for node: GraphNode, kind: NodeMenuKind = .actions) {
+    private func openMenu(for node: GraphNode) {
         finishEditing()
         haptic()
-        menuKind = kind
+        openSubmenuID = nil
         withAnimation(.snappy(duration: 0.2)) { menuNodeID = node.id }
     }
 
@@ -6429,107 +6431,43 @@ struct GraphDocumentView: View {
     private func clickNode(_ node: GraphNode) {
         if isControlClick {
             nodeClickAt = Date()
-            openMenu(for: node, kind: .context)
+            openMenu(for: node)
         } else if isOptionEngaged || keys.isOptionDown {
             nodeClickAt = Date()
             toggleIsolation(on: node)
         }
     }
 
-    private func menuItems(for node: GraphNode, in document: Document) -> [NodeMenuItem] {
-        switch menuKind {
-        case .actions: return actionItems(for: node, in: document)
-        case .context: return contextItems(for: node, in: document)
-        }
-    }
-
-    /// "Detach with Children": cut the one line between this card and its parent, and nothing else.
-    /// The card becomes a root with its whole branch still hanging off it — a tree of its own,
-    /// where it stands — where plain Detach takes the card out alone and joins its children up to
-    /// the parent it left.
-    private func detachBranch(_ node: GraphNode) {
-        guard model.documents.reparentNode(node.id, to: nil, in: documentID) else { return }
-        haptic(strong: true)
-        let size = document.map { $0.subtree(of: node.id).count } ?? 1
-        wwLog("Detached a graph branch of \(size) node\(size == 1 ? "" : "s")", .general)
-    }
-
-    /// What a ⌃-click on a card offers: take it out of the network — alone, or with its branch —
-    /// line its children up, turn its branch, copy it, or paste onto it.
+    /// A card's menu — the one list whether it's asked for by a long press or a ⌃-click, since
+    /// both are asking the same thing: what can I do with this one?
     ///
-    /// **Rotate Clockwise** and **Rotate Anticlockwise** swing everything hanging off the card a
-    /// quarter-turn round it — a branch growing to the right grows downwards after one turn
-    /// clockwise — and tidy it in its new direction.
+    /// The commands that come in more than one form sit behind a row of their own that opens in
+    /// place beneath it (`openSubmenuID`): **Rotate** (clockwise or anticlockwise), **Copy** (the
+    /// card, its branch, or as Markdown) and **Detach** (the card only, or with its children). Rows
+    /// that don't apply to this card right now are greyed rather than left out, so the menu is the
+    /// same shape every time it opens and a command is where it was last time.
     ///
-    /// **Copy** is this card, and its words as they read on the canvas (without a heading's `#`, a
-    /// highlight's `==` or a quotation's `>`) for anywhere that takes text. **Copy Branch** is the
-    /// card and everything under it, with the branch's outline as its text. Either pastes into any
-    /// graph as cards. **Copy as Markdown** is text only: the markup too — and, when the card has a
-    /// branch under it, the whole branch as the outline the graph exports, starting from this card.
-    /// **Paste as Child** hangs whatever cards were copied off this one.
-    private func contextItems(for node: GraphNode, in document: Document) -> [NodeMenuItem] {
-        let hasChildren = !document.children(of: node.id).isEmpty
-        let markdown = document.markdown(ofBranch: node.id)
-        return [
-            NodeMenuItem(title: "Detach", icon: "scissors",
-                         enabled: node.parentID != nil || hasChildren) {
-                menuNodeID = nil
-                unlink([node.id])
-            },
-            NodeMenuItem(title: "Detach with Children", icon: "arrow.triangle.branch",
-                         enabled: node.parentID != nil) {
-                menuNodeID = nil
-                detachBranch(node)
-            },
-            NodeMenuItem(title: "Organize Children", icon: "rectangle.3.group",
-                         enabled: hasChildren) {
-                menuNodeID = nil
-                tidyChildren(of: node)
-            },
-            NodeMenuItem(title: "Rotate Clockwise", icon: "rotate.right", enabled: hasChildren) {
-                menuNodeID = nil
-                rotateBranch(of: node, clockwise: true)
-            },
-            NodeMenuItem(title: "Rotate Anticlockwise", icon: "rotate.left", enabled: hasChildren) {
-                menuNodeID = nil
-                rotateBranch(of: node, clockwise: false)
-            },
-            NodeMenuItem(title: "Copy", icon: "doc.on.doc", enabled: node.hasText) {
-                menuNodeID = nil
-                copyNodes([node.id], what: "a graph node")
-            },
-            NodeMenuItem(title: "Copy Branch", icon: "square.on.square", enabled: hasChildren) {
-                menuNodeID = nil
-                copyBranch(of: node)
-            },
-            NodeMenuItem(title: "Copy as Markdown", icon: "doc.plaintext",
-                         enabled: !markdown.isEmpty) {
-                menuNodeID = nil
-                copyToPasteboard(markdown, what: hasChildren ? "a graph branch as Markdown"
-                                                             : "a graph node as Markdown")
-            },
-            NodeMenuItem(title: "Paste as Child", icon: "doc.on.clipboard", enabled: canPasteNodes) {
-                pasteNodes(under: node.id)
-            }
-        ]
-    }
-
-    private func copyToPasteboard(_ text: String, what: String) {
-        #if canImport(UIKit)
-        UIPasteboard.general.string = text
-        #endif
-        haptic()
-        wwLog("Copied \(what) to clipboard", .general)
-    }
-
-    /// The actions a paragraph gets from a swipe, as a list under the node they apply to — there's
-    /// no row to swipe on a canvas, so the long press opens them here instead.
+    /// **Rotate** swings everything hanging off the card a quarter-turn round it — a branch growing
+    /// to the right grows downwards after one turn clockwise — and tidies it in its new direction.
+    ///
+    /// **Copy ▸ Card** is this card, and its words as they read on the canvas (without a heading's
+    /// `#`, a highlight's `==` or a quotation's `>`) for anywhere that takes text. **Copy ▸ Branch**
+    /// is the card and everything under it, with the branch's outline as its text. Either pastes
+    /// into any graph as cards. **Copy ▸ As Markdown** is text only: the markup too — and, when the
+    /// card has a branch under it, the whole branch as the outline the graph exports, starting from
+    /// this card. **Paste as Child** hangs whatever cards were copied off this one.
+    ///
+    /// **Detach ▸ Card Only** takes the card out of the network, its parent and children joined up
+    /// behind it; **Detach ▸ With Children** cuts only the line to its parent, so the card and its
+    /// branch become a tree of their own.
     ///
     /// Isolating a branch is here as well as on ⌥-click: a finger with nothing to hold ⌥ down
     /// shouldn't have to find the key beside the minimap to reach it.
-    private func actionItems(for node: GraphNode, in document: Document) -> [NodeMenuItem] {
+    private func menuItems(for node: GraphNode, in document: Document) -> [NodeMenuItem] {
+        let hasChildren = !document.children(of: node.id).isEmpty
+        let markdown = document.markdown(ofBranch: node.id)
         let isOrigin = isolation?.rootID == node.id
-        var items: [NodeMenuItem] = [
+        let items: [NodeMenuItem] = [
             NodeMenuItem(title: "Edit", icon: "pencil") { startEditing(node) },
             NodeMenuItem(title: "Add Child", icon: "plus") { addChild(to: node) },
             NodeMenuItem(title: "Revise", icon: "mic.fill") {
@@ -6540,49 +6478,81 @@ struct GraphDocumentView: View {
                 menuNodeID = nil
                 transformTargetID = node.id
             },
+            NodeMenuItem(title: "Tidy Children", icon: "rectangle.3.group", enabled: hasChildren) {
+                menuNodeID = nil
+                tidyChildren(of: node)
+            },
+            NodeMenuItem(submenu: "Rotate", icon: "rotate.right", children: [
+                NodeMenuItem(title: "Clockwise", icon: "rotate.right", enabled: hasChildren) {
+                    menuNodeID = nil
+                    rotateBranch(of: node, clockwise: true)
+                },
+                NodeMenuItem(title: "Anticlockwise", icon: "rotate.left", enabled: hasChildren) {
+                    menuNodeID = nil
+                    rotateBranch(of: node, clockwise: false)
+                }
+            ]),
+            NodeMenuItem(submenu: "Copy", icon: "doc.on.doc", children: [
+                NodeMenuItem(title: "Card", icon: "doc.on.doc", enabled: node.hasText) {
+                    menuNodeID = nil
+                    copyNodes([node.id], what: "a graph node")
+                },
+                NodeMenuItem(title: "Branch", icon: "square.on.square", enabled: hasChildren) {
+                    menuNodeID = nil
+                    copyBranch(of: node)
+                },
+                NodeMenuItem(title: "As Markdown", icon: "doc.plaintext", enabled: !markdown.isEmpty) {
+                    menuNodeID = nil
+                    copyToPasteboard(markdown, what: hasChildren ? "a graph branch as Markdown"
+                                                                 : "a graph node as Markdown")
+                }
+            ]),
+            NodeMenuItem(title: "Paste as Child", icon: "doc.on.clipboard", enabled: canPasteNodes) {
+                pasteNodes(under: node.id)
+            },
+            NodeMenuItem(submenu: "Detach", icon: "scissors", children: [
+                NodeMenuItem(title: "Card Only", icon: "scissors",
+                             enabled: node.parentID != nil || hasChildren) {
+                    menuNodeID = nil
+                    unlink([node.id])
+                },
+                NodeMenuItem(title: "With Children", icon: "arrow.triangle.branch",
+                             enabled: node.parentID != nil) {
+                    menuNodeID = nil
+                    detachBranch(node)
+                }
+            ]),
+            // Last before Delete: it's about how you're looking at the graph, not about this card.
+            NodeMenuItem(title: isOrigin ? "Show All Nodes" : "Isolate Branch",
+                         icon: isOrigin ? "circle.dashed" : "scope") {
+                menuNodeID = nil
+                toggleIsolation(on: node)
+            },
             NodeMenuItem(title: "Delete", icon: "trash", isDestructive: true) {
                 menuNodeID = nil
                 model.documents.deleteNode(node.id, in: documentID)
             }
         ]
-        let hasChildren = !document.children(of: node.id).isEmpty
-        if hasChildren {
-            let tidy = NodeMenuItem(title: "Tidy Children", icon: "rectangle.3.group") {
-                menuNodeID = nil
-                tidyChildren(of: node)
-            }
-            items.insert(tidy, at: 2)
-        }
-        // Copying, for a finger with no ⌃ to click with: a card with a branch copies the branch —
-        // what a copy of it to put somewhere else usually means — and the selection bar's Copy is
-        // there for a card on its own. Paste appears only when there's something to paste.
-        let copy: NodeMenuItem
-        if hasChildren {
-            copy = NodeMenuItem(title: "Copy Branch", icon: "square.on.square") {
-                menuNodeID = nil
-                copyBranch(of: node)
-            }
-        } else {
-            copy = NodeMenuItem(title: "Copy", icon: "doc.on.doc") {
-                menuNodeID = nil
-                copyNodes([node.id], what: "a graph node")
-            }
-        }
-        items.insert(copy, at: items.count - 1)
-        if canPasteNodes {
-            let paste = NodeMenuItem(title: "Paste as Child", icon: "doc.on.clipboard") {
-                pasteNodes(under: node.id)
-            }
-            items.insert(paste, at: items.count - 1)
-        }
-        // Last before Delete: it's about how you're looking at the graph, not about this card.
-        let isolate = NodeMenuItem(title: isOrigin ? "Show All Nodes" : "Isolate Branch",
-                                   icon: isOrigin ? "circle.dashed" : "scope") {
-            menuNodeID = nil
-            toggleIsolation(on: node)
-        }
-        items.insert(isolate, at: items.count - 1)
         return items
+    }
+
+    /// "Detach ▸ With Children": cut the one line between this card and its parent, and nothing
+    /// else. The card becomes a root with its whole branch still hanging off it — a tree of its
+    /// own, where it stands — where Detach ▸ Card Only takes the card out alone and joins its
+    /// children up to the parent it left.
+    private func detachBranch(_ node: GraphNode) {
+        guard model.documents.reparentNode(node.id, to: nil, in: documentID) else { return }
+        haptic(strong: true)
+        let size = document.map { $0.subtree(of: node.id).count } ?? 1
+        wwLog("Detached a graph branch of \(size) node\(size == 1 ? "" : "s")", .general)
+    }
+
+    private func copyToPasteboard(_ text: String, what: String) {
+        #if canImport(UIKit)
+        UIPasteboard.general.string = text
+        #endif
+        haptic()
+        wwLog("Copied \(what) to clipboard", .general)
     }
 
     /// The two things worth doing to one node while ⌘ is engaged, floating just above its card:
@@ -6700,34 +6670,44 @@ struct GraphDocumentView: View {
                              chrome: EdgeInsets) -> some View {
         if let id = menuNodeID, let node = document.node(with: id) {
             let items = menuItems(for: node, in: document)
-            let height = CGFloat(items.count) * 44 + 8
-            let origin = menuOrigin(for: node, in: document, size: size, height: height,
-                                    chrome: chrome)
+            // Every row, and the open submenu's rows beneath the one that opened them.
+            let rows: [NodeMenuItem] = items.flatMap { item -> [NodeMenuItem] in
+                item.id == openSubmenuID ? [item] + item.children : [item]
+            }
+            // Rows, the hairlines between them, and the padding top and bottom.
+            let fullHeight = CGFloat(rows.count) * GraphCanvas.menuRowHeight
+                + CGFloat(max(rows.count - 1, 0)) + 8
+            // A phone-sized pane (half of a joint document) can be shorter than the menu; then it
+            // scrolls rather than running off the screen.
+            let room = max(size.height - chrome.top - chrome.bottom - 24,
+                           GraphCanvas.menuRowHeight * 4)
+            let scrolls = fullHeight > room
+            let origin = menuOrigin(for: node, in: document, size: size,
+                                    height: min(fullHeight, room), chrome: chrome)
             ZStack(alignment: .topLeading) {
                 Color.black.opacity(0.15)
                     .ignoresSafeArea()
                     .onTapGesture { withAnimation(.snappy(duration: 0.2)) { menuNodeID = nil } }
-                VStack(spacing: 0) {
-                    ForEach(items) { item in
-                        Button {
-                            withAnimation(.snappy(duration: 0.2)) { item.action() }
-                        } label: {
-                            Label(item.title, systemImage: item.icon)
-                                .font(.callout)
-                                .foregroundStyle(item.isDestructive ? WW.ember : WW.ink)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.horizontal, 16)
-                                .frame(height: 44)
-                                .contentShape(Rectangle())
+                Group {
+                    if scrolls {
+                        ScrollViewReader { proxy in
+                            ScrollView { menuList(rows) }
+                                .frame(height: room)
+                                // A submenu opened near the bottom is brought into view.
+                                .onChange(of: openSubmenuID) { _, open in
+                                    let submenu = items.first { $0.id == open }
+                                    guard let last = submenu?.children.last else { return }
+                                    withAnimation(.snappy(duration: 0.2)) {
+                                        proxy.scrollTo(last.id, anchor: .bottom)
+                                    }
+                                }
                         }
-                        .buttonStyle(.plain)
-                        .disabled(!item.enabled)
-                        .opacity(item.enabled ? 1 : 0.35)
-                        if item.id != items.last?.id { WWHairline().padding(.leading, 16) }
+                    } else {
+                        menuList(rows)
                     }
                 }
-                .padding(.vertical, 4)
                 .frame(width: GraphCanvas.menuWidth)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .background(WW.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .stroke(WW.hairline, lineWidth: 1))
@@ -6736,6 +6716,60 @@ struct GraphDocumentView: View {
             }
             .transition(.opacity)
         }
+    }
+
+    /// The menu's rows, top to bottom, with a hairline between each two.
+    private func menuList(_ rows: [NodeMenuItem]) -> some View {
+        VStack(spacing: 0) {
+            ForEach(rows) { row in
+                menuRow(row)
+                if row.id != rows.last?.id {
+                    WWHairline().padding(.leading, row.isNested ? GraphCanvas.menuNestedInset : 16)
+                }
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    /// One row. An action runs and (usually) closes the menu; a submenu's row opens its rows in
+    /// place beneath it, closing any other that was open, and its chevron turns down to say so.
+    /// A submenu's own rows sit in under it on a faint wash, so they read as belonging to it.
+    private func menuRow(_ item: NodeMenuItem) -> some View {
+        let isOpen = item.isSubmenu && openSubmenuID == item.id
+        let hint: String = !item.isSubmenu ? "" : (isOpen ? "Hides these options" : "Shows more options")
+        return Button {
+            withAnimation(.snappy(duration: 0.2)) {
+                if item.isSubmenu {
+                    openSubmenuID = isOpen ? nil : item.id
+                } else {
+                    item.action()
+                }
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Label(item.title, systemImage: item.icon)
+                    .font(.callout)
+                    .foregroundStyle(item.isDestructive ? WW.ember : WW.ink)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if item.isSubmenu {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(WW.inkTertiary)
+                        .rotationEffect(.degrees(isOpen ? 90 : 0))
+                }
+            }
+            .padding(.leading, item.isNested ? GraphCanvas.menuNestedInset : 16)
+            .padding(.trailing, 16)
+            .frame(height: GraphCanvas.menuRowHeight)
+            .background(item.isNested ? WW.ink.opacity(0.04) : Color.clear)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!item.enabled)
+        .opacity(item.enabled ? 1 : 0.35)
+        .accessibilityLabel(item.spokenTitle)
+        .accessibilityHint(hint)
     }
 
     /// Under the node it belongs to, nudged back onto the screen when that would hang it off an edge
@@ -8023,13 +8057,6 @@ struct GraphDocumentView: View {
         var hasMoved = false
     }
 
-    /// The two dropdowns a card has: the long press's list of actions, and the one a Control-click
-    /// opens (Detach, Organize Children, the two Rotates, the Copies and Paste as Child).
-    private enum NodeMenuKind {
-        case actions
-        case context
-    }
-
     /// What a drag on a card turned out to be, decided by what was held when it began.
     private enum NodeDragMode {
         /// The card and its branch travel, and a drop on another card re-parents them.
@@ -8050,23 +8077,56 @@ struct GraphDocumentView: View {
         var leavesGroups: Bool { self == .unlink || self == .leaveGroup }
     }
 
-    /// One row of the long-press dropdown.
+    /// One row of a card's menu: an action, or a **submenu** — a row that opens its own rows in
+    /// place beneath it, the way the system's menus do on a phone.
     private struct NodeMenuItem: Identifiable {
+        /// The title, or — for a submenu's row — its parent's title and its own, so "Copy ▸ Card"
+        /// and anything else called "Card" can't be taken for one another.
+        private(set) var id: String
         let title: String
         let icon: String
-        var isDestructive = false
-        var enabled = true
+        let isDestructive: Bool
+        let enabled: Bool
         let action: () -> Void
+        /// A submenu's rows; empty for an action.
+        let children: [NodeMenuItem]
+        /// Whether this is one of a submenu's rows, which sits in under the row that opened it.
+        private(set) var isNested = false
+        /// What VoiceOver reads: a submenu row says what it's under — "Rotate Clockwise", not
+        /// "Clockwise".
+        private(set) var spokenTitle: String
 
-        var id: String { title }
+        var isSubmenu: Bool { !children.isEmpty }
 
         init(title: String, icon: String, isDestructive: Bool = false, enabled: Bool = true,
              action: @escaping () -> Void) {
+            self.id = title
             self.title = title
             self.icon = icon
             self.isDestructive = isDestructive
             self.enabled = enabled
             self.action = action
+            self.children = []
+            self.spokenTitle = title
+        }
+
+        /// A submenu of `children`: live while any of them is, and greyed when none can do
+        /// anything for this card.
+        init(submenu title: String, icon: String, children: [NodeMenuItem]) {
+            self.id = title
+            self.title = title
+            self.icon = icon
+            self.isDestructive = false
+            self.enabled = children.contains(where: \.enabled)
+            self.action = {}
+            self.children = children.map { child in
+                var row = child
+                row.id = title + "/" + child.id
+                row.isNested = true
+                row.spokenTitle = title + " " + child.title
+                return row
+            }
+            self.spokenTitle = title
         }
     }
 }
@@ -8106,6 +8166,10 @@ enum GraphCanvas {
     static let quoteIndent: CGFloat = 12
     static let quoteBarWidth: CGFloat = 3
     static let menuWidth: CGFloat = 210
+    /// A row of a card's menu, and how far a submenu's rows are set in under the row that opened
+    /// them.
+    static let menuRowHeight: CGFloat = 44
+    static let menuNestedInset: CGFloat = 32
     static let gridSpacing: CGFloat = 44
     static let minimapHeight: CGFloat = 76
 

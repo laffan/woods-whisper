@@ -1005,8 +1005,8 @@ public final class DocumentStore: ObservableObject {
 
     // MARK: Turning a branch
 
-    /// Turn everything hanging off a node a quarter-turn round it — **Rotate Clockwise** and
-    /// **Rotate Anticlockwise**, from the menu a ⌃-click opens on a card — and tidy what turned.
+    /// Turn everything hanging off a node a quarter-turn round it — **Rotate ▸ Clockwise** and
+    /// **Anticlockwise**, in a card's menu — and tidy what turned.
     ///
     /// The node is the pivot and stays exactly where it is; every node below it swings round it,
     /// branches within the branch included, so a mind map growing to the right grows downwards
@@ -1022,7 +1022,7 @@ public final class DocumentStore: ObservableObject {
     /// already been drawn in and are measured at the size they'll keep.
     ///
     /// Nothing outside the branch moves. A branch that now reaches across its neighbours can be
-    /// given room with **Organize Children** on the node above it.
+    /// given room with **Tidy Children** on the node above it.
     public func rotateBranch(of nodeID: UUID, clockwise: Bool, in documentID: UUID,
                              heights: [UUID: Double] = [:], widths: [UUID: Double] = [:]) {
         guard let docIdx = index(of: documentID),

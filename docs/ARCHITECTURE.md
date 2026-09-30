@@ -339,7 +339,7 @@ transform — `scaleEffect(anchor: .topLeading)` then `offset` — so a canvas p
   Inserting a node on an edge is the same idea in miniature — the branch below slides out by a
   node's width and the new node takes the middle of the widened gap, so it has the room the "+" had.
   Both go through one rigid `translate(subtreeOf:)`, which is why nothing below ever gets scrambled.
-  **Turning a branch** (`rotateBranch(of:clockwise:in:)`, the ⌃-click menu's two Rotates) is the one
+  **Turning a branch** (`rotateBranch(of:clockwise:in:)`, a card's menu's Rotate ▸ Clockwise / Anticlockwise) is the one
   place a direction *is* decided, and it's decided by the user: every node below the card swings a
   quarter-turn round it (`quarterTurn` — clockwise on a y-down canvas takes `(dx, dy)` to
   `(−dy, dx)`), which turns every row's direction with it, and then each row in the branch is
@@ -440,6 +440,16 @@ own: the view overrides the standard edit actions `copy(_:)` and `paste(_:)` and
 `canPerformAction` from `canCopy` / `canPaste`, so they're the system's own Copy and Paste — the
 Edit menu included — and an open node's text view answers them for its text instead.
 
+**A card's menu.** A long press and a ⌃-click open the same list (`menuItems(for:in:)`), drawn by
+the canvas itself (`menuOverlay`) rather than as a SwiftUI `Menu` — it has to open from gestures
+the canvas already owns, under the card it's about. Commands with more than one version are
+**submenus**: a `NodeMenuItem` with `children`, whose row opens them in place beneath it
+(`openSubmenuID`, one at a time), the way the system's own menus do on a phone — a menu that flew
+out sideways would have nowhere to go on one. A submenu row is greyed only when every one of its
+rows is, and no row is ever left out, so the menu keeps its shape from card to card. When the rows
+need more height than the canvas has (half of a joint document), the list scrolls, and opening a
+submenu near the bottom scrolls its last row into view.
+
 **Copying and pasting nodes.** `GraphPasteboard` (in the app) writes and reads a `GraphClipboard` on
 the system pasteboard, so a copy reaches every graph and survives the app closing. Whether there's
 anything to paste is asked by *type* (`contains(pasteboardTypes:)`), which never raises the
@@ -462,7 +472,7 @@ cheaper than repainting every dot. What's left, if it's ever still not smooth, i
 card into its own view so SwiftUI can skip the ones a drag isn't touching.
 
 **A drag has to outrank the gestures it shares a card with.** A card carries a double tap (edit), a
-long press (the dropdown) and a drag. Gesture modifiers on one view are tried in the order they were
+long press (the card's menu) and a drag. Gesture modifiers on one view are tried in the order they were
 attached, and the drag was attached last — so the tap and the press each got first refusal and the
 drag couldn't begin until both had *failed*. Both fail on movement, and a tap's allowance for it is
 around ten points with nothing on `onTapGesture` to set it. So the card sat still for the first ten

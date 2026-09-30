@@ -1,6 +1,6 @@
 import Foundation
 
-/// Nodes on their way from one graph to another — what a card's **Copy** and **Copy Branch**, the
+/// Nodes on their way from one graph to another — what a card's **Copy ▸ Card** and **Branch**, the
 /// selection bar's **Copy** and ⌘C put on the pasteboard, and what **Paste Nodes**, a card's
 /// **Paste as Child** and ⌘V read back. Into another graph, or somewhere else in the same one.
 ///
