@@ -383,6 +383,38 @@ public final class DocumentStore: ObservableObject {
         touch(docIdx)
     }
 
+    /// **Continue Recording**: the recording's audio is now `newFileName` — what it held before
+    /// with the new clip joined on the end — and it goes back to being untranscribed, so the whole
+    /// of it is heard again from the start. That's the "as if you'd only paused" part: the next
+    /// transcription is a *first* one, so the Auto transform and the Inbox's first-word tag run on
+    /// it as they would on a fresh capture, and `sections` — where its words are in a document's
+    /// body — is where the new words will go.
+    ///
+    /// The old audio file is deleted, and a default name (date, length, size) is redrawn for the
+    /// new length; one you chose is kept.
+    public func continueRecording(_ recordingID: UUID, in documentID: UUID,
+                                  newFileName: String, duration: TimeInterval,
+                                  replacingSections sections: [UUID]) {
+        guard let docIdx = index(of: documentID),
+              let recIdx = documents[docIdx].recordings.firstIndex(where: { $0.id == recordingID })
+        else { return }
+        let old = documents[docIdx].recordings[recIdx]
+        if old.audioFileName != newFileName { removeAudio(old) }
+        var recording = old
+        recording.audioFileName = newFileName
+        recording.duration = duration
+        recording.transcript = nil
+        recording.status = .pending
+        recording.bodyDestination = sections.isEmpty ? nil : .replacingSections(sections)
+        if Recording.isDefaultName(old.name, createdAt: old.createdAt) {
+            recording.name = Recording.defaultName(
+                for: old.createdAt, duration: duration,
+                byteCount: Recording.fileSize(at: audioDirURL.appendingPathComponent(newFileName)))
+        }
+        documents[docIdx].recordings[recIdx] = recording
+        touch(docIdx)
+    }
+
     // MARK: Batch operations (selection mode)
 
     public func deleteRecordings(_ ids: Set<UUID>, fromDocument documentID: UUID) {
@@ -460,7 +492,7 @@ public final class DocumentStore: ObservableObject {
         for recording in moving {
             let text = recording.transcript?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             if !text.isEmpty {
-                paragraphs += Document.paragraphs(fromLinesOf: text)
+                paragraphs += Document.paragraphs(fromLinesOf: text, recordingID: recording.id)
             } else if recording.status != .done,
                       let recIdx = documents[dstIdx].recordings.firstIndex(where: { $0.id == recording.id }) {
                 documents[dstIdx].recordings[recIdx].bodyDestination = .append
@@ -518,8 +550,35 @@ public final class DocumentStore: ObservableObject {
         if replacements.isEmpty {
             documents[docIdx].paragraphs.remove(at: pIdx)
         } else {
-            documents[docIdx].paragraphs.replaceSubrange(pIdx...pIdx, with: replacements)
+            // A section edited (or transformed) in place is still the words of the recording it
+            // came from, so what replaces it remembers that — unless it's the words of a recording
+            // of its own (a Revise clip's).
+            let source = documents[docIdx].paragraphs[pIdx].recordingID
+            let carried = replacements.map { replacement -> Document.Paragraph in
+                var replacement = replacement
+                if replacement.recordingID == nil { replacement.recordingID = source }
+                return replacement
+            }
+            documents[docIdx].paragraphs.replaceSubrange(pIdx...pIdx, with: carried)
         }
+        touch(docIdx)
+    }
+
+    /// Replace a run of sections with `replacements`: they go where the first of `ids` (in body
+    /// order) stands, and the rest of `ids` are taken out. With none of `ids` left in the body, the
+    /// replacements go on the end — the words still belong in the document. What a continued
+    /// recording's re-transcription is filed through.
+    public func replaceParagraphs(_ ids: [UUID], in documentID: UUID,
+                                  with replacements: [Document.Paragraph]) {
+        guard let docIdx = index(of: documentID) else { return }
+        let doomed = Set(ids)
+        var body = documents[docIdx].paragraphs
+        let anchor = body.firstIndex { doomed.contains($0.id) }
+        body.removeAll { doomed.contains($0.id) }
+        // Removing the run can only shift the anchor if something before it was removed, and the
+        // anchor *is* the first one removed — so it still marks the spot.
+        body.insert(contentsOf: replacements, at: anchor.map { min($0, body.count) } ?? body.count)
+        documents[docIdx].paragraphs = body
         touch(docIdx)
     }
 
@@ -1377,16 +1436,18 @@ public final class DocumentStore: ObservableObject {
 
     /// Pack a document — its edited body, its recordings' metadata/transcripts, and every recording's
     /// audio — into a single `.wwdoc` file in a temporary directory, returning its URL for sharing.
+    /// Half of a joint document takes its other half along, so the pair arrives as a pair.
     public func exportArchive(for documentID: UUID) throws -> URL {
         guard let doc = document(with: documentID) else { throw DocumentArchiveError.documentNotFound }
+        let partner = jointPartnerID(of: documentID).flatMap { document(with: $0) }
 
         var audio: [String: Data] = [:]
-        for recording in doc.recordings where !recording.isTextOnly {
+        for recording in doc.recordings + (partner?.recordings ?? []) where !recording.isTextOnly {
             if let data = try? Data(contentsOf: audioURL(for: recording)) {
                 audio[recording.audioFileName] = data
             }
         }
-        let archive = DocumentArchive(document: doc, audio: audio)
+        let archive = DocumentArchive(document: doc, partner: partner, audio: audio)
         let payload = try archive.encoded()
 
         let dir = FileManager.default.temporaryDirectory
@@ -1397,46 +1458,161 @@ public final class DocumentStore: ObservableObject {
         return fileURL
     }
 
-    /// Unpack a `.wwdoc` file into a brand-new document. The imported copy is fully independent: it
-    /// gets a fresh document id and each recording's audio is rewritten to a fresh filename so it
-    /// never aliases (or gets deleted alongside) an existing document's audio — even on a round-trip
-    /// back to the device that exported it. Returns the newly inserted document.
-    @discardableResult
-    public func importArchive(from url: URL) throws -> Document {
+    /// Read a `.wwdoc` file without unpacking it, so the app can look at what's arriving — and ask
+    /// about a document of the same name — before anything changes. The bytes are read straight
+    /// away, while the file (AirDrop's copy, a Files URL) is still there to read.
+    public func readArchive(from url: URL) throws -> DocumentArchive {
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        return try DocumentArchive.decode(from: Data(contentsOf: url))
+    }
 
-        let data = try Data(contentsOf: url)
-        let archive = try DocumentArchive.decode(from: data)
+    /// The document on this device an incoming one would stand in for: the very same document (it
+    /// went out from here, or arrived here before), or failing that one with the same title — of
+    /// the same kind, since the two halves of a joint document share a title. Trash and the Inbox
+    /// are never candidates.
+    ///
+    /// This is what makes passing a document between a phone and an iPad a round trip rather than
+    /// a pile of copies: start it on one, send it, carry on on the other, send it back.
+    public func existingDocument(matching incoming: Document) -> Document? {
+        let candidates = documents.filter { $0.title != Self.inboxTitle }
+        if let same = candidates.first(where: { $0.id == incoming.id }) { return same }
+        let title = Self.comparableTitle(incoming.title)
+        return candidates.first {
+            $0.kind == incoming.kind && Self.comparableTitle($0.title) == title
+                // The half of a pair reached through the other isn't a document in its own
+                // right: the lead half is what a same-titled arrival replaces.
+                && !isJointFollower($0.id)
+        } ?? candidates.first {
+            $0.kind == incoming.kind && Self.comparableTitle($0.title) == title
+        }
+    }
 
-        var importedRecordings: [Recording] = []
-        for var recording in archive.document.recordings {
+    /// Titles compared the way a person reads them: case, accents and stray spaces aside.
+    private static func comparableTitle(_ title: String) -> String {
+        title.trimmingCharacters(in: .whitespacesAndNewlines)
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+    }
+
+    /// Unpack a `.wwdoc` file into a new document — the whole of the old one-step import, for
+    /// callers with nothing to ask about.
+    @discardableResult
+    public func importArchive(from url: URL) throws -> Document {
+        importArchive(try readArchive(from: url), replacing: nil)
+    }
+
+    /// Unpack an archive — as a new document, or in place of `existingID`.
+    ///
+    /// **New**: the document keeps the id it had on the device it came from, unless that id is
+    /// already taken here (a copy coming back to where it started, kept alongside the original),
+    /// in which case it gets a fresh one. Keeping the id is what lets the *next* trip recognise it,
+    /// and lets a `woodswhisper://document/…` link made on either device open it on both.
+    ///
+    /// **Replace**: everything the document *says* — title, body, nodes, groups, recordings — comes
+    /// from the archive, and the existing document's id stays, so links, the Watch's target list
+    /// and an open screen all carry on pointing at it. What's this device's own business stays too:
+    /// its pin, and its Auto transform choice (transforms are made per device). The replaced
+    /// recordings' audio is deleted.
+    ///
+    /// Either way, every recording's audio is written under a fresh file name, so an import never
+    /// aliases — or gets deleted alongside — audio that's already here. A joint document's other
+    /// half lands the same way: in place of the existing half's partner when there is one, new
+    /// otherwise, and the two are linked as they were.
+    @discardableResult
+    public func importArchive(_ archive: DocumentArchive, replacing existingID: UUID?) -> Document {
+        let replaced = existingID.flatMap { document(with: $0) }
+        let primaryID = replaced?.id ?? freshID(for: archive.document.id)
+        let primary = unpack(archive.document, as: primaryID, over: replaced, audio: archive.audio)
+        if let replaced, let idx = index(of: replaced.id) {
+            documents[idx] = primary
+        } else {
+            documents.insert(primary, at: 0)
+        }
+
+        if let partner = archive.partner, partner.isGraph != primary.isGraph {
+            // The half this pair already has here, when the document being replaced is half of
+            // one — so a pair sent back and forth stays one pair rather than growing a new half
+            // each time.
+            let existingPartner = replaced.flatMap { jointPartnerID(of: $0.id) }
+                .flatMap { document(with: $0) }
+            let partnerID = existingPartner?.id ?? freshID(for: partner.id)
+            let unpacked = unpack(partner, as: partnerID, over: existingPartner, audio: archive.audio)
+            if let existingPartner, let idx = index(of: existingPartner.id) {
+                documents[idx] = unpacked
+            } else {
+                documents.insert(unpacked, at: 0)
+            }
+            // The link goes back on the side it was on: the half the pair was made from.
+            if archive.document.joinedID == partner.id {
+                setJoin(from: primaryID, to: partnerID)
+            } else if partner.joinedID == archive.document.id {
+                setJoin(from: partnerID, to: primaryID)
+            } else {
+                setJoin(from: primaryID, to: partnerID)
+            }
+        }
+        dropImpossibleJoints()
+        persistDocuments()
+        return document(with: primaryID) ?? primary
+    }
+
+    /// One document out of an archive, ready to go into the list as `id`: its recordings' audio
+    /// written under fresh names, and — standing in for `existing` — that document's own pin,
+    /// Auto transform, creation date and joint link kept, its old audio deleted.
+    private func unpack(_ incoming: Document, as id: UUID, over existing: Document?,
+                        audio: [String: Data]) -> Document {
+        var recordings: [Recording] = []
+        for var recording in incoming.recordings {
             // A text-only entry has no file to rewrite — giving it a fresh audio name would turn it
             // into an audio recording whose clip is permanently missing.
             guard !recording.isTextOnly else {
-                importedRecordings.append(recording)
+                recordings.append(recording)
                 continue
             }
             let ext = (recording.audioFileName as NSString).pathExtension
             let newFileName = "\(UUID().uuidString).\(ext.isEmpty ? "m4a" : ext)"
-            if let bytes = archive.audio[recording.audioFileName] {
+            if let bytes = audio[recording.audioFileName] {
                 try? bytes.write(to: audioDirURL.appendingPathComponent(newFileName), options: .atomic)
             }
             recording.audioFileName = newFileName
-            importedRecordings.append(recording)
+            recordings.append(recording)
         }
+        existing?.recordings.forEach(removeAudio)
 
         // Kind and nodes ride along with the body, so a graph shared from another device opens as a
         // graph — laid out exactly as it was drawn there.
-        let imported = Document(title: archive.document.title,
-                                kind: archive.document.kind,
-                                paragraphs: archive.document.paragraphs,
-                                nodes: archive.document.nodes,
-                                groups: archive.document.groups,
-                                recordings: importedRecordings)
-        documents.insert(imported, at: 0)
-        persistDocuments()
-        return imported
+        return Document(id: id,
+                        title: incoming.title,
+                        createdAt: existing?.createdAt ?? incoming.createdAt,
+                        updatedAt: Date(),
+                        kind: incoming.kind,
+                        paragraphs: incoming.paragraphs,
+                        nodes: incoming.nodes,
+                        groups: incoming.groups,
+                        recordings: recordings,
+                        isPinned: existing?.isPinned ?? false,
+                        autoTransformPresetID: existing?.autoTransformPresetID,
+                        // A replaced half of a pair stays paired unless the archive brings a pair
+                        // of its own, which is linked afresh by the caller.
+                        joinedID: existing?.joinedID)
+    }
+
+    /// `id`, if nothing here — in the list or the trash — already answers to it; a fresh one if
+    /// something does.
+    private func freshID(for id: UUID) -> UUID {
+        let taken = documents.contains { $0.id == id } || trash.contains { $0.id == id }
+        return taken ? UUID() : id
+    }
+
+    /// Make `leadID` the half that points at `followerID`, clearing any link either of them had
+    /// to anything else.
+    private func setJoin(from leadID: UUID, to followerID: UUID) {
+        for idx in documents.indices where documents[idx].joinedID == leadID
+            || documents[idx].joinedID == followerID {
+            documents[idx].joinedID = nil
+        }
+        if let follower = index(of: followerID) { documents[follower].joinedID = nil }
+        if let lead = index(of: leadID) { documents[lead].joinedID = followerID }
     }
 
     /// Strip characters that are illegal (or awkward) in a file name so a document title can be used

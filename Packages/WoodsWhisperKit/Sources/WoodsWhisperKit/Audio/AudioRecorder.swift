@@ -110,9 +110,22 @@ public final class AudioRecorder: NSObject, ObservableObject {
     }
 
     /// Resume a paused recording, appending to the same file.
+    ///
+    /// The session is made active again first: a pause that ran on behind a locked screen may have
+    /// had it taken away (another app's audio, the system suspending the app), and a recorder asked
+    /// to record on an inactive session just answers `false`.
     public func resume() {
         guard let recorder, isRecording, isPaused else { return }
-        guard recorder.record() else { return }
+        do {
+            try AVAudioSession.sharedInstance().setActive(true)
+        } catch {
+            wwLog("Couldn't reactivate the audio session to continue: \(error.localizedDescription)",
+                  .error)
+        }
+        guard recorder.record() else {
+            wwLog("The recorder refused to continue — the recording is still paused", .error)
+            return
+        }
         startDate = Date()
         isPaused = false
         startLevelTimer()

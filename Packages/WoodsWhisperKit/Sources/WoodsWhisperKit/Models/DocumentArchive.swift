@@ -16,22 +16,33 @@ public struct DocumentArchive: Codable, Sendable {
     public static let contentType = "com.woodswhisper.document"
 
     /// Bumped if the archive layout changes so importers can migrate rather than fail.
-    public static let currentVersion = 1
+    ///
+    /// 2 — carries the other half of a joint document (`partner`). Version 1 archives simply have
+    /// none, and older builds reading a version 2 archive ignore it and import the one half.
+    public static let currentVersion = 2
 
     public var version: Int
 
     /// The document itself: title, edited paragraphs, and recording metadata (with transcripts).
     public var document: Document
 
+    /// The other half of a joint document, when the document shared is one: a document and a
+    /// graph are one subject held two ways, so the pair travels together and opens as a pair on the
+    /// other device. Its recordings' audio is in `audio` alongside the document's own (every audio
+    /// file name is a fresh UUID, so the two sets can't collide).
+    public var partner: Document?
+
     /// Raw audio bytes keyed by each recording's `audioFileName`, so the importer can rehydrate the
     /// audio files that the document's recordings point at.
     public var audio: [String: Data]
 
     public init(document: Document,
+                partner: Document? = nil,
                 audio: [String: Data],
                 version: Int = DocumentArchive.currentVersion) {
         self.version = version
         self.document = document
+        self.partner = partner
         self.audio = audio
     }
 

@@ -44,6 +44,19 @@ struct ContentView: View {
         } message: {
             Text(model.setupError ?? "")
         }
+        // A Woods Whisper file arrived carrying a document this device already has — sent back
+        // after being worked on elsewhere, or one of the same name. Replace it, or keep both.
+        .alert(importQuestionTitle,
+               // Every button settles the question itself, so dismissal has nothing left to do —
+               // and doing it here could clear the import before Replace or Keep Both runs.
+               isPresented: Binding(get: { model.pendingArchiveImport != nil }, set: { _ in }),
+               presenting: model.pendingArchiveImport) { _ in
+            Button("Replace", role: .destructive) { model.resolveArchiveImport(replace: true) }
+            Button("Keep Both") { model.resolveArchiveImport(replace: false) }
+            Button("Cancel", role: .cancel) { model.cancelArchiveImport() }
+        } message: { pending in
+            Text(importQuestionMessage(pending))
+        }
         // "New Recording" requested from outside the app (Control / Lock Screen / Action Button /
         // Siri / Shortcuts). Present the recorder straight to the Inbox, wherever we are.
         .sheet(isPresented: $launcher.pending) {
@@ -86,6 +99,25 @@ struct ContentView: View {
         .onAppear {
             if DocumentLauncher.shared.pendingDocumentID != nil { selectedTab = .documents }
         }
+    }
+
+    private var importQuestionTitle: String {
+        guard let pending = model.pendingArchiveImport else { return "" }
+        return "“\(pending.existingTitle)” is already here"
+    }
+
+    /// Which copy is newer is the thing worth knowing before replacing one with the other — the
+    /// usual case is the same document coming back from the other device with more in it.
+    private func importQuestionMessage(_ pending: AppModel.PendingArchiveImport) -> String {
+        func when(_ date: Date) -> String { date.formatted(date: .abbreviated, time: .shortened) }
+        let incoming = pending.incomingUpdatedAt
+        let local = pending.existingUpdatedAt
+        let newer = incoming > local ? " The one arriving is newer."
+            : incoming < local ? " The one here is newer." : ""
+        let pair = pending.archive.partner != nil ? " It's a joint document, so both halves come with it." : ""
+        return "The one arriving was last changed \(when(incoming)); the one here \(when(local))."
+            + newer + pair
+            + " Replace overwrites the one here with what arrived, recordings included. Keep Both adds it alongside."
     }
 }
 

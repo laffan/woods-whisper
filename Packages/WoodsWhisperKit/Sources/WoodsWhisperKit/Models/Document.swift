@@ -135,10 +135,51 @@ public struct Document: Identifiable, Codable, Hashable, Sendable {
         public let id: UUID
         public var text: String
 
-        public init(id: UUID = UUID(), text: String) {
+        /// The recording whose words this section came from, when it came from one — what a long
+        /// press's **Continue Recording** adds to. Survives editing the section in place (and
+        /// transforming it): it's still that recording's section, said differently. Nil for text
+        /// that was typed or imported, and for sections saved before sections remembered this —
+        /// `continuation(forParagraph:)` finds those by their words instead.
+        public var recordingID: UUID?
+
+        public init(id: UUID = UUID(), text: String, recordingID: UUID? = nil) {
             self.id = id
             self.text = text
+            self.recordingID = recordingID
         }
+    }
+
+    /// What **Continue Recording** on a section adds to: the recording it came from, and every
+    /// section that recording's words became (one transcript can be several, a line each), in body
+    /// order — the run the continued recording's new words will stand in for.
+    ///
+    /// A section that remembers its recording answers directly. One from before sections did is
+    /// matched by its words: the recording whose transcript contains them, along with the other
+    /// unattributed sections that transcript also contains. Nil when the section didn't come from
+    /// a recording that's still here with its audio — typed, imported, moved in from another
+    /// document, or rewritten past recognising.
+    public func continuation(forParagraph paragraphID: UUID) -> (recording: Recording, sections: [UUID])? {
+        guard let paragraph = paragraphs.first(where: { $0.id == paragraphID }) else { return nil }
+        let audible = recordings.filter { !$0.isTextOnly }
+        if let id = paragraph.recordingID {
+            guard let recording = audible.first(where: { $0.id == id }) else { return nil }
+            return (recording, paragraphs.filter { $0.recordingID == id }.map(\.id))
+        }
+        func squeezed(_ text: String) -> String {
+            text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+                .folding(options: [.caseInsensitive], locale: nil)
+        }
+        let words = squeezed(paragraph.text)
+        guard !words.isEmpty,
+              let recording = audible.first(where: { squeezed($0.transcript ?? "").contains(words) })
+        else { return nil }
+        let transcript = squeezed(recording.transcript ?? "")
+        let sections = paragraphs.filter { other in
+            other.id == paragraphID
+                || (other.recordingID == nil && !squeezed(other.text).isEmpty
+                    && transcript.contains(squeezed(other.text)))
+        }
+        return (recording, sections.map(\.id))
     }
 
     /// Split text you **wrote** — an in-place edit, an imported file, the clipboard — into
@@ -218,13 +259,16 @@ public struct Document: Identifiable, Codable, Hashable, Sendable {
     /// own. So here every line starts a paragraph of its own.
     ///
     /// Text you typed keeps the other rule — `paragraphs(from:)`, blank lines only.
-    public static func paragraphs(fromLinesOf text: String) -> [Paragraph] {
+    ///
+    /// `recordingID` is the recording the text is the words of, when it is — every section it makes
+    /// remembers it (`Paragraph.recordingID`).
+    public static func paragraphs(fromLinesOf text: String, recordingID: UUID? = nil) -> [Paragraph] {
         text
             .replacingOccurrences(of: "\r\n", with: "\n")
             .components(separatedBy: "\n")
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
-            .map { Paragraph(text: $0) }
+            .map { Paragraph(text: $0, recordingID: recordingID) }
     }
 
     // Custom decoding so documents saved by older builds (which stored `transformations` and no

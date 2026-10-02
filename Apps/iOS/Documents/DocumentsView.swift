@@ -23,6 +23,7 @@ struct DocumentsView: View {
     @State private var newDocumentKind: Document.Kind = .document
     @State private var showingRecorder = false
     @State private var shareItem: ShareItem?
+    @State private var documentFileShare: DocumentFileShareItem?
 
     // Hold-to-record from a row's "+": the recorder behind it, and which document is being spoken
     // into right now. One at a time — it's one finger on one button.
@@ -198,6 +199,9 @@ struct DocumentsView: View {
             .sheet(item: $shareItem) { item in
                 ActivityView(activityItems: [item.text])
             }
+            .sheet(item: $documentFileShare) { item in
+                ActivityView(activityItems: [item.url])
+            }
             .sheet(item: $editingDoc) { doc in
                 TextEditorSheet(title: doc.title, text: $editingText) {
                     model.documents.setParagraphs(Document.paragraphs(from: editingText), in: doc.id)
@@ -312,7 +316,8 @@ struct DocumentsView: View {
             .onTapGesture {
                 if selectionMode { toggle(doc.id) } else { open(doc.id) }
             }
-            .onLongPressGesture { enterSelection(with: doc.id) }
+            // Not `onLongPressGesture`: that takes the touch from the list's scroll and swipes.
+            .rowLongPress { enterSelection(with: doc.id) }
 
             if !selectionMode {
                 // The graph canvas's "+", on a list row: hold it and you're recording into this
@@ -349,10 +354,22 @@ struct DocumentsView: View {
                 // text to open, and writing one back would quietly bury the canvas.
                 Button("Copy") { copy(doc) }.tint(WW.inkTertiary)
                 Button("Share") { shareItem = ShareItem(text: doc.combinedText) }.tint(WW.violet)
+                // The whole document — audio, edits, and a joint document's other half — as one
+                // Woods Whisper file, for AirDrop to another phone or iPad. Opening it there offers
+                // to replace a document of the same name, so it can go back and forth.
+                Button("Send") { sendDocumentFile(doc) }.tint(WW.moss)
                 if !doc.isGraph {
                     Button("Edit") { startEdit(doc) }.tint(WW.slate)
                 }
             }
+        }
+    }
+
+    /// Pack the document as a `.wwdoc` and hand it to the share sheet, where AirDrop sends it to
+    /// another device. (The same file the document's own **⋯ → Share as Woods Whisper File** makes.)
+    private func sendDocumentFile(_ doc: Document) {
+        if let url = model.exportDocumentFile(doc.id) {
+            documentFileShare = DocumentFileShareItem(url: url)
         }
     }
 

@@ -73,7 +73,32 @@ public struct PauseRecordingIntent: LiveActivityIntent {
     }
 }
 
+/// Continue, for iOS 17. It can't actually restart the microphone from a locked screen — see
+/// `ContinueRecordingIntent`, which the Live Activity uses wherever it can.
 public struct ResumeRecordingIntent: LiveActivityIntent {
+    public static var title: LocalizedStringResource = "Continue Recording"
+    public static var description = IntentDescription("Continue a paused recording.")
+
+    public init() {}
+
+    @MainActor
+    public func perform() async throws -> some IntentResult {
+        RecordingRemote.shared.send(.resume)
+        return .result()
+    }
+}
+
+/// Continue, as an **audio recording** intent.
+///
+/// Pause and Save only ever stop the microphone. Continue has to *start* it again — and iOS won't
+/// let an app start capturing audio while it's in the background, which is exactly where it is
+/// behind a locked screen. The press reached the recorder, the recorder asked for the microphone,
+/// and the system quietly said no, so the paused counter just sat there. Declaring the intent an
+/// `AudioRecordingIntent` is how an app tells the system this button records audio; with the Live
+/// Activity already up (which that protocol requires, and which the recorder keeps up for as long
+/// as it runs), the system lets the capture start from the Lock Screen.
+@available(iOS 18.0, *)
+public struct ContinueRecordingIntent: AudioRecordingIntent, LiveActivityIntent {
     public static var title: LocalizedStringResource = "Continue Recording"
     public static var description = IntentDescription("Continue a paused recording.")
 

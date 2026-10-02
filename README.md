@@ -70,8 +70,23 @@ the rest of the app depends on.
 - **Inbox gestures.** **Tap** an entry to read the whole thing: the row opens out to every line of
   the transcript, and tapping again folds it back to a few. **Double-tap** to edit it — **in place**,
   where it sits (see *Editing in place* below). **Swipe left** for **Move** (into a document) and
-  **Delete**; **swipe right** for **Tag**, **Copy** and **Transform**. Long-press still enters batch
-  selection.
+  **Delete**; **swipe right** for **Tag**, **Copy** and **Transform**. **Long-press** for **Continue
+  Recording** (see below) or **Select**, which enters batch selection. (An entry that came in as
+  text has no recording to continue, so a hold on it goes straight to selecting.)
+- **Continue a recording.** Long-press an Inbox entry, or hold a document's section and let go
+  without dragging it, and choose **Continue Recording**. The recorder opens with its counter
+  carrying on from the recording's length — on the Lock Screen too — and what you say is **added to
+  the end of that recording's audio**: one longer recording, not a second clip beside it. On
+  **Save** the whole recording is transcribed again from the start and treated as a *new* capture,
+  as if you had only paused it: the **Auto transform** runs on it, an Inbox entry that has no tag yet
+  can file itself by its first word, and in a document the new text **replaces the section (or
+  sections) that recording's words had become**, in the same place. That re-processing replaces any
+  edits you'd made to that text since, which is what makes it the recording's own words again. A
+  section knows which recording it came from; one written before this existed is matched to its
+  recording by its words. A section with no recording behind it (typed, imported, moved in from
+  another document, or rewritten past recognising by a whole-document transform) offers reorder
+  only. If the new clip can't be joined on, it's kept as a recording of its own, after those
+  sections or in the Inbox, and you're told why.
 - **Tags.** An Inbox entry can be filed under a tag — **Question**, **Reminder**, **Fix** to start
   with, each in its own colour, and the list is yours to edit in **Settings → Inbox Tags** (tap a
   tag's swatch to change its colour; a new tag takes the first colour none of the others is wearing). Two ways in: swipe an entry right
@@ -117,9 +132,10 @@ the rest of the app depends on.
   gets a **dotted blue outline** — let go and the dragged text is **appended onto the end** of it,
   the two becoming one section. Keep holding over it for **two seconds** and a **bright blue caret**
   appears inside it, following your finger from gap to gap between its words; let go and the text
-  goes in exactly there. A hold released without moving is the long press it always was: reorder
-  mode. (The list holds still while a section is being carried, so a drop far down a long document
-  is a job for reorder mode.)
+  goes in exactly there. A hold released without moving offers **Continue Recording** (when the
+  section came from a recording) and **Reorder Sections**, which is reorder mode. (The list holds
+  still while a section is being carried, so a drop far down a long document is a job for reorder
+  mode.)
 - **A line break makes a section.** Text the app itself produced — a transcript, a transform's
   answer — becomes **one paragraph per line** when it lands in a document body. So an Inbox entry a
   transform broke into lines (a list, a set of points) arrives as the sections it reads as, each with
@@ -476,10 +492,18 @@ the rest of the app depends on.
   splices the text in at the cursor — the clip is saved with the document's other recordings.
 - **Find & replace.** The whole-document editor has a find/replace bar at the bottom (the magnifying
   glass in the editor's toolbar) — search, step through matches, and Replace / Replace All.
-- **Share a whole document as a file.** From a document's overflow menu, **Share as Woods Whisper
-  File** exports a single `.wwdoc` file bundling the audio *and* the current edited transcriptions.
-  Send it to another device (AirDrop, Files, Messages…) and open it there to rebuild the document —
-  no network round-trip. Woods Whisper registers `.wwdoc` so it can both create and receive them.
+- **Send a document to another device, and back.** Swipe a document right and tap **Send**, or use
+  **Share as Woods Whisper File** in the document's **⋯** menu. Either makes a single `.wwdoc` file
+  holding the audio *and* the current edited text, and the share sheet sends it by **AirDrop** (or
+  Files, Messages…). No network round trip. A **joint document** travels as a pair. Open it on the
+  other device and it opens straight into the document. If that device already has it — because it
+  went out from there and is coming back, or because a document with the **same name** is already
+  there — you're asked first: **Replace** overwrites the one there with what arrived, recordings
+  included, keeping its place, its pin and its links; **Keep Both** adds the new one alongside. The
+  question says which copy was changed more recently. A shared document keeps its identity from
+  device to device, which is what makes "start on the phone, carry on on the iPad, send it back"
+  find the right document each time. Woods Whisper registers `.wwdoc` so it can both create and
+  receive them.
 - **Link to a document from other apps.** Every document and graph has a link of its own —
   `woodswhisper://document/…` — under **⋯ → Document Link**: **Copy Link** for the bare address,
   **Copy Markdown Link** for `[Title](woodswhisper://document/…)` (for a notes app that reads
@@ -514,8 +538,10 @@ the rest of the app depends on.
   Live Activity appears on the Lock Screen (and in the Dynamic Island) for as long as capture runs,
   carrying every control the in-app recorder has — **Pause / Continue**, **Save**, and **Discard** —
   plus the elapsed counter, which ticks itself and skips the paused stretches the same way. So you
-  can start a clip, pocket the phone, and still run it to its end without unlocking. It goes away
-  the moment the recording does. (Discard there doesn't ask twice — a locked screen is nowhere to
+  can start a clip, pocket the phone, and still run it to its end without unlocking. **Continue**
+  works from there too (iOS 18 and later): restarting the microphone from the background is
+  something iOS allows only to an action that declares it records audio, which the button now does.
+  It goes away the moment the recording does. (Discard there doesn't ask twice — a locked screen is nowhere to
   put a confirmation — so it's the quietest of the three buttons. The live gain meter is the one
   thing left in the app: it moves ten times a second, which the system rate-limits away.)
 - **Recent Documents widget.** A Home Screen widget (small / medium / large) with a **New

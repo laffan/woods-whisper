@@ -1,4 +1,7 @@
 import XCTest
+#if canImport(AVFoundation)
+import AVFoundation
+#endif
 @testable import WoodsWhisperKit
 
 final class WoodsWhisperKitTests: XCTestCase {
@@ -305,6 +308,262 @@ final class WoodsWhisperKitTests: XCTestCase {
                        "A big quick brown fox")
         XCTAssertEqual(Document.merging("Hey.", into: "there", at: 0), "Hey. there")
         XCTAssertEqual(Document.merging("end", into: "start", at: 99), "start end")
+    }
+
+    // MARK: Continuing a recording
+
+    func testAContinuationFindsEverySectionTheRecordingBecame() {
+        let rec = Recording(audioFileName: "a.m4a", origin: .phone, transcript: "First.\nSecond.",
+                            status: .done)
+        let typed = Document.Paragraph(text: "Typed by hand.")
+        let mine = Document.paragraphs(fromLinesOf: rec.transcript!, recordingID: rec.id)
+        let doc = Document(title: "D", paragraphs: [mine[0], typed, mine[1]], recordings: [rec])
+
+        let found = doc.continuation(forParagraph: mine[1].id)
+        XCTAssertEqual(found?.recording.id, rec.id)
+        XCTAssertEqual(found?.sections, [mine[0].id, mine[1].id])
+        XCTAssertNil(doc.continuation(forParagraph: typed.id))
+    }
+
+    func testAnOlderSectionIsMatchedToItsRecordingByItsWords() {
+        // Saved before sections remembered their recording: found by what they say.
+        let rec = Recording(audioFileName: "a.m4a", origin: .phone,
+                            transcript: "The trail forks here.\nTake the left one.", status: .done)
+        let first = Document.Paragraph(text: "The trail forks  here.")
+        let second = Document.Paragraph(text: "take the left one.")
+        let other = Document.Paragraph(text: "Something else entirely.")
+        let doc = Document(title: "D", paragraphs: [first, other, second], recordings: [rec])
+
+        let found = doc.continuation(forParagraph: second.id)
+        XCTAssertEqual(found?.recording.id, rec.id)
+        XCTAssertEqual(found?.sections, [first.id, second.id])
+        XCTAssertNil(doc.continuation(forParagraph: other.id))
+    }
+
+    func testTextWithNoAudioHasNothingToContinue() {
+        let entry = Recording.textEntry("Imported words.", origin: .phone)
+        let para = Document.Paragraph(text: "Imported words.", recordingID: entry.id)
+        let doc = Document(title: "D", paragraphs: [para], recordings: [entry])
+        XCTAssertNil(doc.continuation(forParagraph: para.id))
+    }
+
+    func testOlderSectionsDecodeWithoutARecording() throws {
+        let json = #"{"id":"\#(UUID().uuidString)","text":"Old."}"#
+        let para = try JSONDecoder().decode(Document.Paragraph.self, from: Data(json.utf8))
+        XCTAssertEqual(para.text, "Old.")
+        XCTAssertNil(para.recordingID)
+    }
+
+    @MainActor
+    func testReplacingSectionsPutsTheWordsWhereTheRunStarted() {
+        let name = "ReplaceRunTests-\(UUID().uuidString)"
+        let store = DocumentStore(directoryName: name)
+        defer { removeStore(named: name) }
+
+        let doc = store.createDocument(title: "Notes")
+        let a = Document.Paragraph(text: "A"), b = Document.Paragraph(text: "B")
+        let c = Document.Paragraph(text: "C"), d = Document.Paragraph(text: "D")
+        store.setParagraphs([a, b, c, d], in: doc.id)
+
+        store.replaceParagraphs([d.id, b.id], in: doc.id,
+                                with: [Document.Paragraph(text: "X"), Document.Paragraph(text: "Y")])
+        XCTAssertEqual(store.document(with: doc.id)?.paragraphs.map(\.text), ["A", "X", "Y", "C"])
+
+        // Nothing of the run left: the words still belong in the document, on the end.
+        store.replaceParagraphs([UUID()], in: doc.id, with: [Document.Paragraph(text: "Z")])
+        XCTAssertEqual(store.document(with: doc.id)?.paragraphs.map(\.text), ["A", "X", "Y", "C", "Z"])
+    }
+
+    @MainActor
+    func testEditingASectionKeepsTheRecordingItCameFrom() {
+        let name = "EditKeepsSourceTests-\(UUID().uuidString)"
+        let store = DocumentStore(directoryName: name)
+        defer { removeStore(named: name) }
+
+        let recordingID = UUID()
+        let doc = store.createDocument(title: "Notes")
+        let para = Document.Paragraph(text: "Spoken.", recordingID: recordingID)
+        store.setParagraphs([para], in: doc.id)
+
+        store.replaceParagraph(para.id, in: doc.id, withTextSplitInto: "Spoken, edited.\n\nAnd split.")
+        let after = store.document(with: doc.id)?.paragraphs ?? []
+        XCTAssertEqual(after.map(\.text), ["Spoken, edited.", "And split."])
+        XCTAssertEqual(after.map(\.recordingID), [recordingID, recordingID])
+    }
+
+    @MainActor
+    func testContinuingARecordingMakesTheNextTranscriptionAFirstOne() {
+        let name = "ContinueTests-\(UUID().uuidString)"
+        let store = DocumentStore(directoryName: name)
+        defer { removeStore(named: name) }
+
+        let doc = store.createDocument(title: "Notes")
+        let created = Date(timeIntervalSince1970: 1_800_000_000)
+        let rec = Recording(name: Recording.defaultName(for: created, duration: 5, byteCount: nil),
+                            createdAt: created, duration: 5, audioFileName: "old.m4a",
+                            origin: .phone, transcript: "Hello.", status: .done, tag: "Fix")
+        store.addRecording(rec, toDocument: doc.id)
+        let section = UUID()
+
+        store.continueRecording(rec.id, in: doc.id, newFileName: "new.m4a", duration: 12,
+                                replacingSections: [section])
+        let after = store.document(with: doc.id)?.recordings.first
+        XCTAssertEqual(after?.audioFileName, "new.m4a")
+        XCTAssertEqual(after?.duration, 12)
+        XCTAssertNil(after?.transcript)            // nil is what makes the Auto transform run again
+        XCTAssertEqual(after?.status, .pending)
+        XCTAssertEqual(after?.bodyDestination, .replacingSections([section]))
+        XCTAssertEqual(after?.tag, "Fix")
+        XCTAssertTrue(after?.name.contains("0:12") ?? false)   // a default name follows the length
+    }
+
+    func testADefaultNameIsToldApartFromAChosenOne() {
+        let created = Date(timeIntervalSince1970: 1_800_000_000)
+        XCTAssertTrue(Recording.isDefaultName(Recording.defaultName(for: created, duration: 3,
+                                                                    byteCount: 1_000),
+                                              createdAt: created))
+        XCTAssertFalse(Recording.isDefaultName("Trailhead notes", createdAt: created))
+    }
+
+    #if canImport(AVFoundation)
+    func testJoiningTwoClipsMakesOneAsLongAsBoth() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("JoinTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        func tone(_ seconds: Double, rate: Double, named name: String) throws -> URL {
+            let url = dir.appendingPathComponent(name)
+            let settings: [String: Any] = [AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+                                           AVSampleRateKey: rate, AVNumberOfChannelsKey: 1]
+            let file = try AVAudioFile(forWriting: url, settings: settings,
+                                       commonFormat: .pcmFormatFloat32, interleaved: false)
+            let frames = AVAudioFrameCount(seconds * rate)
+            let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: file.processingFormat,
+                                                        frameCapacity: frames))
+            buffer.frameLength = frames
+            for i in 0..<Int(frames) {
+                buffer.floatChannelData![0][i] = Float(sin(Double(i) * 2 * .pi * 440 / rate)) * 0.3
+            }
+            try file.write(from: buffer)
+            return url
+        }
+        let first = try tone(1.0, rate: 16_000, named: "a.m4a")
+        let second = try tone(0.5, rate: 44_100, named: "b.m4a")     // converted on the way in
+        let joined = dir.appendingPathComponent("joined.m4a")
+
+        let duration = try AudioJoiner.join([first, second], into: joined)
+        XCTAssertEqual(duration, 1.5, accuracy: 0.15)
+        let readBack = try AVAudioFile(forReading: joined)
+        XCTAssertEqual(readBack.processingFormat.sampleRate, 16_000)
+        XCTAssertEqual(Double(readBack.length) / 16_000, 1.5, accuracy: 0.15)
+    }
+    #endif
+
+    // MARK: Sharing between devices
+
+    @MainActor
+    func testASharedDocumentKeepsItsIDAndIsRecognisedOnTheWayBack() throws {
+        let phoneName = "PhoneTests-\(UUID().uuidString)"
+        let padName = "PadTests-\(UUID().uuidString)"
+        let phone = DocumentStore(directoryName: phoneName)
+        let pad = DocumentStore(directoryName: padName)
+        defer { removeStore(named: phoneName); removeStore(named: padName) }
+
+        let doc = phone.createDocument(title: "Field Notes")
+        phone.setParagraphs([Document.Paragraph(text: "Started on the phone.")], in: doc.id)
+        phone.setPinned(true, for: doc.id)
+
+        // Phone → iPad: new there, under the same id.
+        let toPad = try pad.readArchive(from: phone.exportArchive(for: doc.id))
+        XCTAssertNil(pad.existingDocument(matching: toPad.document))
+        let onPad = pad.importArchive(toPad, replacing: nil)
+        XCTAssertEqual(onPad.id, doc.id)
+        pad.setParagraphs([Document.Paragraph(text: "Started on the phone."),
+                           Document.Paragraph(text: "Carried on on the iPad.")], in: onPad.id)
+
+        // iPad → phone: recognised, and replaced in place — id and pin kept.
+        let back = try phone.readArchive(from: pad.exportArchive(for: onPad.id))
+        XCTAssertEqual(phone.existingDocument(matching: back.document)?.id, doc.id)
+        phone.importArchive(back, replacing: doc.id)
+        XCTAssertEqual(phone.documents.filter { $0.title == "Field Notes" }.count, 1)
+        let replaced = try XCTUnwrap(phone.document(with: doc.id))
+        XCTAssertEqual(replaced.paragraphs.map(\.text),
+                       ["Started on the phone.", "Carried on on the iPad."])
+        XCTAssertTrue(replaced.isPinned)
+    }
+
+    @MainActor
+    func testASameNamedDocumentIsOfferedForReplacementAndKeepBothMakesACopy() throws {
+        let name = "SameNameTests-\(UUID().uuidString)"
+        let store = DocumentStore(directoryName: name)
+        defer { removeStore(named: name) }
+
+        let mine = store.createDocument(title: "Trip Log")
+        let arriving = Document(title: "  trip log ", paragraphs: [Document.Paragraph(text: "Elsewhere.")])
+        XCTAssertEqual(store.existingDocument(matching: arriving)?.id, mine.id)
+        // A graph of the same name is a different thing (the other half of a joint document has
+        // the same title as the first).
+        XCTAssertNil(store.existingDocument(matching: Document(title: "Trip Log", kind: .graph)))
+
+        let copy = store.importArchive(DocumentArchive(document: arriving, audio: [:]), replacing: nil)
+        XCTAssertNotEqual(copy.id, mine.id)
+        XCTAssertEqual(store.documents.count, 2)
+
+        // Its own id is taken here, so a second "keep both" can't alias the first copy.
+        let again = store.importArchive(DocumentArchive(document: copy, audio: [:]), replacing: nil)
+        XCTAssertNotEqual(again.id, copy.id)
+    }
+
+    @MainActor
+    func testReplacingBringsTheRecordingsAndTheirAudio() throws {
+        let fromName = "AudioFromTests-\(UUID().uuidString)"
+        let toName = "AudioToTests-\(UUID().uuidString)"
+        let from = DocumentStore(directoryName: fromName)
+        let to = DocumentStore(directoryName: toName)
+        defer { removeStore(named: fromName); removeStore(named: toName) }
+
+        let source = from.createDocument(title: "Walk")
+        let clip = Recording(audioFileName: "clip.m4a", origin: .pad, transcript: "Hi.", status: .done)
+        from.addRecording(clip, audioData: Data([1, 2, 3]), toDocument: source.id)
+
+        let local = to.createDocument(title: "Walk")
+        let stale = Recording(audioFileName: "stale.m4a", origin: .phone)
+        to.addRecording(stale, audioData: Data([9]), toDocument: local.id)
+        let staleURL = to.audioURL(for: stale)
+
+        let archive = try to.readArchive(from: from.exportArchive(for: source.id))
+        to.importArchive(archive, replacing: local.id)
+        let after = try XCTUnwrap(to.document(with: local.id))
+        XCTAssertEqual(after.recordings.map(\.id), [clip.id])
+        let arrived = try XCTUnwrap(after.recordings.first)
+        XCTAssertNotEqual(arrived.audioFileName, "clip.m4a")            // a fresh file name
+        XCTAssertEqual(try Data(contentsOf: to.audioURL(for: arrived)), Data([1, 2, 3]))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: staleURL.path))
+    }
+
+    @MainActor
+    func testAJointDocumentTravelsAsAPair() throws {
+        let fromName = "JointFromTests-\(UUID().uuidString)"
+        let toName = "JointToTests-\(UUID().uuidString)"
+        let from = DocumentStore(directoryName: fromName)
+        let to = DocumentStore(directoryName: toName)
+        defer { removeStore(named: fromName); removeStore(named: toName) }
+
+        let prose = from.createDocument(title: "Plan")
+        let graph = try XCTUnwrap(from.createJointCounterpart(for: prose.id))
+        let archive = try to.readArchive(from: from.exportArchive(for: graph.id))
+        XCTAssertEqual(archive.partner?.id, prose.id)
+
+        let arrived = to.importArchive(archive, replacing: nil)
+        XCTAssertEqual(to.jointPartnerID(of: arrived.id), prose.id)
+        XCTAssertEqual(to.document(with: prose.id)?.joinedID, graph.id)    // the link where it was
+
+        // Sent again and replaced: still one pair, not a pair with an extra half.
+        let again = try to.readArchive(from: from.exportArchive(for: prose.id))
+        to.importArchive(again, replacing: prose.id)
+        XCTAssertEqual(to.documents.count, 2)
+        XCTAssertEqual(to.jointPartnerID(of: prose.id), graph.id)
     }
 
     @MainActor

@@ -57,6 +57,8 @@ struct DocumentDetailView: View {
     @State private var sectionFrames = SectionFrames()
     @State private var preciseTask: Task<Void, Never>?
     @GestureState private var sectionPressActive = false
+    /// A section held and let go in place, whose options (continue its recording, reorder) are up.
+    @State private var heldSectionID: UUID?
 
     // Search, pulled down from the top of the document: the body narrows to the sections that say
     // it, marked where they say it. Tapping one puts the whole document back and scrolls to it,
@@ -159,9 +161,19 @@ struct DocumentDetailView: View {
         }
         .sheet(item: $recorderTask) { task in
             RecordingSheet(title: task.sheetTitle,
-                           makeURL: { model.documents.newAudioURL().url }) { url, duration in
+                           makeURL: { model.documents.newAudioURL().url },
+                           elapsedOffset: task.elapsedOffset) { url, duration in
                 complete(task, url: url, duration: duration)
             }
+        }
+        // A section held and let go where it was: continue the recording it came from, or reorder.
+        .confirmationDialog("Section",
+                            isPresented: Binding(get: { heldSectionID != nil },
+                                                 set: { if !$0 { heldSectionID = nil } }),
+                            titleVisibility: .hidden,
+                            presenting: heldSectionID) { paragraphID in
+            Button("Continue Recording") { continueRecording(from: paragraphID) }
+            Button("Reorder Sections") { withAnimation { editMode = .active } }
         }
         .sheet(isPresented: $showingDocEditor) {
             TextEditorSheet(title: "Edit Document", text: $docEditorText) {
@@ -455,8 +467,10 @@ struct DocumentDetailView: View {
                 }
                 // Hold, then drag: the section lifts and follows the finger — onto another section
                 // to merge into it, or between two to move it there. Held and let go without
-                // moving, it's the long press it always was: reorder mode.
-                .gesture(sectionDragGesture(for: para))
+                // moving, it offers what a hold on a section means: continue its recording, or
+                // reorder the sections.
+                .rowHold(onPhase: { handleSectionHold($0, on: para) },
+                         fallback: sectionDragGesture(for: para))
                 .opacity(sectionDrag?.paragraphID == para.id ? 0.35 : 1)
                 // Swipe left → Delete / Revise / Move
                 .swipeActions(edge: .trailing, allowsFullSwipe: false) {
@@ -536,8 +550,29 @@ struct DocumentDetailView: View {
         return drag.target == .merge(id)
     }
 
-    /// The hold that lifts a section. A long press first, so a swipe (the row's actions) and a
-    /// scroll both get the touch the moment it moves; once it's held, the drag that follows is ours.
+    /// The hold that lifts a section, as `RowHoldRecognizer` reports it. A touch that moves before
+    /// the hold is reached never gets here — it's the list's scroll or the row's swipe — so
+    /// everything below is a finger that was held still on this section first.
+    private func handleSectionHold(_ phase: RowHoldPhase, on para: Document.Paragraph) {
+        switch phase {
+        case .began(let point):
+            guard sectionDrag == nil, !editMode.isEditing, editingParagraphID == nil else { return }
+            sectionDrag = SectionDrag(paragraphID: para.id, start: point)
+            WWHaptics.medium()
+            updateSectionDrag(to: point)
+        case .changed(let point):
+            updateSectionDrag(to: point)
+        case .ended(let point):
+            updateSectionDrag(to: point)
+            endSectionDrag(moved: sectionDrag?.hasMoved ?? false)
+        case .cancelled:
+            cancelSectionDrag()
+        }
+    }
+
+    /// The same hold in SwiftUI's own gestures, for iOS 17 (see `rowHold`). A long press first, so
+    /// a swipe (the row's actions) and a scroll both get the touch the moment it moves; once it's
+    /// held, the drag that follows is ours.
     private func sectionDragGesture(for para: Document.Paragraph) -> some Gesture {
         LongPressGesture(minimumDuration: 0.5)
             .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .global))
@@ -697,8 +732,30 @@ struct DocumentDetailView: View {
             }
             WWHaptics.light()
         case nil:
-            if !moved { withAnimation { editMode = .active } }
+            if !moved { sectionHeld(drag.paragraphID) }
         }
+    }
+
+    /// A section held and let go without going anywhere. A section that's the words of a
+    /// recording offers to **continue** that recording, or to reorder the sections — what a hold
+    /// always did. One that isn't (typed, imported, moved in) has only reorder to offer, so it goes
+    /// straight there.
+    private func sectionHeld(_ paragraphID: UUID) {
+        guard !editMode.isEditing, editingParagraphID == nil else { return }
+        if document?.continuation(forParagraph: paragraphID) != nil {
+            WWHaptics.light()
+            heldSectionID = paragraphID
+        } else {
+            withAnimation { editMode = .active }
+        }
+    }
+
+    /// **Continue Recording**: open the recorder on the end of the recording this section came
+    /// from, its counter carrying on from that recording's length.
+    private func continueRecording(from paragraphID: UUID) {
+        guard let found = document?.continuation(forParagraph: paragraphID) else { return }
+        recorderTask = .continueRecording(recordingID: found.recording.id, sections: found.sections,
+                                          elapsed: found.recording.duration)
     }
 
     private func cancelSectionDrag() {
@@ -890,7 +947,7 @@ struct DocumentDetailView: View {
             onPlay: { playback.toggle(recording, url: model.documents.audioURL(for: recording)) }
         )
         .wwRow()
-        .onLongPressGesture { withAnimation { editMode = .active } }
+        .rowLongPress { withAnimation { editMode = .active } }
         // Swipe left → Delete / Share the audio file. An entry that came in as text has no clip to
         // share (or to re-run speech-to-text over, below).
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
@@ -1296,6 +1353,9 @@ struct DocumentDetailView: View {
                 let newText = transcript.map { Self.splice(baseText, insert: $0, at: caret) } ?? baseText
                 model.documents.replaceParagraph(paragraphID, in: documentID, withTextSplitInto: newText)
             }
+        case .continueRecording(let recordingID, let sections, _):
+            model.continueRecording(recordingID, in: documentID, sections: sections,
+                                    appending: url, duration: duration)
         }
     }
 
@@ -1417,6 +1477,10 @@ struct DocumentDetailView: View {
         /// Record a clip, transcribe it, and splice the transcript into `baseText` at `caret`, then
         /// replace the paragraph — the editor's "Insert" action.
         case insertAtCaret(paragraphID: UUID, caret: Int, baseText: String)
+        /// Record onto the end of a recording and re-transcribe all of it, its words taking the
+        /// place of `sections` — a section's long press → **Continue Recording**. `elapsed` is how
+        /// long the recording already is, which the counter starts from.
+        case continueRecording(recordingID: UUID, sections: [UUID], elapsed: TimeInterval)
 
         var id: String {
             switch self {
@@ -1425,6 +1489,7 @@ struct DocumentDetailView: View {
             case .revise(let pid):        return "revise-\(pid)"
             case .rerecord(let rid):      return "rerecord-\(rid)"
             case .insertAtCaret(let pid, _, _): return "insert-caret-\(pid)"
+            case .continueRecording(let rid, _, _): return "continue-\(rid)"
             }
         }
 
@@ -1435,7 +1500,14 @@ struct DocumentDetailView: View {
             case .revise:          return "Revise Paragraph"
             case .rerecord:        return "Re-record"
             case .insertAtCaret:   return "Insert Recording"
+            case .continueRecording: return "Continue Recording"
             }
+        }
+
+        /// What the counter starts from: zero, except when continuing a recording.
+        var elapsedOffset: TimeInterval {
+            if case .continueRecording(_, _, let elapsed) = self { return elapsed }
+            return 0
         }
     }
 }
@@ -2625,6 +2697,11 @@ struct RecordingSheet: View {
     let title: String
     /// Supplies a fresh URL to record into (e.g. `store.newAudioURL().url`).
     let makeURL: () -> URL
+    /// Time already on the clock before this capture began — the length of the recording a
+    /// **Continue Recording** adds to, so the counter (here and on the Lock Screen) carries on from
+    /// where that recording stopped, as if it had only been paused. The clip handed to
+    /// `onComplete` is still just what was said this time.
+    var elapsedOffset: TimeInterval = 0
     /// Called with the finished file and its duration when the user taps stop.
     let onComplete: (URL, TimeInterval) -> Void
 
@@ -2651,7 +2728,7 @@ struct RecordingSheet: View {
                     livePanel(boxHeight: geo.size.height * 0.75)
                 }
 
-                Text(timeString(recorder.elapsed))
+                Text(timeString(recorder.elapsed + elapsedOffset))
                     .font(.system(size: 36, weight: .light, design: .rounded).monospacedDigit())
                     .foregroundStyle(recorder.isPaused ? WW.inkTertiary : WW.ink)
 
@@ -2759,7 +2836,8 @@ struct RecordingSheet: View {
             WWHaptics.recordingStarted()
             // Mirror the recorder onto the Lock Screen / Dynamic Island for as long as it runs, and
             // take the controls over there, so a press lands on this recording.
-            RecordingActivityController.shared.start(taskName: title)
+            RecordingActivityController.shared.start(taskName: title,
+                                                     startedAt: Date().addingTimeInterval(-elapsedOffset))
             RecordingRemote.shared.takeControl(handle)
             // Live transcription runs a second, in-memory capture alongside the recorder.
             if liveEnabled { live.start(using: model.transcription) }
@@ -2802,7 +2880,7 @@ struct RecordingSheet: View {
         if paused { recorder.pause() } else { recorder.resume() }
         live.setPaused(paused)
         RecordingActivityController.shared.update(isPaused: recorder.isPaused,
-                                                  elapsed: recorder.elapsed)
+                                                  elapsed: recorder.elapsed + elapsedOffset)
     }
 
     /// Act on a control pressed on the Lock Screen or in the Dynamic Island. Registered with
@@ -2858,6 +2936,11 @@ struct InboxView: View {
     // Long-press-to-select (the Inbox's own batch mode).
     @State private var selectionMode = false
     @State private var selected: Set<UUID> = []
+
+    // A long press offers Continue Recording beside Select: the entry whose options are up, and
+    // the one being recorded onto.
+    @State private var heldEntryID: UUID?
+    @State private var continuingEntry: ContinuingEntry?
 
     // Entries showing every line of their transcript rather than the first few — a single tap
     // opens one up, another closes it again. Editing is the *double* tap, so reading a long capture
@@ -3049,6 +3132,25 @@ struct InboxView: View {
                 model.addDeviceRecording(audioURL: url, duration: duration, toDocument: documentID)
             }
         }
+        // A held entry's options: add to what it says, or start selecting from it.
+        .confirmationDialog("Entry",
+                            isPresented: Binding(get: { heldEntryID != nil },
+                                                 set: { if !$0 { heldEntryID = nil } }),
+                            titleVisibility: .hidden,
+                            presenting: heldEntryID) { id in
+            Button("Continue Recording") { continueEntry(id) }
+            Button("Select") { enterSelection(with: id) }
+        }
+        // Continue Recording: the recorder on the end of the entry, its counter carrying on from
+        // the entry's length. Saved, the two are joined and the whole entry is heard again.
+        .sheet(item: $continuingEntry) { entry in
+            RecordingSheet(title: "Continue Recording",
+                           makeURL: { model.documents.newAudioURL().url },
+                           elapsedOffset: entry.elapsed) { url, duration in
+                model.continueRecording(entry.id, in: documentID, sections: [],
+                                        appending: url, duration: duration)
+            }
+        }
         // The open editor's Transform picker: runs against the text as it stands on screen.
         .confirmationDialog("Transform — \(AppSettings.shared.model.shortName)",
                             isPresented: $showingEditorTransform, titleVisibility: .visible) {
@@ -3128,7 +3230,7 @@ struct InboxView: View {
             onDoubleTapLabel: {
                 if selectionMode { toggle(recording.id) } else { startEditing(recording) }
             },
-            onLongPress: { enterSelection(with: recording.id) },
+            onLongPress: { entryHeld(recording) },
             onCopy: { copy(recording) },
             onRetranscribe: { Task { await model.transcribe(recordingID: recording.id, inDocument: documentID) } },
             moveTargets: documentTargets,
@@ -3655,6 +3757,26 @@ struct InboxView: View {
         return formatter.string(from: recording.createdAt)
     }
 
+    /// A long press on an entry. One with audio behind it offers to **continue** it — record more
+    /// onto the end, then have the whole of it transcribed (and Auto transformed) again, as if the
+    /// recording had only been paused — or to start selecting, which is what a hold always did.
+    /// Text that came in as text has no recording to add to, so it goes straight to selecting, as
+    /// does a hold while already selecting.
+    private func entryHeld(_ recording: Recording) {
+        guard !selectionMode, !recording.isTextOnly else {
+            enterSelection(with: recording.id)
+            return
+        }
+        WWHaptics.light()
+        heldEntryID = recording.id
+    }
+
+    private func continueEntry(_ id: UUID) {
+        guard let recording = recordings.first(where: { $0.id == id }) else { return }
+        finishEditing()
+        continuingEntry = ContinuingEntry(id: id, elapsed: recording.duration)
+    }
+
     private func enterSelection(with id: UUID) {
         guard !selectionMode else { return }
         finishEditing()          // batch actions and an open editor don't share the bottom bar
@@ -3702,6 +3824,12 @@ struct InboxView: View {
         #endif
         wwLog("Copied transcript of “\(recording.name)”", .general)
     }
+}
+
+/// An Inbox entry being continued: which, and how long it already is.
+private struct ContinuingEntry: Identifiable {
+    let id: UUID
+    let elapsed: TimeInterval
 }
 
 /// One Inbox row. No play control — the transcript is the point here, so it runs the full width of
@@ -3891,6 +4019,8 @@ private struct HoldableTagChip: View {
     let onRelease: () -> Void
 
     @GestureState private var isHeld = false
+    /// The same, for the UIKit hold, which reports its end rather than resetting a gesture state.
+    @State private var isHolding = false
 
     var body: some View {
         let recording = elapsed != nil
@@ -3910,9 +4040,9 @@ private struct HoldableTagChip: View {
         .padding(.vertical, 6)
         .background(isOn && !recording ? ink : ink.opacity(0.10), in: Capsule())
         .overlay(Capsule().stroke(isOn || recording ? ink : ink.opacity(0.45), lineWidth: 1))
-        .scaleEffect(isHeld ? 0.96 : 1)
+        .scaleEffect(isHeld || isHolding ? 0.96 : 1)
         .contentShape(Capsule())
-        .gesture(hold.exclusively(before: TapGesture().onEnded { onTap() }))
+        .modifier(ChipGestures(hold: hold, onTap: onTap, onHoldPhase: holdPhase))
         .onChange(of: isHeld) { _, held in
             if !held { onRelease() } else if canHold { onHold() }
         }
@@ -3921,6 +4051,7 @@ private struct HoldableTagChip: View {
         .accessibilityAddTraits(.isButton)
     }
 
+    /// The iOS 17 hold (see `rowHold`): SwiftUI's own, read off a `GestureState`.
     private var hold: some Gesture {
         LongPressGesture(minimumDuration: GraphCanvas.holdDuration)
             .onChanged { _ in WWHaptics.prepare() }   // a hold may be 0.4s away; warm the engine
@@ -3928,6 +4059,48 @@ private struct HoldableTagChip: View {
             .updating($isHeld) { value, state, _ in
                 if case .second(true, _) = value { state = true }
             }
+    }
+
+    /// The hold as `RowHoldRecognizer` reports it — which, unlike SwiftUI's, leaves the row of
+    /// chips free to scroll sideways. Every way a hold can end (lifted, or taken back by the
+    /// system) files the clip, the same as the `GestureState` reset does.
+    private func holdPhase(_ phase: RowHoldPhase) {
+        switch phase {
+        case .began:
+            isHolding = true
+            if canHold { onHold() }
+        case .changed:
+            break
+        case .ended, .cancelled:
+            guard isHolding else { return }
+            isHolding = false
+            onRelease()
+        }
+    }
+}
+
+/// A tag chip's tap and hold. On iOS 18 and later the hold is UIKit's (`rowHold`) and the tap a
+/// plain tap beside it; before that, SwiftUI's hold runs *exclusively before* the tap, as it always
+/// did.
+private struct ChipGestures<Hold: Gesture>: ViewModifier {
+    let hold: Hold
+    let onTap: () -> Void
+    let onHoldPhase: (RowHoldPhase) -> Void
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        #if canImport(UIKit)
+        if #available(iOS 18.0, *) {
+            content
+                .onTapGesture(perform: onTap)
+                .gesture(RowHoldRecognizer(minimumDuration: GraphCanvas.holdDuration,
+                                           onPhase: onHoldPhase))
+        } else {
+            content.gesture(hold.exclusively(before: TapGesture().onEnded { onTap() }))
+        }
+        #else
+        content.gesture(hold.exclusively(before: TapGesture().onEnded { onTap() }))
+        #endif
     }
 }
 
@@ -3962,7 +4135,102 @@ private struct LongPressUnless: ViewModifier {
 
     @ViewBuilder
     func body(content: Content) -> some View {
-        if disabled { content } else { content.onLongPressGesture(perform: action) }
+        if disabled { content } else { content.rowLongPress(perform: action) }
+    }
+}
+
+// MARK: - Holding a list row
+
+/// Where a hold on a list row has got to, in global coordinates — what the section drag measures
+/// everything in.
+enum RowHoldPhase {
+    /// Held long enough: the hold is ours from here.
+    case began(CGPoint)
+    /// The finger moved while holding.
+    case changed(CGPoint)
+    /// The finger lifted.
+    case ended(CGPoint)
+    /// The system took the touch back (a call, a sheet, the row scrolling away).
+    case cancelled
+}
+
+#if canImport(UIKit)
+/// A press-and-hold on a list row that leaves the list its scrolling and its swipes.
+///
+/// SwiftUI's own holds — `onLongPressGesture`, and a `LongPressGesture` sequenced into a drag —
+/// take the touch they're attached to from the moment it lands, when the app is built against the
+/// current SDKs. On a list row that locks out both the list's scroll and the row's swipe actions:
+/// an Inbox entry or a section taller than the screen can't be scrolled at all, and a swipe only
+/// gets through now and then. UIKit's long-press recognizer plays by UIKit's rules instead — it
+/// gives up the moment the finger travels further than `allowableMovement` before the hold is
+/// reached, so a touch that starts moving belongs to the list, and one held still belongs to the
+/// row. Once it has begun it keeps reporting the finger, so it doubles as "hold, then drag".
+@available(iOS 18.0, *)
+struct RowHoldRecognizer: UIGestureRecognizerRepresentable {
+    var minimumDuration: TimeInterval = 0.5
+    let onPhase: (RowHoldPhase) -> Void
+
+    func makeUIGestureRecognizer(context: Context) -> UILongPressGestureRecognizer {
+        let recognizer = UILongPressGestureRecognizer()
+        recognizer.minimumPressDuration = minimumDuration
+        return recognizer
+    }
+
+    func updateUIGestureRecognizer(_ recognizer: UILongPressGestureRecognizer, context: Context) {
+        recognizer.minimumPressDuration = minimumDuration
+    }
+
+    func handleUIGestureRecognizerAction(_ recognizer: UILongPressGestureRecognizer,
+                                         context: Context) {
+        let point = context.converter.location(in: .global)
+        switch recognizer.state {
+        case .began:              onPhase(.began(point))
+        case .changed:            onPhase(.changed(point))
+        case .ended:              onPhase(.ended(point))
+        case .cancelled, .failed: onPhase(.cancelled)
+        default:                  break
+        }
+    }
+}
+#endif
+
+extension View {
+    /// A long press on a list row that doesn't cost the list its scroll or the row its swipe
+    /// actions — see `RowHoldRecognizer`. Fires once the hold is reached, finger still down, as
+    /// `onLongPressGesture` does. (Before iOS 18 there's no UIKit bridge for a gesture, and SwiftUI's
+    /// own long press never had the problem there, so that's what it uses.)
+    @ViewBuilder
+    func rowLongPress(minimumDuration: TimeInterval = 0.5,
+                      perform action: @escaping () -> Void) -> some View {
+        #if canImport(UIKit)
+        if #available(iOS 18.0, *) {
+            self.gesture(RowHoldRecognizer(minimumDuration: minimumDuration) { phase in
+                if case .began = phase { action() }
+            })
+        } else {
+            self.onLongPressGesture(minimumDuration: minimumDuration, perform: action)
+        }
+        #else
+        self.onLongPressGesture(minimumDuration: minimumDuration, perform: action)
+        #endif
+    }
+
+    /// A hold that goes on to report where the finger is until it lifts — the section drag, the
+    /// tag chip's hold-to-record — on the same scroll-friendly recognizer. `fallback` is the
+    /// SwiftUI gesture that did the job before iOS 18.
+    @ViewBuilder
+    func rowHold<Fallback: Gesture>(minimumDuration: TimeInterval = 0.5,
+                                    onPhase: @escaping (RowHoldPhase) -> Void,
+                                    fallback: Fallback) -> some View {
+        #if canImport(UIKit)
+        if #available(iOS 18.0, *) {
+            self.gesture(RowHoldRecognizer(minimumDuration: minimumDuration, onPhase: onPhase))
+        } else {
+            self.gesture(fallback)
+        }
+        #else
+        self.gesture(fallback)
+        #endif
     }
 }
 

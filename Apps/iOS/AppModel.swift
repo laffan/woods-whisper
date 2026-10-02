@@ -312,7 +312,7 @@ final class AppModel: ObservableObject {
     func resetWithOriginals(in documentID: UUID) {
         guard let doc = documents.document(with: documentID) else { return }
         func blocks(for recording: Recording) -> [Document.Paragraph] {
-            Document.paragraphs(fromLinesOf: recording.transcript ?? "")
+            Document.paragraphs(fromLinesOf: recording.transcript ?? "", recordingID: recording.id)
         }
         var paragraphs = doc.recordings.filter { !$0.isRevision }.flatMap { blocks(for: $0) }
         let revisions = doc.recordings.filter { $0.isRevision }.flatMap { blocks(for: $0) }
@@ -336,7 +336,8 @@ final class AppModel: ObservableObject {
         guard !owedTheBody else { return }
         guard let text = documents.document(with: documentID)?
             .recordings.first(where: { $0.id == recordingID })?.transcript else { return }
-        documents.appendParagraphs(Document.paragraphs(fromLinesOf: text), to: documentID)
+        documents.appendParagraphs(Document.paragraphs(fromLinesOf: text, recordingID: recordingID),
+                                   to: documentID)
     }
 
     /// "Append": add the recording's transcript as a new paragraph at the bottom of the document
@@ -352,9 +353,77 @@ final class AppModel: ObservableObject {
             if currentTranscript().isEmpty {
                 await transcribe(recordingID: recordingID, inDocument: documentID)
             }
-            documents.appendParagraphs(Document.paragraphs(fromLinesOf: currentTranscript()),
+            documents.appendParagraphs(Document.paragraphs(fromLinesOf: currentTranscript(),
+                                                           recordingID: recordingID),
                                        to: documentID)
         }
+    }
+
+    // MARK: Continuing a recording
+
+    /// **Continue Recording** (a long press on an Inbox entry or a document's section): `clipURL`
+    /// was just recorded to go on the end of `recordingID`. The two are joined into one file — the
+    /// recording really is longer now — and the whole of it is transcribed again from the start as
+    /// a *first* transcription, exactly as if the recording had only been paused: the Auto
+    /// transform runs on it, an Inbox entry with no tag yet can file itself by its first word, and
+    /// in a document the new words take the place of `sections`, the ones the recording's words
+    /// had become.
+    ///
+    /// What was said is never lost to a failure along the way: if the two can't be joined, the new
+    /// clip is filed as a recording of its own — into the body after those sections, or into the
+    /// Inbox — and the reason is given.
+    func continueRecording(_ recordingID: UUID, in documentID: UUID, sections: [UUID],
+                           appending clipURL: URL, duration: TimeInterval) {
+        guard let recording = documents.document(with: documentID)?
+            .recordings.first(where: { $0.id == recordingID }), !recording.isTextOnly else {
+            fileAsOwnRecording(clipURL, duration: duration, in: documentID, after: sections)
+            return
+        }
+        let original = documents.audioURL(for: recording)
+        let joined = documents.newAudioURL()
+        let joinedURL = joined.url
+        busyMessage = "Adding to the recording…"
+        Task {
+            do {
+                // Off the main thread: it decodes and re-encodes the whole recording.
+                let total = try await Task.detached(priority: .userInitiated) {
+                    try AudioJoiner.join([original, clipURL], into: joinedURL)
+                }.value
+                try? FileManager.default.removeItem(at: clipURL)
+                busyMessage = nil
+                documents.continueRecording(recordingID, in: documentID, newFileName: joined.fileName,
+                                            duration: total, replacingSections: sections)
+                wwLog(String(format: "Continued “%@” — %.1fs added, %.1fs in all",
+                             recording.name, duration, total), .general)
+                guard transcriptionReady else {
+                    setupError = "Speech model isn't ready yet — the recording was extended, and it will be transcribed again as soon as setup finishes."
+                    return
+                }
+                await transcribe(recordingID: recordingID, inDocument: documentID)
+            } catch {
+                busyMessage = nil
+                try? FileManager.default.removeItem(at: joinedURL)
+                wwLog("Couldn't join the new clip onto “\(recording.name)”: \(error.localizedDescription)",
+                      .error)
+                setupError = "Couldn't add to that recording (\(error.localizedDescription)), so what you just said was saved as a recording of its own."
+                fileAsOwnRecording(clipURL, duration: duration, in: documentID, after: sections)
+            }
+        }
+    }
+
+    /// The fallback for a continuation that couldn't be joined on: a clip of its own, with its words
+    /// put where they'd have gone — after the sections it was meant to extend, in a document; as a
+    /// new entry, in the Inbox.
+    private func fileAsOwnRecording(_ clipURL: URL, duration: TimeInterval, in documentID: UUID,
+                                    after sections: [UUID]) {
+        guard let document = documents.document(with: documentID) else { return }
+        guard document.title != DocumentStore.inboxTitle, !document.isGraph else {
+            addDeviceRecording(audioURL: clipURL, duration: duration, toDocument: documentID)
+            return
+        }
+        let last = document.paragraphs.lastIndex { sections.contains($0.id) }
+        addDeviceRecording(audioURL: clipURL, duration: duration, toDocument: documentID,
+                           body: last.map { .at($0 + 1) } ?? .append)
     }
 
     // MARK: Graph documents
@@ -421,12 +490,16 @@ final class AppModel: ObservableObject {
         // A graph has no body to write into — its nodes are filled by `fillGraphNodes` — which only
         // comes up for a clip moved into one while it was still waiting to be transcribed.
         guard !text.isEmpty, documents.document(with: documentID)?.isGraph == false else { return }
-        let paragraphs = Document.paragraphs(fromLinesOf: text)
+        // Each section remembers the recording it's the words of, so a long press on it later can
+        // offer to continue that recording.
+        let paragraphs = Document.paragraphs(fromLinesOf: text, recordingID: recordingID)
         switch destination {
         case .append:           documents.appendParagraphs(paragraphs, to: documentID)
         case .at(let position): documents.insertParagraphs(paragraphs, at: position, in: documentID)
         case .replacing(let paragraphID):
             documents.replaceParagraph(paragraphID, in: documentID, with: paragraphs)
+        case .replacingSections(let ids):
+            documents.replaceParagraphs(ids, in: documentID, with: paragraphs)
         }
         let title = documents.document(with: documentID)?.title ?? "a document"
         wwLog("Filed a new transcript into the body of “\(title)”", .general)
@@ -580,21 +653,86 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// Import a `.wwdoc` file shared from another device: unpack it into a new document and transcribe
-    /// any recording that arrived without a transcript (older archives, or clips never transcribed).
+    /// A `.wwdoc` that arrived carrying the same document as one already here — the same one sent
+    /// back, or one with the same title — waiting on **Replace** or **Keep Both**. Nothing has been
+    /// unpacked yet: the archive is held in memory, so the file it came in can go.
+    struct PendingArchiveImport: Identifiable {
+        let id = UUID()
+        let archive: DocumentArchive
+        /// The document here that Replace would overwrite.
+        let existingID: UUID
+        let existingTitle: String
+        let existingUpdatedAt: Date
+        let fileName: String
+
+        /// When the incoming copy was last changed, on the device it came from.
+        var incomingUpdatedAt: Date { archive.document.updatedAt }
+    }
+
+    @Published var pendingArchiveImport: PendingArchiveImport?
+
+    /// Import a `.wwdoc` file shared from another device (AirDrop, Files, Messages…).
+    ///
+    /// When it's a document this device already has — it went out from here and is coming back, or
+    /// one of the same title and kind is already in the list — nothing is unpacked until you've said
+    /// whether it **replaces** that one or lands **beside** it (`pendingArchiveImport`). Otherwise
+    /// it's unpacked straight away as a new document.
     func importDocumentArchive(from url: URL) {
         do {
-            let doc = try documents.importArchive(from: url)
-            wwLog(String(format: "Imported Woods Whisper document “%@” (%d recordings) from %@",
-                         doc.title, doc.recordings.count, url.lastPathComponent), .transfer)
-            for recording in doc.recordings
-            where recording.transcript?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true {
-                autoTranscribe(recordingID: recording.id, inDocument: doc.id)
+            let archive = try documents.readArchive(from: url)
+            if let existing = documents.existingDocument(matching: archive.document) {
+                pendingArchiveImport = PendingArchiveImport(archive: archive,
+                                                            existingID: existing.id,
+                                                            existingTitle: existing.title,
+                                                            existingUpdatedAt: existing.updatedAt,
+                                                            fileName: url.lastPathComponent)
+                wwLog("“\(archive.document.title)” arrived and matches a document here — asking whether to replace it",
+                      .transfer)
+            } else {
+                finishArchiveImport(archive, replacing: nil, fileName: url.lastPathComponent)
             }
         } catch {
             setupError = "Couldn't open the Woods Whisper file: \(error.localizedDescription)"
             wwLog("Document import failed: \(error.localizedDescription)", .error)
         }
+    }
+
+    /// Answer the Replace / Keep Both question for the document waiting on it.
+    func resolveArchiveImport(replace: Bool) {
+        guard let pending = pendingArchiveImport else { return }
+        pendingArchiveImport = nil
+        // The document to replace may have gone while the question was up; then it's simply new.
+        let target = replace && documents.document(with: pending.existingID) != nil
+            ? pending.existingID : nil
+        finishArchiveImport(pending.archive, replacing: target, fileName: pending.fileName)
+    }
+
+    /// Drop the waiting import without touching anything.
+    func cancelArchiveImport() {
+        guard let pending = pendingArchiveImport else { return }
+        pendingArchiveImport = nil
+        wwLog("Left “\(pending.archive.document.title)” unimported", .transfer)
+    }
+
+    /// Unpack the archive, transcribe any recording that arrived without a transcript (older
+    /// archives, or clips never transcribed) in either half of a pair, and open what arrived — the
+    /// point of sending a document to this device is to carry on with it here.
+    private func finishArchiveImport(_ archive: DocumentArchive, replacing existingID: UUID?,
+                                     fileName: String) {
+        let doc = documents.importArchive(archive, replacing: existingID)
+        let count = doc.recordings.count + (archive.partner?.recordings.count ?? 0)
+        wwLog(String(format: "%@ Woods Whisper document “%@” (%d recordings) from %@",
+                     existingID == nil ? "Imported" : "Replaced with", doc.title, count, fileName),
+              .transfer)
+        let halves = [doc.id] + [documents.jointPartnerID(of: doc.id)].compactMap { $0 }
+        for id in halves {
+            guard let half = documents.document(with: id) else { continue }
+            for recording in half.recordings
+            where recording.transcript?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true {
+                autoTranscribe(recordingID: recording.id, inDocument: id)
+            }
+        }
+        DocumentLauncher.shared.open(doc.id)
     }
 
     // MARK: Transcription

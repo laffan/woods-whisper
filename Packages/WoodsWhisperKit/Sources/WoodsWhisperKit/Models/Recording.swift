@@ -73,6 +73,11 @@ public struct Recording: Identifiable, Codable, Hashable, Sendable {
         case at(Int)
         /// In place of a paragraph that's already there — "Revise".
         case replacing(UUID)
+        /// In place of the sections this clip's words became before — **Continue Recording**,
+        /// which re-transcribes the whole of a recording that has grown. The new words go where
+        /// the first of them stood; the rest are taken out. (If none of them is left, the words go
+        /// on the end.)
+        case replacingSections([UUID])
     }
 
     public enum Origin: String, Codable, Sendable {
@@ -193,6 +198,15 @@ public struct Recording: Identifiable, Codable, Hashable, Sendable {
     public static func durationLabel(_ seconds: TimeInterval) -> String {
         let total = Int(seconds.rounded())
         return String(format: "%d:%02d", total / 60, total % 60)
+    }
+
+    /// Whether `name` is still the one `defaultName` gave a clip captured at `createdAt` — the date
+    /// over its duration and size — rather than one somebody typed. A default name is worth
+    /// redrawing when the clip it describes changes length; a chosen one is left alone.
+    public static func isDefaultName(_ name: String, createdAt: Date) -> Bool {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d, yyyy, h:mm a"
+        return name.hasPrefix(formatter.string(from: createdAt) + "\n")
     }
 
     /// Size in bytes of the file at `url`, if it exists.

@@ -142,6 +142,42 @@ back and finish it by hand. The destination is cleared as soon as a transcriptio
 Retranscribe can't post the same paragraph twice. It's the same shape as `fillGraphNodes`, which
 does the graph's half of the job, and for the same reason.
 
+**A section remembers the recording it's the words of** (`Paragraph.recordingID`). Every path that
+turns a transcript into body text tags what it makes — `fillDocumentBody`, Reset with Originals,
+Append / Re-transcribe, and `DocumentStore.fileRecordings` for entries moved in from the Inbox — and
+`replaceParagraph(_:with:)` carries the tag onto whatever replaces a section (an in-place edit, a
+paragraph transform), unless the replacement is a recording's words of its own (a Revise clip's).
+Sections saved before this existed have no tag; `Document.continuation(forParagraph:)` matches those
+to the recording whose transcript contains their words, whitespace and case aside.
+
+**Continue Recording (iOS):** a long press on an Inbox entry, or a document section held and let go
+in place, offers it. The recorder opens with its counter carrying on from the recording's length
+(`RecordingSheet.elapsedOffset`, also fed to the Live Activity's virtual start). On Save,
+`AppModel.continueRecording` joins the original audio and the new clip into a fresh file with
+`AudioJoiner` (decoded and re-encoded as 16 kHz mono AAC, converting a source in another format, off
+the main actor), then `DocumentStore.continueRecording` swaps the file in, deletes the old one,
+redraws a default name for the new length, and clears the transcript back to `nil` / `.pending`.
+That reset is the point: the next `transcribe` is a *first* transcription, so the Auto transform and
+the Inbox's first-word tag run on the whole recording exactly as they would on a capture that had
+only been paused. In a document the clip carries `.replacingSections(ids)` — every section that
+recording's words had become — and `fillDocumentBody` puts the new words where the first of them
+stood (`DocumentStore.replaceParagraphs`). If the join fails, the new clip is filed as a recording
+of its own (after those sections, or into the Inbox) rather than lost.
+
+**Holding a list row leaves the list its scroll and swipes.** Every hold on a row of a `List` — an
+Inbox entry (Continue Recording / Select), a document's section (lift and drag it, or let go for
+Continue Recording / Reorder), a Recordings row and a Documents row (reorder / select), and the Inbox's
+tag chips in their sideways scroller (hold to record) — goes through `RowHoldRecognizer`, a
+`UIGestureRecognizerRepresentable` around `UILongPressGestureRecognizer` (`rowLongPress`, `rowHold`).
+SwiftUI's own `onLongPressGesture`, and a `LongPressGesture` sequenced into a drag, claim the touch
+they're attached to as it lands when built against the current SDKs, which on a list row shut out
+the list's pan and the row's swipe-actions pan: a section or an entry taller than the screen
+couldn't be scrolled at all, and swipes got through only now and then. UIKit's recognizer fails as
+soon as the finger travels further than its allowable movement before the hold is reached, so a
+moving touch is the list's and a still one is the row's; once it begins it keeps reporting the
+finger in global coordinates, which is all the section drag needs. Before iOS 18 there is no such
+bridge, and SwiftUI's holds never had the problem there, so those builds keep them.
+
 **Import text (iOS):** `AppModel.importText` — from the clipboard or a picked `.txt`/`.md` — joins
 the same pipelines one step in, rather than getting a path of its own. Into a document it's split by
 `Document.paragraphs(from:)` and appended to the body, so it lands exactly where a transcript would;
@@ -626,6 +662,24 @@ rewritten, and a manifest of what the previous sync wrote is kept so a renamed o
 can be pruned without ever touching a file the app didn't write. The newest version overwrites the
 previous one — no history, and no audio.
 
+**Sharing a document between devices (`.wwdoc`).** `DocumentArchive` is a binary plist of the
+document plus every recording's audio bytes. Half of a **joint document** takes its other half along
+(`partner`, archive version 2; older builds ignore it and import the one half). Import is two steps
+so the app can ask before anything changes: `DocumentStore.readArchive(from:)` reads the file, and
+`existingDocument(matching:)` looks for the document it would stand in for — the same id first (a
+document that went out from this device and is coming back), then the same title and kind (case,
+accents and spaces aside; kind, because the halves of a pair share a title). With a match,
+`AppModel.pendingArchiveImport` holds the decoded archive and `ContentView` asks **Replace** or
+**Keep Both**; without one it's unpacked at once. `importArchive(_:replacing:)` then either
+overwrites the match *in place* — same id, so links, the Watch's target list and an open screen keep
+pointing at it, and this device's own pin, Auto transform choice and joint link are kept, its old
+audio deleted — or inserts it new, **keeping the id it had on the other device** unless that id is
+already taken here. Keeping the id is what makes the phone → iPad → phone loop a round trip: the
+copy that comes back is recognised as the same document. A pair arriving over a pair replaces both
+halves rather than growing a third, and the link is put back on the side it was on. Audio is always
+written under fresh file names, so an import never aliases audio already on the device. The
+imported document is opened straight away.
+
 **Widget snapshot.** The iOS "Recent Documents" Home Screen widget (`Apps/iOSWidgets`) runs in its
 own process and can't read Application Support, so `WidgetSnapshotStore` mirrors a small JSON list
 of the top documents — id, title, `updatedAt`, pinned flag, one-line preview — into the shared App
@@ -660,6 +714,15 @@ and the widget extension agree on all of it:
   screen, which is no time to depend on SwiftUI getting around to a view update. The handler is
   released on every exit path, so a press against an activity the system hasn't cleared yet does
   nothing.
+- **Continue is an `AudioRecordingIntent`** (`ContinueRecordingIntent`, iOS 18+; the Live Activity
+  falls back to the plain `ResumeRecordingIntent` on 17). Pause, Save and Discard only ever *stop*
+  the microphone, which an app may do from the background. Continue has to *start* it again, and iOS
+  refuses to start audio capture for a backgrounded app — so with a plain `LiveActivityIntent` the
+  press reached the recorder, `AVAudioRecorder.record()` returned `false`, and the paused counter
+  just sat there. Declaring the intent an `AudioRecordingIntent` is how the system is told this
+  button records; with the Live Activity already up (which that protocol requires) it allows the
+  capture to start. `AudioRecorder.resume()` also re-activates the audio session first, in case a
+  long pause behind the lock let it go, and logs a refusal rather than failing silently.
 
 Tapping anything routes by two mechanisms, picked by family in `tapTarget`: the medium and large
 families link out by URL (`woodswhisper://document/<uuid>` for a row), while `systemSmall` — which

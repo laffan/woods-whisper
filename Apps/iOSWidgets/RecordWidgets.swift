@@ -184,7 +184,15 @@ private struct RecordingControls: View {
             control("Save", "square.and.arrow.down", intent: SaveRecordingIntent(),
                     tint: WWPalette.ember, filled: true)
             if isPaused {
-                control("Continue", "play.fill", intent: ResumeRecordingIntent(), tint: WWPalette.ink)
+                // Continue has to start the microphone from the background, which only an audio
+                // recording intent is allowed to do (see `ContinueRecordingIntent`).
+                if #available(iOS 18.0, *) {
+                    control("Continue", "play.fill", intent: ContinueRecordingIntent(),
+                            tint: WWPalette.ink)
+                } else {
+                    control("Continue", "play.fill", intent: ResumeRecordingIntent(),
+                            tint: WWPalette.ink)
+                }
             } else {
                 control("Pause", "pause.fill", intent: PauseRecordingIntent(), tint: WWPalette.ink)
             }
