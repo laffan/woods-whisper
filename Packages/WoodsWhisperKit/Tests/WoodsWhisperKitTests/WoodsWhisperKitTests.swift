@@ -1982,6 +1982,78 @@ final class WoodsWhisperKitTests: XCTestCase {
                        wood.position.x - camp.position.x, accuracy: 0.001)
     }
 
+    // MARK: Pasting a flowchart copied in Hush
+
+    /// A Hush notebook's copy, as Hush's ⌘C writes it: text shapes, an image, the arrows between
+    /// them and each shape's box on the canvas.
+    private func hushCopy(bounds: Bool = true) -> Data {
+        let boxes = bounds
+            ? #","bounds":{"a1":{"minX":0,"minY":0,"maxX":40,"maxY":21},"b2":{"minX":400,"minY":-20,"maxX":700,"maxY":22}}"#
+            : ""
+        let json = """
+        {"schema":"canvas-clipboard@1",
+         "shapes":[
+          {"id":"a1","type":"text","text":"Trip","position":{"x":0,"y":0},"fontSize":16,"width":350,
+           "color":"#000000","layerId":"l1","groupId":"g1"},
+          {"id":"b2","type":"text","text":"A long paragraph about where to camp","position":{"x":400,"y":-20},
+           "fontSize":16,"width":350,"color":"#000000","groupId":"g1"},
+          {"id":"c3","type":"image","position":{"x":0,"y":200},"width":80,"height":60,"src":"x"},
+          {"id":"d4","type":"text","text":"   ","position":{"x":0,"y":400},"fontSize":16}
+         ],
+         "flowEdges":[{"id":"e1","from":"a1","to":"b2"},{"id":"e2","from":"c3","to":"a1"}]
+         \(boxes)
+        }
+        """
+        return Data(json.utf8)
+    }
+
+    func testAHushCopyArrivesAsCardsWhereItsShapesWere() {
+        let clipboard = HushCanvasClipboard.graph(from: hushCopy())!
+        XCTAssertEqual(clipboard.nodes.map(\.text), ["Trip", "A long paragraph about where to camp"])
+        let trip = clipboard.nodes[0], camp = clipboard.nodes[1]
+        XCTAssertNil(trip.parentID)                                // the image it hung off stayed behind
+        XCTAssertEqual(camp.parentID, trip.id)                     // an arrow is a parent
+        XCTAssertEqual(trip.position, GraphPoint(x: 20, y: 10.5))  // centres, not corners
+        XCTAssertEqual(camp.position, GraphPoint(x: 550, y: 1))
+        XCTAssertNil(trip.width)                                   // a short line is a standard card
+        XCTAssertEqual(camp.width, 300)                            // a wide shape a wide one
+        XCTAssertEqual(clipboard.groups.first?.members, Set([trip.id, camp.id]))
+    }
+
+    /// Steiner's copies, and older Hush ones, don't say where their shapes' boxes are, so they're
+    /// worked out — roughly, but the right way round.
+    func testAHushCopyWithoutBoxesStillKeepsItsShape() {
+        let clipboard = HushCanvasClipboard.graph(from: hushCopy(bounds: false))!
+        XCTAssertEqual(clipboard.nodes.count, 2)
+        let trip = clipboard.nodes[0], camp = clipboard.nodes[1]
+        XCTAssertEqual(camp.parentID, trip.id)
+        XCTAssertGreaterThan(camp.position.x, trip.position.x)
+        XCTAssertGreaterThan(trip.position.x, 0)
+    }
+
+    func testOnlyAHushCopyWithWordsInItIsAGraph() {
+        XCTAssertNil(HushCanvasClipboard.graph(from: Data("not a copy".utf8)))
+        XCTAssertNil(HushCanvasClipboard.graph(from: Data(#"{"schema":"other@1","shapes":[]}"#.utf8)))
+        let inkOnly = #"{"schema":"canvas-clipboard@1","shapes":[{"id":"s","type":"stroke","points":[]}]}"#
+        XCTAssertNil(HushCanvasClipboard.graph(from: Data(inkOnly.utf8)))
+    }
+
+    /// And it pastes like any other copy: fresh ids, the arrow still a link.
+    @MainActor
+    func testAHushCopyPastesIntoAGraph() {
+        let name = "GraphPasteTests-\(UUID().uuidString)"
+        let store = DocumentStore(directoryName: name)
+        defer { removeStore(named: name) }
+
+        let graph = store.createDocument(title: "Plan", kind: .graph)
+        let clipboard = HushCanvasClipboard.graph(from: hushCopy())!
+        let map = store.pasteNodes(clipboard, in: graph.id, at: GraphPoint(x: 0, y: 0))
+        let pasted = store.document(with: graph.id)!
+        XCTAssertEqual(pasted.nodes.count, 2)
+        XCTAssertEqual(pasted.node(with: map[clipboard.nodes[1].id]!)?.parentID,
+                       map[clipboard.nodes[0].id])
+    }
+
     // MARK: Turning a branch (Rotate ▸ Clockwise / Anticlockwise)
 
     func testAQuarterTurnClockwiseTakesRightToDown() {

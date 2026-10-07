@@ -91,6 +91,12 @@ storage, and connectivity code without the model dependencies.
   since a pasteboard is outside the app's hands. It travels on the system pasteboard as JSON under
   `com.woodswhisper.graph-nodes`, with `text` beside it — one card's plain words, or the outline of
   several — so any other app, or a document's Import from Clipboard, gets the words.
+- **`HushCanvasClipboard`** — a flowchart copied in a Hush notebook, read as a `GraphClipboard`. Hush
+  writes its `canvas-clipboard@1` envelope under `com.hushwriter.canvas-clipboard` as well as as
+  text; its text shapes become cards (centred where the shape's box was — Hush sends the boxes),
+  an arrow becomes a parent, a shape wider than a card a wider card, and a Hush group a ring.
+  Ink, images and drag areas stay behind. The other direction is Hush's to read: it picks up
+  `com.woodswhisper.graph-nodes` natively and turns cards back into a flowchart.
 - **`GraphGroup`** — a ring drawn round a handful of nodes, with an optional label and `colorID`.
   Deliberately *not* structure: no parent, nothing hangs off it, and the outline walks past it — it's the
   mind-map equivalent of circling a cluster in pencil, which is why membership is a plain list of
@@ -488,8 +494,8 @@ submenu near the bottom scrolls its last row into view.
 
 **Copying and pasting nodes.** `GraphPasteboard` (in the app) writes and reads a `GraphClipboard` on
 the system pasteboard, so a copy reaches every graph and survives the app closing. Whether there's
-anything to paste is asked by *type* (`contains(pasteboardTypes:)`), which never raises the
-system's paste prompt, and re-asked on `UIPasteboard.changedNotification` and on becoming active —
+anything to paste is asked by *type* (`contains(pasteboardTypes:)` — ours, or Hush's), which
+never raises the system's paste prompt, and re-asked on `UIPasteboard.changedNotification` and on becoming active —
 a menu is drawn before it's opened, and another app can change the pasteboard in the meantime.
 `DocumentStore.pasteNodes(_:in:at:)` puts the copy down with its middle on a point, sliding it a
 row at a time until it's clear of what's there; `pasteNodes(_:in:under:)` hangs each pasted root

@@ -8808,7 +8808,8 @@ struct HoldablePlusButton: View {
 // MARK: - Nodes on the pasteboard
 
 /// Graph nodes on the system pasteboard: a `GraphClipboard` under its own type, with the words
-/// beside it as plain text for anywhere that isn't a canvas.
+/// beside it as plain text for anywhere that isn't a canvas. A flowchart copied in a Hush notebook
+/// pastes too, read off Hush's own type (`HushCanvasClipboard`).
 ///
 /// The system's pasteboard rather than one the app keeps for itself, so a copy outlives the app
 /// being closed, reaches every graph (the other half of a joint document included), and follows you
@@ -8827,25 +8828,30 @@ enum GraphPasteboard {
         #endif
     }
 
-    /// Whether there are nodes to paste. Asking after the *type* doesn't read what's there, so it
-    /// never raises the system's "Allow Paste" prompt — which is what lets a menu grey its Paste
-    /// without asking.
+    /// Whether there are nodes to paste — ours, or a Hush flowchart. Asking after the *type*
+    /// doesn't read what's there, so it never raises the system's "Allow Paste" prompt — which is
+    /// what lets a menu grey its Paste without asking.
     static var hasNodes: Bool {
         #if canImport(UIKit)
-        return UIPasteboard.general.contains(pasteboardTypes: [GraphClipboard.typeIdentifier])
+        return UIPasteboard.general.contains(pasteboardTypes: [GraphClipboard.typeIdentifier,
+                                                               HushCanvasClipboard.typeIdentifier])
         #else
         return false
         #endif
     }
 
     /// The nodes on the pasteboard, if there are any. Reading is what can raise the system's
-    /// prompt (for nodes copied on another device), and a paste is always asked for, so it's the
-    /// moment the prompt belongs to.
+    /// prompt (for nodes copied on another device, or in Hush), and a paste is always asked for,
+    /// so it's the moment the prompt belongs to.
     static func read() -> GraphClipboard? {
         #if canImport(UIKit)
-        guard let data = UIPasteboard.general.data(forPasteboardType: GraphClipboard.typeIdentifier)
+        let pasteboard = UIPasteboard.general
+        if let data = pasteboard.data(forPasteboardType: GraphClipboard.typeIdentifier) {
+            return GraphClipboard(data: data)
+        }
+        guard let data = pasteboard.data(forPasteboardType: HushCanvasClipboard.typeIdentifier)
         else { return nil }
-        return GraphClipboard(data: data)
+        return HushCanvasClipboard.graph(from: data)
         #else
         return nil
         #endif
