@@ -98,6 +98,8 @@ struct DocumentDetailView: View {
     @State private var shareItem: ShareItem?
     @State private var audioShareItem: AudioShareItem?
     @State private var documentFileShare: DocumentFileShareItem?
+    /// **⋯ → Send to Nearby Device…**: this document, to Woods Whisper on another device.
+    @State private var nearbySend: NearbySendRequest?
     @State private var linkShare: DocumentLinkShareItem?
 
     // Document rename (tap the title)
@@ -189,6 +191,7 @@ struct DocumentDetailView: View {
         .sheet(item: $documentFileShare) { item in
             ActivityView(activityItems: [item.url])
         }
+        .nearbySendSheet($nearbySend)
         .sheet(item: $linkShare) { item in
             ActivityView(activityItems: [item.url])
         }
@@ -1032,6 +1035,9 @@ struct DocumentDetailView: View {
         TextImportItems(onClipboard: importFromClipboard,
                         onFile: { showingTextImporter = true })
         Divider()
+        Button { nearbySend = NearbySendRequest(documentIDs: [document.id]) } label: {
+            Label("Send to Nearby Device…", systemImage: "paperplane")
+        }
         Button { shareDocumentFile(document) } label: {
             Label("Share as Woods Whisper File", systemImage: "arrow.up.doc")
         }
@@ -4768,6 +4774,8 @@ struct GraphDocumentView: View {
     @State private var renameText = ""
     @State private var shareItem: ShareItem?
     @State private var documentFileShare: DocumentFileShareItem?
+    /// **⋯ → Send to Nearby Device…**: this document, to Woods Whisper on another device.
+    @State private var nearbySend: NearbySendRequest?
     @State private var linkShare: DocumentLinkShareItem?
 
     /// Whether the pasteboard holds nodes — what **Paste Nodes** and a card's **Paste as Child**
@@ -4858,6 +4866,7 @@ struct GraphDocumentView: View {
         .sheet(item: $documentFileShare) { item in
             ActivityView(activityItems: [item.url])
         }
+        .nearbySendSheet($nearbySend)
         .sheet(item: $linkShare) { item in
             ActivityView(activityItems: [item.url])
         }
@@ -8211,6 +8220,9 @@ struct GraphDocumentView: View {
             shareItem = ShareItem(text: MarkdownBackup.markdown(for: document))
         } label: {
             Label("Share Outline", systemImage: "square.and.arrow.up")
+        }
+        Button { nearbySend = NearbySendRequest(documentIDs: [document.id]) } label: {
+            Label("Send to Nearby Device…", systemImage: "paperplane")
         }
         Button { shareDocumentFile(document) } label: {
             Label("Share as Woods Whisper File", systemImage: "arrow.up.doc")

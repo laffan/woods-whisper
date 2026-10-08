@@ -55,6 +55,9 @@ final class AppModel: ObservableObject {
     private var bluetoothServer: BluetoothRecordingServer?
     private var cancellables = Set<AnyCancellable>()
 
+    /// Documents sent to and from Woods Whisper on the user's other iPhones and iPads nearby.
+    let nearby: NearbyDocumentTransfer
+
     init() {
         // Hand the device's own name to AppSettings before anything reads `deviceDisplayName` —
         // it's the default the Watch sees until the user types their own in Settings, and UIKit
@@ -62,6 +65,7 @@ final class AppModel: ObservableObject {
         #if canImport(UIKit)
         AppSettings.shared.recordSystemDeviceName(UIDevice.current.name)
         #endif
+        nearby = NearbyDocumentTransfer(displayName: AppSettings.shared.deviceDisplayName)
 
         // DocumentStore is a separate ObservableObject; forward its changes so views observing
         // AppModel re-render on async updates (e.g. a recording arriving from the Watch).
@@ -77,6 +81,7 @@ final class AppModel: ObservableObject {
 
         AudioRecorder.preferredInputUID = AppSettings.shared.preferredMicUID
         configureReceivers()
+        configureNearbyTransfer()
     }
 
     /// The document descriptor list most recently pushed to the Watch, so identical pushes are skipped.
@@ -158,6 +163,7 @@ final class AppModel: ObservableObject {
     /// its port up asynchronously, so the new one comes up a beat later rather than racing the
     /// teardown for the same port. A no-op when nothing is running.
     func deviceNameDidChange() {
+        nearby.setDisplayName(AppSettings.shared.deviceDisplayName)
         guard localServer != nil || bluetoothServer != nil else { return }
         stopLocalServer()
         Task { [weak self] in
@@ -167,6 +173,30 @@ final class AppModel: ObservableObject {
             self.startLocalServer()
             wwLog("Now advertising to the Watch as “\(AppSettings.shared.deviceDisplayName)”", .transfer)
         }
+    }
+
+    // MARK: Nearby devices
+
+    /// Be findable by Woods Whisper on the user's other devices while this one is in the
+    /// foreground (MultipeerConnectivity can't run in the background), and import whatever they
+    /// send — through the same Replace / Keep Both question as any other Woods Whisper file.
+    private func configureNearbyTransfer() {
+        nearby.objectWillChange
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
+        nearby.onReceive = { [weak self] file, sender in
+            wwLog("Received “\(file.deletingPathExtension().lastPathComponent)” from \(sender)", .transfer)
+            self?.importDocumentArchive(from: file)
+        }
+        #if canImport(UIKit)
+        NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)
+            .sink { [weak self] _ in self?.nearby.startAdvertising() }
+            .store(in: &cancellables)
+        NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)
+            .sink { [weak self] _ in self?.nearby.stopAdvertising() }
+            .store(in: &cancellables)
+        #endif
+        nearby.startAdvertising()
     }
 
     // MARK: Watch pairing
@@ -671,29 +701,48 @@ final class AppModel: ObservableObject {
 
     @Published var pendingArchiveImport: PendingArchiveImport?
 
-    /// Import a `.wwdoc` file shared from another device (AirDrop, Files, Messages…).
+    /// Files that arrived while a Replace / Keep Both question was already up — several documents
+    /// sent at once arrive together — each waiting for its own turn, in the order they came.
+    private var queuedArchiveImports: [(archive: DocumentArchive, fileName: String)] = []
+
+    /// Import a `.wwdoc` file shared from another device — sent from one nearby
+    /// (`NearbyDocumentTransfer`), or opened from Files, Messages, AirDrop…
     ///
     /// When it's a document this device already has — it went out from here and is coming back, or
     /// one of the same title and kind is already in the list — nothing is unpacked until you've said
     /// whether it **replaces** that one or lands **beside** it (`pendingArchiveImport`). Otherwise
     /// it's unpacked straight away as a new document.
     func importDocumentArchive(from url: URL) {
+        defer { discardDeliveredCopy(url) }
         do {
             let archive = try documents.readArchive(from: url)
-            if let existing = documents.existingDocument(matching: archive.document) {
-                pendingArchiveImport = PendingArchiveImport(archive: archive,
-                                                            existingID: existing.id,
-                                                            existingTitle: existing.title,
-                                                            existingUpdatedAt: existing.updatedAt,
-                                                            fileName: url.lastPathComponent)
-                wwLog("“\(archive.document.title)” arrived and matches a document here — asking whether to replace it",
+            if pendingArchiveImport != nil {
+                queuedArchiveImports.append((archive, url.lastPathComponent))
+                wwLog("“\(archive.document.title)” arrived — waiting behind the question already up",
                       .transfer)
             } else {
-                finishArchiveImport(archive, replacing: nil, fileName: url.lastPathComponent)
+                receiveArchive(archive, fileName: url.lastPathComponent)
             }
         } catch {
             setupError = "Couldn't open the Woods Whisper file: \(error.localizedDescription)"
             wwLog("Document import failed: \(error.localizedDescription)", .error)
+        }
+    }
+
+    /// Ask about an archive that matches a document here, or unpack it if nothing does. Matching
+    /// happens now rather than when the file arrived, so a document imported earlier in the same
+    /// batch counts.
+    private func receiveArchive(_ archive: DocumentArchive, fileName: String) {
+        if let existing = documents.existingDocument(matching: archive.document) {
+            pendingArchiveImport = PendingArchiveImport(archive: archive,
+                                                        existingID: existing.id,
+                                                        existingTitle: existing.title,
+                                                        existingUpdatedAt: existing.updatedAt,
+                                                        fileName: fileName)
+            wwLog("“\(archive.document.title)” arrived and matches a document here — asking whether to replace it",
+                  .transfer)
+        } else {
+            finishArchiveImport(archive, replacing: nil, fileName: fileName)
         }
     }
 
@@ -705,6 +754,7 @@ final class AppModel: ObservableObject {
         let target = replace && documents.document(with: pending.existingID) != nil
             ? pending.existingID : nil
         finishArchiveImport(pending.archive, replacing: target, fileName: pending.fileName)
+        receiveQueuedArchives()
     }
 
     /// Drop the waiting import without touching anything.
@@ -712,6 +762,37 @@ final class AppModel: ObservableObject {
         guard let pending = pendingArchiveImport else { return }
         pendingArchiveImport = nil
         wwLog("Left “\(pending.archive.document.title)” unimported", .transfer)
+        receiveQueuedArchives()
+    }
+
+    /// Carry on through the files that arrived behind the question just answered, until the next
+    /// one that needs asking about.
+    private func receiveQueuedArchives() {
+        guard !queuedArchiveImports.isEmpty else { return }
+        Task { @MainActor in
+            // An alert asked for while the last one is still animating away doesn't appear.
+            try? await Task.sleep(for: .milliseconds(500))
+            while pendingArchiveImport == nil, !queuedArchiveImports.isEmpty {
+                let next = queuedArchiveImports.removeFirst()
+                receiveArchive(next.archive, fileName: next.fileName)
+            }
+        }
+    }
+
+    /// The copy made to hand a file over — a nearby device's delivery, or iOS's for "Open in…" from
+    /// another app — sits in this app's own container (`Documents/Inbox`, or the temporary folder)
+    /// and is ours to remove once read; left there, every document received would be stored twice. A file opened in
+    /// place from Files belongs to the user and lives elsewhere, so it's never touched.
+    private func discardDeliveredCopy(_ url: URL) {
+        let fm = FileManager.default
+        func path(_ url: URL) -> String { url.standardizedFileURL.resolvingSymlinksInPath().path }
+        func isInside(_ dir: URL) -> Bool { path(url).hasPrefix(path(dir) + "/") }
+        let inbox = fm.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Inbox", isDirectory: true)
+        let delivered = isInside(inbox)
+            || (isInside(fm.temporaryDirectory) && !isInside(DocumentStore.exportsDirectory))
+        guard delivered else { return }
+        try? fm.removeItem(at: url)
     }
 
     /// Unpack the archive, transcribe any recording that arrived without a transcript (older

@@ -25,12 +25,15 @@
     <key>NSMicrophoneUsageDescription</key>
     <string>Woods Whisper records audio so it can transcribe your voice on-device.</string>
 
-    <!-- Direct Watch -> iPad transfer over the local network -->
+    <!-- Direct Watch -> iPad transfer over the local network, and documents sent between iPhones
+         and iPads (NearbyDocumentTransfer, MultipeerConnectivity: _ww-docs) -->
     <key>NSLocalNetworkUsageDescription</key>
-    <string>Woods Whisper receives recordings directly from your Apple Watch over your local WiFi network, with no internet involved.</string>
+    <string>Woods Whisper receives recordings directly from your Apple Watch, and sends documents to and from your other iPhones and iPads nearby, with no internet involved.</string>
     <key>NSBonjourServices</key>
     <array>
         <string>_woodswhisper._tcp</string>
+        <string>_ww-docs._tcp</string>
+        <string>_ww-docs._udp</string>
     </array>
 
     <!-- Direct Watch -> iPad transfer over Bluetooth (works with no WiFi at all) -->

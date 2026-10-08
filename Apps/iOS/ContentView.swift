@@ -30,13 +30,13 @@ struct ContentView: View {
                 .tag(Tab.settings)
         }
         .overlay(alignment: .bottom) {
-            if let message = model.busyMessage {
+            if let message = model.busyMessage ?? model.nearby.receivingMessage {
                 BusyBanner(message: message)
                     .padding(.bottom, 60)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .animation(.default, value: model.busyMessage)
+        .animation(.default, value: model.busyMessage ?? model.nearby.receivingMessage)
         .alert("Something went wrong",
                isPresented: Binding(get: { model.setupError != nil },
                                     set: { if !$0 { model.setupError = nil } })) {
@@ -56,6 +56,17 @@ struct ContentView: View {
             Button("Cancel", role: .cancel) { model.cancelArchiveImport() }
         } message: { pending in
             Text(importQuestionMessage(pending))
+        }
+        // Another of the user's devices wants to send documents, and hasn't before. Once it's
+        // allowed always, what it sends comes straight in (still asking before replacing anything).
+        .alert(nearbyRequestTitle,
+               isPresented: Binding(get: { model.nearby.requests.first != nil }, set: { _ in }),
+               presenting: model.nearby.requests.first) { request in
+            Button("Accept") { model.nearby.answer(request, accept: true) }
+            Button("Always Accept") { model.nearby.answer(request, accept: true, always: true) }
+            Button("Decline", role: .cancel) { model.nearby.answer(request, accept: false) }
+        } message: { request in
+            Text(nearbyRequestMessage(request))
         }
         // "New Recording" requested from outside the app (Control / Lock Screen / Action Button /
         // Siri / Shortcuts). Present the recorder straight to the Inbox, wherever we are.
@@ -99,6 +110,19 @@ struct ContentView: View {
         .onAppear {
             if DocumentLauncher.shared.pendingDocumentID != nil { selectedTab = .documents }
         }
+    }
+
+    private var nearbyRequestTitle: String {
+        guard let request = model.nearby.requests.first else { return "" }
+        return "“\(request.deviceName)” wants to send you "
+            + (request.titles.count == 1 ? "a document" : "documents")
+    }
+
+    private func nearbyRequestMessage(_ request: NearbyDocumentTransfer.Request) -> String {
+        let titles = request.titles.map { "“\($0)”" }.joined(separator: ", ")
+        return (titles.isEmpty ? "" : titles + ". ")
+            + "Always Accept lets this device send documents here without asking again "
+            + "(Settings → Nearby Devices)."
     }
 
     private var importQuestionTitle: String {

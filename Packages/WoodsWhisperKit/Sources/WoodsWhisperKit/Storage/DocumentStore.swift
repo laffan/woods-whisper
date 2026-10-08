@@ -1450,12 +1450,35 @@ public final class DocumentStore: ObservableObject {
         let archive = DocumentArchive(document: doc, partner: partner, audio: audio)
         let payload = try archive.encoded()
 
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("WoodsWhisperExports", isDirectory: true)
+        // A folder of its own for each export, so the file keeps the document's name (it's what
+        // the other device sees) and two documents of the same name sent together don't land on
+        // the same path.
+        pruneOldExports()
+        let dir = Self.exportsDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let fileURL = dir.appendingPathComponent("\(safeFileName(for: doc.title)).\(DocumentArchive.fileExtension)")
         try payload.write(to: fileURL, options: .atomic)
         return fileURL
+    }
+
+    /// Where `.wwdoc` exports are written for the share sheet to hand over.
+    nonisolated public static var exportsDirectory: URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("WoodsWhisperExports", isDirectory: true)
+    }
+
+    /// An export is only needed while a share sheet sends it, and each one is a full copy of a
+    /// document's audio, so anything over an hour old is cleared out.
+    private func pruneOldExports() {
+        let fm = FileManager.default
+        guard let items = try? fm.contentsOfDirectory(at: Self.exportsDirectory,
+                                                      includingPropertiesForKeys: [.creationDateKey])
+        else { return }
+        let cutoff = Date().addingTimeInterval(-3600)
+        for item in items {
+            let created = (try? item.resourceValues(forKeys: [.creationDateKey]))?.creationDate
+            if (created ?? .distantPast) < cutoff { try? fm.removeItem(at: item) }
+        }
     }
 
     /// Read a `.wwdoc` file without unpacking it, so the app can look at what's arriving — and ask

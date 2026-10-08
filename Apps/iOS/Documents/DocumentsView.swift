@@ -23,7 +23,8 @@ struct DocumentsView: View {
     @State private var newDocumentKind: Document.Kind = .document
     @State private var showingRecorder = false
     @State private var shareItem: ShareItem?
-    @State private var documentFileShare: DocumentFileShareItem?
+    /// The documents the Send sheet is sending to another device.
+    @State private var nearbySend: NearbySendRequest?
 
     // Hold-to-record from a row's "+": the recorder behind it, and which document is being spoken
     // into right now. One at a time — it's one finger on one button.
@@ -149,7 +150,8 @@ struct DocumentsView: View {
                 }
             }
             // Batch actions. Copy and Share combine the selected documents into one Markdown file;
-            // Pin flips the whole selection (to Unpin once they're all pinned); Delete bins them.
+            // Send carries each of them, whole, to another device; Pin flips the whole selection
+            // (to Unpin once they're all pinned); Delete bins them.
             .safeAreaInset(edge: .bottom) {
                 if selectionMode {
                     WWBatchBar {
@@ -159,6 +161,9 @@ struct DocumentsView: View {
                                       allSelectedArePinned ? "pin.slash" : "pin") { pinSelected() }
                         WWBatchButton("Share", "square.and.arrow.up") {
                             shareItem = ShareItem(text: MarkdownBackup.combined(selectedDocuments))
+                        }
+                        WWBatchButton("Send", "paperplane") {
+                            nearbySend = NearbySendRequest(documentIDs: selectedDocuments.map(\.id))
                         }
                     }
                     .disabled(selected.isEmpty)
@@ -199,9 +204,7 @@ struct DocumentsView: View {
             .sheet(item: $shareItem) { item in
                 ActivityView(activityItems: [item.text])
             }
-            .sheet(item: $documentFileShare) { item in
-                ActivityView(activityItems: [item.url])
-            }
+            .nearbySendSheet($nearbySend)
             .sheet(item: $editingDoc) { doc in
                 TextEditorSheet(title: doc.title, text: $editingText) {
                     model.documents.setParagraphs(Document.paragraphs(from: editingText), in: doc.id)
@@ -354,22 +357,14 @@ struct DocumentsView: View {
                 // text to open, and writing one back would quietly bury the canvas.
                 Button("Copy") { copy(doc) }.tint(WW.inkTertiary)
                 Button("Share") { shareItem = ShareItem(text: doc.combinedText) }.tint(WW.violet)
-                // The whole document — audio, edits, and a joint document's other half — as one
-                // Woods Whisper file, for AirDrop to another phone or iPad. Opening it there offers
-                // to replace a document of the same name, so it can go back and forth.
-                Button("Send") { sendDocumentFile(doc) }.tint(WW.moss)
+                // The whole document — audio, edits, and a joint document's other half — straight
+                // into Woods Whisper on another phone or iPad nearby, which asks before replacing a
+                // document of the same name, so it can go back and forth.
+                Button("Send") { nearbySend = NearbySendRequest(documentIDs: [doc.id]) }.tint(WW.moss)
                 if !doc.isGraph {
                     Button("Edit") { startEdit(doc) }.tint(WW.slate)
                 }
             }
-        }
-    }
-
-    /// Pack the document as a `.wwdoc` and hand it to the share sheet, where AirDrop sends it to
-    /// another device. (The same file the document's own **⋯ → Share as Woods Whisper File** makes.)
-    private func sendDocumentFile(_ doc: Document) {
-        if let url = model.exportDocumentFile(doc.id) {
-            documentFileShare = DocumentFileShareItem(url: url)
         }
     }
 
@@ -721,5 +716,191 @@ private struct TrashRow: View {
                 .font(.caption)
                 .foregroundStyle(WW.inkTertiary)
         }
+    }
+}
+
+// MARK: - Send to a nearby device
+
+/// The documents a Send sheet is sending.
+struct NearbySendRequest: Identifiable {
+    let id = UUID()
+    let documentIDs: [UUID]
+}
+
+extension View {
+    /// The **Send** sheet, for whichever documents `request` names: straight into Woods Whisper on
+    /// another iPhone or iPad nearby, or — through **Other Ways to Send…** — a Woods Whisper file
+    /// for the share sheet.
+    func nearbySendSheet(_ request: Binding<NearbySendRequest?>) -> some View {
+        modifier(NearbySendPresenter(request: request))
+    }
+}
+
+private struct NearbySendPresenter: ViewModifier {
+    @Binding var request: NearbySendRequest?
+    @EnvironmentObject private var model: AppModel
+    /// Asked for from inside the sheet; the share sheet can only come up once that one has gone.
+    @State private var otherWays: [UUID]?
+    @State private var fileShare: FileShare?
+
+    private struct FileShare: Identifiable {
+        let id = UUID()
+        let urls: [URL]
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .sheet(item: $request, onDismiss: shareOtherWays) { request in
+                NearbySendSheet(request: request) { otherWays = request.documentIDs }
+                    .environmentObject(model)
+            }
+            .sheet(item: $fileShare) { item in
+                ActivityView(activityItems: item.urls)
+            }
+    }
+
+    private func shareOtherWays() {
+        guard let ids = otherWays else { return }
+        otherWays = nil
+        let urls = ids.compactMap { model.exportDocumentFile($0) }
+        if !urls.isEmpty { fileShare = FileShare(urls: urls) }
+    }
+}
+
+/// Lists Woods Whisper on the user's other devices nearby — each one advertises while the app is
+/// open — and sends the documents to whichever is tapped, showing how far it's got. Nothing goes
+/// through a network: MultipeerConnectivity connects the two directly (`NearbyDocumentTransfer`).
+private struct NearbySendSheet: View {
+    let request: NearbySendRequest
+    let onOtherWays: () -> Void
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+
+    private var nearby: NearbyDocumentTransfer { model.nearby }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    if nearby.devices.isEmpty {
+                        HStack(spacing: 12) {
+                            ProgressView()
+                            Text("Looking for devices…")
+                                .foregroundStyle(WW.inkSecondary)
+                        }
+                    }
+                    ForEach(nearby.devices) { device in
+                        Button { send(to: device) } label: { row(for: device) }
+                            .disabled(isSending)
+                    }
+                } footer: {
+                    WWFooter("Open Woods Whisper on your other iPhone or iPad and it appears here. The "
+                             + "two connect directly, with no WiFi network or internet needed. If that "
+                             + "device already has a document of the same name, it asks before replacing it.")
+                }
+                .listRowBackground(WW.surface)
+
+                Section {
+                    Button {
+                        onOtherWays()
+                        dismiss()
+                    } label: {
+                        Label("Other Ways to Send…", systemImage: "square.and.arrow.up")
+                    }
+                } footer: {
+                    WWFooter("A Woods Whisper file, for Files, Messages or AirDrop. AirDrop saves it to "
+                             + "Files on the other device; open it there with Share → Woods Whisper.")
+                }
+                .listRowBackground(WW.surface)
+            }
+            .scrollContentBackground(.hidden)
+            .background(WW.paper)
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(nearby.outgoing?.stage == .sent ? "Done" : "Cancel") { dismiss() }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .onAppear { nearby.startBrowsing() }
+        .onDisappear {
+            nearby.stopBrowsing()
+            nearby.cancelSend()
+        }
+        // Long enough to see that it went.
+        .onChange(of: nearby.outgoing?.stage) { _, stage in
+            guard stage == .sent else { return }
+            Task {
+                try? await Task.sleep(for: .seconds(1.2))
+                dismiss()
+            }
+        }
+    }
+
+    private var title: String {
+        if request.documentIDs.count == 1,
+           let doc = model.documents.document(with: request.documentIDs[0]) {
+            return "Send “\(doc.title)”"
+        }
+        return "Send \(request.documentIDs.count) Documents"
+    }
+
+    private var isSending: Bool {
+        switch nearby.outgoing?.stage {
+        case .some(.connecting), .some(.sending): return true
+        default: return false
+        }
+    }
+
+    @ViewBuilder
+    private func row(for device: NearbyDocumentTransfer.Device) -> some View {
+        let stage = nearby.outgoing?.deviceID == device.id ? nearby.outgoing?.stage : nil
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 12) {
+                Image(systemName: "ipad.and.iphone")
+                    .foregroundStyle(WW.moss)
+                    .frame(width: 28)
+                Text(device.name)
+                    .foregroundStyle(WW.ink)
+                Spacer()
+                switch stage {
+                case .some(.connecting):
+                    ProgressView()
+                case .some(.sending):
+                    TimelineView(.periodic(from: .now, by: 0.25)) { _ in
+                        ProgressView(value: nearby.outgoingProgress?.fractionCompleted ?? 0)
+                            .frame(width: 80)
+                    }
+                case .some(.sent):
+                    Label("Sent", systemImage: "checkmark.circle.fill")
+                        .font(.callout)
+                        .foregroundStyle(WW.moss)
+                default:
+                    EmptyView()
+                }
+            }
+            switch stage {
+            case .some(.connecting):
+                Text("Waiting for “\(device.name)” to accept…")
+                    .font(.footnote)
+                    .foregroundStyle(WW.inkSecondary)
+            case .some(.failed(let message)):
+                Text(message)
+                    .font(.footnote)
+                    .foregroundStyle(WW.ember)
+            default:
+                EmptyView()
+            }
+        }
+        .contentShape(Rectangle())
+    }
+
+    private func send(to device: NearbyDocumentTransfer.Device) {
+        let files = request.documentIDs.compactMap { model.exportDocumentFile($0) }
+        guard !files.isEmpty, files.count == request.documentIDs.count else { return }
+        let titles = request.documentIDs.compactMap { model.documents.document(with: $0)?.title }
+        nearby.send(files, titles: titles, to: device)
     }
 }

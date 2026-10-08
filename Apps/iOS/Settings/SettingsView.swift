@@ -36,6 +36,7 @@ struct SettingsView: View {
                 graphSection
                 backupSection
                 connectivitySection
+                nearbyDevicesSection
                 aboutSection
             }
             .wwForm()
@@ -445,6 +446,29 @@ struct SettingsView: View {
         .listRowBackground(WW.surface)
     }
 
+    /// Documents sent between this device and the user's others (**Send** on a document). The only
+    /// setting is which devices may send here without being asked first.
+    private var nearbyDevicesSection: some View {
+        Section {
+            LabeledContent("Allowed without asking") {
+                Text("\(model.nearby.trustedDeviceCount)")
+                    .foregroundStyle(WW.inkSecondary)
+            }
+            Button("Ask About Every Device Again", role: .destructive) {
+                model.nearby.forgetTrustedDevices()
+            }
+            .disabled(model.nearby.trustedDeviceCount == 0)
+        } header: {
+            WWSectionHeader("Nearby Devices")
+        } footer: {
+            WWFooter("Send a document from its row (swipe right → Send) or its ⋯ menu, and it goes "
+                     + "straight into Woods Whisper on your other iPhone or iPad, wherever it's open "
+                     + "nearby. The first time a device sends here you're asked; Always Accept "
+                     + "remembers it.")
+        }
+        .listRowBackground(WW.surface)
+    }
+
     private var aboutSection: some View {
         Section {
             LabeledContent("Device name") {
@@ -463,9 +487,9 @@ struct SettingsView: View {
         } header: {
             WWSectionHeader("About")
         } footer: {
-            WWFooter("The name this device advertises over WiFi and Bluetooth, and what your Watch "
-                     + "shows once it's paired with it. It starts as the device's own name — clear "
-                     + "the field to go back to that. A Watch that's already paired keeps the old "
+            WWFooter("The name this device advertises over WiFi and Bluetooth: what your Watch "
+                     + "shows once it's paired with it, and what your other devices list under "
+                     + "Send. It starts as the device's own name — clear the field to go back to that. A Watch that's already paired keeps the old "
                      + "name until you pair it again.")
         }
         .listRowBackground(WW.surface)

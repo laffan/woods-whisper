@@ -1,4 +1,4 @@
-# Connectivity: how recordings move between devices
+# Connectivity: how recordings and documents move between devices
 
 There are three transports. The app picks one per the Watch's `transport` setting.
 
@@ -121,6 +121,45 @@ the `DeviceLink`. Off-grid, WiFi fails fast (no shared subnet) and Bluetooth win
   foreground (the iPad also keeps a `bluetooth-peripheral` background mode as a fallback).
 - First use prompts for **Bluetooth** permission on both devices — allow it.
 
+## 4. iPhone ↔ iPad: sending documents (Multipeer Connectivity)
+
+Recordings come *from* the Watch; whole **documents** travel between the user's iPhones and iPads.
+Swipe a document right → **Send** (or select several → **Send**, or **⋯ → Send to Nearby
+Device…**), pick the other device from the list, and the document arrives in Woods Whisper there:
+new, or — when that device has one of the same name (or the same document, coming back) — after a
+**Replace / Keep Both** question.
+
+### Why not AirDrop
+Since iOS 17 an AirDropped file is saved to **Files → Downloads** and Files opens, rather than the
+file being handed to the app that owns its type. Apple's DTS has said this is intended
+([forum thread](https://developer.apple.com/forums/thread/737971)). A `.wwdoc` AirDropped to an iPad
+therefore lands in Files, and the user has to open it with Share → Woods Whisper. That route is
+still available (**Other Ways to Send…** in the Send sheet), but it isn't the main one.
+
+### How it works
+`NearbyDocumentTransfer` (WoodsWhisperKit, iOS only) uses **Multipeer Connectivity**, which finds
+the other device by Bonjour and moves data over infrastructure WiFi, peer-to-peer WiFi or
+Bluetooth, whichever it has. A shared network is not needed, so it works off-grid like the Watch
+paths.
+- **Advertising.** Every device advertises service `ww-docs` (`_ww-docs._tcp` / `._udp` in
+  `NSBonjourServices`) while the app is in the foreground. Multipeer doesn't run in the background,
+  so **Woods Whisper has to be open on the receiving device.** The discovery info carries a stable
+  per-install id, so a device is recognised by more than its changeable name. The `MCPeerID` is
+  archived and reused across launches (Apple's recommendation) and is only remade when the
+  **Device name** changes.
+- **Browsing.** Only while the Send sheet is open.
+- **Sending.** The document is exported as a `.wwdoc` (the same archive as before: body,
+  recordings, audio, and a joint document's other half). The sender invites the peer into a fresh
+  `MCSession` (encryption **required**), passing its id and the titles as the invitation context,
+  and sends each file with `sendResource(at:…)`, which reports progress. Once every file is
+  delivered, the session is closed.
+- **Receiving.** An invitation from a device the user has marked **Always Accept** is accepted
+  straight away. Any other device raises a question first (**Accept / Always Accept / Decline**).
+  Trusted devices can be forgotten in **Settings → Nearby Devices**. A received file is moved out
+  of Multipeer's temporary location before the delegate returns, then goes through
+  `AppModel.importDocumentArchive(from:)`, the same path as a file opened from Files. Several files
+  arriving together are queued, so each gets its own Replace / Keep Both question in turn.
+
 ## Limits / honest caveats
 
 - With a WiFi-only iPad and no router, **Bluetooth is the only software path** — there's no way to
@@ -129,6 +168,8 @@ the `DeviceLink`. Off-grid, WiFi fails fast (no shared subnet) and Bluetooth win
 - BLE is **slower** than WiFi; it's meant for short field clips, not bulk sync.
 - If the iPad's WiFi IP changes (no DHCP reservation) on the `localNetwork` path, just re-pair —
   tap **Pair Watch** on the iPad and re-enter the new 5-digit code on the Watch.
+- **Sending documents needs Woods Whisper open on the receiving device** (Multipeer Connectivity
+  only runs in the foreground). The Send sheet lists only devices where it is.
 - This needs a **personal/sideloaded build**; the manual pairing UX wouldn't pass App Review,
   but that's irrelevant here. It uses only public APIs (no private/entitlement tricks), so it
   works on a normal developer-signed install.

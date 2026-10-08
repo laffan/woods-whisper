@@ -686,6 +686,16 @@ halves rather than growing a third, and the link is put back on the side it was 
 written under fresh file names, so an import never aliases audio already on the device. The
 imported document is opened straight away.
 
+Archives normally arrive through `NearbyDocumentTransfer` (**Send** → a nearby device; see
+`CONNECTIVITY.md` §4), and also arrive as a file opened from Files or another app. Either way
+they reach `AppModel.importDocumentArchive(from:)`. Files that arrive while a Replace / Keep Both
+question is up wait in a queue, and are matched against the library when their turn comes, so a
+document imported earlier in the same batch counts. The copy iOS or Multipeer handed over (in the
+app's own `tmp` or `Documents/Inbox`) is deleted once read; a file opened in place from Files is
+left alone. Each export is written to its own folder under `tmp/WoodsWhisperExports`, so two
+same-named documents sent together don't overwrite each other, and exports over an hour old are
+pruned.
+
 **Widget snapshot.** The iOS "Recent Documents" Home Screen widget (`Apps/iOSWidgets`) runs in its
 own process and can't read Application Support, so `WidgetSnapshotStore` mirrors a small JSON list
 of the top documents — id, title, `updatedAt`, pinned flag, one-line preview — into the shared App

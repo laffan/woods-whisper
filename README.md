@@ -492,18 +492,27 @@ the rest of the app depends on.
   splices the text in at the cursor — the clip is saved with the document's other recordings.
 - **Find & replace.** The whole-document editor has a find/replace bar at the bottom (the magnifying
   glass in the editor's toolbar) — search, step through matches, and Replace / Replace All.
-- **Send a document to another device, and back.** Swipe a document right and tap **Send**, or use
-  **Share as Woods Whisper File** in the document's **⋯** menu. Either makes a single `.wwdoc` file
-  holding the audio *and* the current edited text, and the share sheet sends it by **AirDrop** (or
-  Files, Messages…). No network round trip. A **joint document** travels as a pair. Open it on the
-  other device and it opens straight into the document. If that device already has it — because it
-  went out from there and is coming back, or because a document with the **same name** is already
-  there — you're asked first: **Replace** overwrites the one there with what arrived, recordings
-  included, keeping its place, its pin and its links; **Keep Both** adds the new one alongside. The
-  question says which copy was changed more recently. A shared document keeps its identity from
+- **Send a document to another device, and back.** Swipe a document right and tap **Send** (or
+  select several and tap **Send**, or **⋯ → Send to Nearby Device…**), and a list of your other
+  iPhones and iPads with Woods Whisper open nearby slides up. Tap one, and the document — audio,
+  current edited text and all, a **joint document** as a pair — goes **straight into Woods
+  Whisper** on it and opens there. The two devices connect directly (Multipeer Connectivity, over
+  peer-to-peer WiFi or Bluetooth), so it works with no WiFi network and no internet. If that device
+  already has it — because it went out from there and is coming back, or because a document with
+  the **same name** is already there — you're asked first: **Replace** overwrites the one there
+  with what arrived, recordings included, keeping its place, its pin and its links; **Keep Both**
+  adds the new one alongside. The question says which copy was changed more recently. The first
+  time a device sends to another, the receiving one asks whether to accept it (**Always Accept**
+  stops it asking; **Settings → Nearby Devices** forgets those). Woods Whisper has to be **open on
+  the receiving device** for it to appear in the list. A shared document keeps its identity from
   device to device, which is what makes "start on the phone, carry on on the iPad, send it back"
-  find the right document each time. Woods Whisper registers `.wwdoc` so it can both create and
-  receive them.
+  find the right document each time.
+  *Why not AirDrop?* Since iOS 17, iOS saves every AirDropped file to **Files → Downloads**
+  instead of handing it to the app that owns its type, which is why a shared document arrived there
+  as a text file. **Other Ways to Send…** at the bottom of the Send sheet still makes a single
+  `.wwdoc` Woods Whisper file for AirDrop, Files or Messages; on the other device, open it with
+  **Share → Woods Whisper** and it imports the same way. **⋯ → Share as Woods
+  Whisper File** does the same. **Share** itself hands over the text, for other apps.
 - **Link to a document from other apps.** Every document and graph has a link of its own —
   `woodswhisper://document/…` — under **⋯ → Document Link**: **Copy Link** for the bare address,
   **Copy Markdown Link** for `[Title](woodswhisper://document/…)` (for a notes app that reads

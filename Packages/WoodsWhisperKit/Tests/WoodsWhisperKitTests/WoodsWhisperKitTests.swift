@@ -543,6 +543,22 @@ final class WoodsWhisperKitTests: XCTestCase {
     }
 
     @MainActor
+    func testSameNamedDocumentsExportToSeparateFiles() throws {
+        let name = "ExportNameTests-\(UUID().uuidString)"
+        let store = DocumentStore(directoryName: name)
+        defer { removeStore(named: name) }
+
+        let first = store.createDocument(title: "Notes")
+        let second = store.createDocument(title: "Notes", kind: .graph)
+        let a = try store.exportArchive(for: first.id)
+        let b = try store.exportArchive(for: second.id)
+        XCTAssertNotEqual(a, b)
+        XCTAssertEqual(a.lastPathComponent, "Notes.wwdoc")
+        XCTAssertEqual(try store.readArchive(from: a).document.id, first.id)
+        XCTAssertEqual(try store.readArchive(from: b).document.id, second.id)
+    }
+
+    @MainActor
     func testAJointDocumentTravelsAsAPair() throws {
         let fromName = "JointFromTests-\(UUID().uuidString)"
         let toName = "JointToTests-\(UUID().uuidString)"
