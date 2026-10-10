@@ -18,20 +18,17 @@ public struct RevisionText: Equatable {
         /// The whitespace after the word, as written: a space, a line break, or nothing at the end.
         public var trailing: String
         public var isStruck: Bool
-        /// Spoken in during this revision — drawn apart from the words that were already there.
-        public var isNew: Bool
         /// Waiting on the words being transcribed to take its place.
         public var isPending: Bool
         /// Stands where spoken words are about to go in, until they arrive.
         public var isPlaceholder: Bool
 
         public init(id: UUID = UUID(), word: String, trailing: String = " ", isStruck: Bool = false,
-                    isNew: Bool = false, isPending: Bool = false, isPlaceholder: Bool = false) {
+                    isPending: Bool = false, isPlaceholder: Bool = false) {
             self.id = id
             self.word = word
             self.trailing = trailing
             self.isStruck = isStruck
-            self.isNew = isNew
             self.isPending = isPending
             self.isPlaceholder = isPlaceholder
         }
@@ -57,7 +54,7 @@ public struct RevisionText: Equatable {
     }
 
     /// Split text into words, each carrying the whitespace that follows it.
-    public static func tokens(from text: String, isNew: Bool = false) -> [Token] {
+    public static func tokens(from text: String) -> [Token] {
         var tokens: [Token] = []
         var word = ""
         var trailing = ""
@@ -66,14 +63,14 @@ public struct RevisionText: Equatable {
                 trailing.append(character)
             } else {
                 if !trailing.isEmpty {
-                    tokens.append(Token(word: word, trailing: trailing, isNew: isNew))
+                    tokens.append(Token(word: word, trailing: trailing))
                     word = ""
                     trailing = ""
                 }
                 word.append(character)
             }
         }
-        if !word.isEmpty { tokens.append(Token(word: word, trailing: "", isNew: isNew)) }
+        if !word.isEmpty { tokens.append(Token(word: word, trailing: "")) }
         return tokens
     }
 
@@ -164,18 +161,21 @@ public struct RevisionText: Equatable {
     /// Spoken words are fitted to where they land: lower-cased in the middle of a sentence and
     /// capitalised at the start of one, a full stop dropped when the sentence carries on after
     /// them, and the punctuation that closed a replaced word kept on the end of its replacement.
-    public mutating func finish(_ edit: Edit, with transcript: String?) {
-        var spoken = Self.tokens(from: transcript ?? "", isNew: true)
+    ///
+    /// Returns the ids of the words that went in, in order — empty when nothing did — so the
+    /// editor can select them.
+    @discardableResult
+    public mutating func finish(_ edit: Edit, with transcript: String?) -> [UUID] {
+        var spoken = Self.tokens(from: transcript ?? "")
 
         switch edit {
         case .insert(let placeholderID):
             guard let at = index(of: placeholderID) else {
                 // The spot has gone; what was said still has to land somewhere.
-                append(spoken)
-                return
+                return append(spoken)
             }
             let placeholder = tokens.remove(at: at)
-            guard !spoken.isEmpty else { return }
+            guard !spoken.isEmpty else { return [] }
             spoken[spoken.count - 1].trailing = placeholder.trailing
             fit(&spoken, at: at, replacing: nil)
             tokens.insert(contentsOf: spoken, at: at)
@@ -185,11 +185,10 @@ public struct RevisionText: Equatable {
             let indices = tokens.indices.filter { doomed.contains(tokens[$0].id) }
             guard !spoken.isEmpty else {
                 for index in indices { tokens[index].isPending = false }
-                return
+                return []
             }
             guard let first = indices.first, let last = indices.last else {
-                append(spoken)
-                return
+                return append(spoken)
             }
             let replaced = tokens[last]
             tokens.removeAll { doomed.contains($0.id) }
@@ -198,14 +197,49 @@ public struct RevisionText: Equatable {
             fit(&spoken, at: at, replacing: replaced.word)
             tokens.insert(contentsOf: spoken, at: at)
         }
+        return spoken.map(\.id)
     }
 
-    private mutating func append(_ spoken: [Token]) {
-        guard !spoken.isEmpty else { return }
+    private mutating func append(_ spoken: [Token]) -> [UUID] {
+        guard !spoken.isEmpty else { return [] }
         if let last = tokens.indices.last, tokens[last].trailing.isEmpty { tokens[last].trailing = " " }
         var spoken = spoken
         fit(&spoken, at: tokens.count, replacing: nil)
         tokens.append(contentsOf: spoken)
+        return spoken.map(\.id)
+    }
+
+    // MARK: Moving
+
+    /// Whether moving `range` to `gap` would go anywhere: a gap inside the words, or at either
+    /// edge of them, leaves them where they are.
+    public static func moves(_ range: ClosedRange<Int>, to gap: Int) -> Bool {
+        gap < range.lowerBound || gap > range.upperBound + 1
+    }
+
+    /// Move the words in `range` to `gap` — counted, like every gap, as the index of the word it
+    /// comes before in the text as it stands (the token count for the very end). The words keep
+    /// their ids, so a selection stays on them. A line break that ended the words stays where it
+    /// was rather than travelling with them, so lifting the end of a line doesn't join it to the
+    /// next one.
+    public mutating func move(_ range: ClosedRange<Int>, to gap: Int) {
+        guard tokens.indices.contains(range.lowerBound), tokens.indices.contains(range.upperBound),
+              Self.moves(range, to: gap), gap >= 0, gap <= tokens.count else { return }
+        var moved = Array(tokens[range])
+        let lastTrailing = moved[moved.count - 1].trailing
+        tokens.removeSubrange(range)
+        let before = range.lowerBound - 1
+        if tokens.indices.contains(before), moved[moved.count - 1].lineBreaks > tokens[before].lineBreaks {
+            tokens[before].trailing = lastTrailing
+        }
+        let at = gap > range.upperBound ? gap - moved.count : gap
+        if at == tokens.count {
+            if let last = tokens.indices.last, tokens[last].trailing.isEmpty { tokens[last].trailing = " " }
+            moved[moved.count - 1].trailing = ""
+        } else {
+            moved[moved.count - 1].trailing = " "
+        }
+        tokens.insert(contentsOf: moved, at: at)
     }
 
     /// Fit spoken words to the sentence they're going into at `at`. `replacedLast` is the last word

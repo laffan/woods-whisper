@@ -115,7 +115,8 @@ storage, and connectivity code without the model dependencies.
   have inserted beside it — words spoken over a hold. An edit is begun when the finger lifts (the
   words it replaces marked pending, or a placeholder standing in the gap) and finished when the
   transcript arrives, or undone if nothing was said; spoken words are fitted to the sentence they
-  land in. `revisedText` — what's saved — leaves the struck words out. Never persisted: it lives
+  land in, and `finish` hands back their ids so the editor can select them. `move` carries a run of
+  words to another gap, ids and all. `revisedText` — what's saved — leaves the struck words out. Never persisted: it lives
   only while the editor is open (`RevisionEditor` in the app), and the clips behind it are let go
   once transcribed (`AppModel.transcribeRevisionClip`), kept only when they couldn't be.
 - **`PromptPreset`** — a named, reusable instruction (`systemPrompt` + `template` with a

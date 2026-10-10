@@ -164,24 +164,29 @@ the rest of the app depends on.
   opens in an editor of its own, in large type — not a text field: there's no keyboard and no
   caret, and every gesture is for a finger and a voice.
   - **Swipe** across words to select them — no hold first.
-  - **Tap** the selection to strike it through; **double-tap** it to let it go. Struck words keep
-    their strike once they're let go, and from then on are a thing of their own.
+  - **Double-tap** the selection to strike it through (double-tap a struck selection to take the
+    strike off). **Tap** anywhere outside the selection to let it go. Struck words keep their
+    strike once they're let go, and from then on are a thing of their own.
   - **Hold** the selection — or struck words — and speak: a recording starts under your finger (the
     graph's tick, and the counter floats above it), and when you let go what you said takes their
     place.
+  - **Hold and drag** the selection to move it: the words lift and follow your finger, a blue caret
+    shows the gap they'll drop into, and they stay selected where they land. (The hold starts
+    recording, as above; setting off with the finger drops that recording and makes it a move.)
   - **Hold** anywhere else in the text and speak: let go, and it goes in at the gap you held, shown
     by an ember caret while you talk.
-  - **Triple-tap** struck words to take the strike off.
   - Drag **up or down** to scroll a long entry; a swipe that sets off sideways is a selection.
 
-  Spoken words are drawn in green until you're done, so what's new is easy to read back, and they're
-  fitted to where they land — lower-cased mid-sentence, a full stop dropped when the sentence goes
-  on, the punctuation of the words they replaced kept. (A name spoken mid-sentence gets lower-cased
-  too; that's the one thing the fitting can't tell.) **Undo** at the bottom left steps back a change
-  at a time; a line beside it says what the finger can do right now. **Done** saves — **struck words
-  are left out**, striking a word through being how you say it should go — and **Cancel** asks
-  before throwing changes away. A clip that works isn't kept: it's a few words, and its text is the
-  point. One that can't be transcribed (the speech model not ready yet, say) is kept — among the
+  What you've just spoken in arrives **selected**, so if it isn't right, hold on it and say it
+  again. A **Reset** button sits above it until something else changes: it puts back what was there
+  before the recording — still selected, ready for another try. Spoken words are fitted to where
+  they land — lower-cased mid-sentence, a full stop dropped when the sentence goes on, the
+  punctuation of the words they replaced kept. (A name spoken mid-sentence gets lower-cased too;
+  that's the one thing the fitting can't tell.) **Undo** at the bottom left steps back a change at a
+  time; a line beside it says what the finger can do right now. **Done** saves — **struck words are
+  left out**, striking a word through being how you say it should go — and **Cancel** asks before
+  throwing changes away. A clip that works isn't kept: it's a few words, and its text is the point.
+  One that can't be transcribed (the speech model not ready yet, say) is kept — among the
   document's Revisions, or as an Inbox entry of its own — and the editor says so.
 - **Coming back to where you were.** Switch to another app and back and you're on the screen you
   left: the same tab, the same document open. iOS ends a suspended app when it wants the memory —

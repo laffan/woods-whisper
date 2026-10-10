@@ -32,10 +32,11 @@ final class RevisionTextTests: XCTestCase {
         var revision = RevisionText("The quick brown fox jumps.")
         let edit = revision.beginReplacing(1...2)
         XCTAssertTrue(revision.hasPendingEdit)
-        revision.finish(edit, with: "Slow red.")
+        let spoken = revision.finish(edit, with: "Slow red.")
         XCTAssertEqual(revision.revisedText, "The slow red fox jumps.")
         XCTAssertFalse(revision.hasPendingEdit)
-        XCTAssertEqual(revision.tokens.filter(\.isNew).map(\.word), ["slow", "red"])
+        XCTAssertEqual(spoken.compactMap { id in revision.tokens.first { $0.id == id }?.word },
+                       ["slow", "red"])
     }
 
     func testReplacementKeepsTheReplacedWordsClosingPunctuation() {
@@ -69,6 +70,33 @@ final class RevisionTextTests: XCTestCase {
         XCTAssertFalse(revision.hasPendingEdit)
         XCTAssertFalse(revision.hasChanges)
         XCTAssertEqual(revision.tokens.map(\.word), ["Hello", "world."])
+    }
+
+    func testMovingWordsForwardAndBack() {
+        var revision = RevisionText("one two three four")
+        let ids = revision.tokens[0...1].map(\.id)
+        revision.move(0...1, to: 3)
+        XCTAssertEqual(revision.revisedText, "three one two four")
+        XCTAssertEqual(revision.tokens[1...2].map(\.id), ids)
+        revision.move(1...2, to: 4)
+        XCTAssertEqual(revision.revisedText, "three four one two")
+        revision.move(2...3, to: 0)
+        XCTAssertEqual(revision.revisedText, "one two three four")
+    }
+
+    func testMovingOntoItselfDoesNothing() {
+        var revision = RevisionText("one two three")
+        revision.move(1...1, to: 1)
+        revision.move(1...1, to: 2)
+        XCTAssertFalse(revision.hasChanges)
+        XCTAssertFalse(RevisionText.moves(1...1, to: 2))
+        XCTAssertTrue(RevisionText.moves(1...1, to: 3))
+    }
+
+    func testMovingTheEndOfALineKeepsTheLineBreak() {
+        var revision = RevisionText("first end\nsecond line")
+        revision.move(1...1, to: 4)
+        XCTAssertEqual(revision.revisedText, "first\nsecond line end")
     }
 
     func testWordsThatStayCapitalised() {

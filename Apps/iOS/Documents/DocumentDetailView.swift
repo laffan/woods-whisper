@@ -4106,16 +4106,18 @@ struct RevisionSubject: Identifiable {
 /// and each gesture means one thing:
 ///
 /// • **Swipe** across words to select them. No hold first: the swipe is the selecting.
-/// • **Tap** the selection to strike it through, **double-tap** it to let it go. A struck run keeps
-///   its strike once it's let go, and is a thing of its own from then on.
+/// • **Double-tap** the selection to strike it through (and again to take the strike off). A struck
+///   run keeps its strike once it's let go, and is a thing of its own from then on.
+/// • **Tap** anywhere outside the selection to let it go.
 /// • **Hold** the selection, or a struck run, and speak: let go, and what you said takes its place.
+/// • **Hold and drag** the selection to move it: a blue caret shows where it'll go.
 /// • **Hold** anywhere else in the text and speak: let go, and it goes in at the gap you held —
 ///   the graph canvas's hold, in a line of text.
-/// • **Triple-tap** struck words to take the strike off.
 /// • Drag **up or down** to scroll; a swipe that starts sideways is a selection.
 ///
-/// Struck words are left out of what's saved — striking a word through is how you say it should
-/// go. Words spoken in are drawn in moss until then, so what's new is easy to read back.
+/// What was just spoken in arrives **selected**, so trying again is one more hold on it, with a
+/// **Reset** button above it that puts back what was there before. Struck words are left out of
+/// what's saved — striking a word through is how you say it should go.
 struct RevisionEditor: View {
     let title: String
     /// Where a clip that couldn't be transcribed is kept, so what was said isn't lost.
@@ -4131,6 +4133,9 @@ struct RevisionEditor: View {
     @State private var history: [RevisionText] = []
     @State private var selection: TokenSpan?
     @State private var frames = RevisionFrames()
+    /// The words a recording has just put in, and what was there before them — what **Reset**
+    /// puts back. Forgotten as soon as anything else changes the text.
+    @State private var justRecorded: JustRecorded?
 
     // Scrolling, done by hand: the touch that scrolls is the same touch that selects, decided by
     // which way it sets off.
@@ -4147,16 +4152,18 @@ struct RevisionEditor: View {
     @State private var holdTask: Task<Void, Never>?
     @GestureState private var isTouching = false
 
-    // Taps are counted, since one, two and three of them on the same words mean different things.
-    @State private var tapCount = 0
+    // The last tap, so a second one close behind it on the selection reads as a double tap.
     @State private var lastTapTime = Date.distantPast
     @State private var lastTapPoint = CGPoint.zero
-    @State private var tapTask: Task<Void, Never>?
 
-    // A hold that's recording: what it's for, and where the finger is (viewport points).
+    // A hold that's recording: what it's for, and where the finger is (viewport points). A hold
+    // on the selection can still turn into a move, until the finger has stayed put.
     @StateObject private var recorder = AudioRecorder()
     @State private var recordTarget: RecordTarget?
     @State private var recordAnchor: CGPoint?
+    @State private var holdIsOnSelection = false
+    /// The selection being carried to somewhere else in the text.
+    @State private var moveDrag: MoveDrag?
 
     @State private var errorMessage: String?
     @State private var showingDiscardConfirm = false
@@ -4176,16 +4183,23 @@ struct RevisionEditor: View {
     private var wordGap: CGFloat { fontSize * 0.3 }
     private var lineSpacing: CGFloat { fontSize * 0.3 }
     private static let insetX: CGFloat = 22
-    private static let insetTop: CGFloat = 20
+    /// Room above the first line for the Reset button to sit over words spoken into it.
+    private static let insetTop: CGFloat = 56
     private static let space = "revisionText"
     /// How far a finger moves before it's a swipe rather than a tap or a hold.
     private static let slop: CGFloat = 10
+    /// How far a held finger moves before a hold on the selection is a move rather than speech —
+    /// more than a tap's slop, so a finger that drifts a little while talking still records.
+    private static let moveSlop: CGFloat = 18
     private static let holdDelay: UInt64 = 450_000_000
-    /// How close together taps have to come to count as one double or triple tap.
-    private static let multiTapInterval: TimeInterval = 0.32
+    /// How close together two taps have to come to count as a double tap.
+    private static let doubleTapInterval: TimeInterval = 0.32
+    private static let resetSize = CGSize(width: 92, height: 32)
+    /// How far above the first word of a just-recorded selection the Reset button sits.
+    private static let resetLift: CGFloat = 42
 
     private var isRecording: Bool { recordTarget != nil }
-    private var isBusy: Bool { isRecording || revision.hasPendingEdit }
+    private var isBusy: Bool { isRecording || moveDrag != nil || revision.hasPendingEdit }
 
     // MARK: Body
 
@@ -4200,6 +4214,7 @@ struct RevisionEditor: View {
                     .contentShape(Rectangle())
                     .gesture(touchGesture)
                     .overlay { recordingReadout(in: geo.size) }
+                    .overlay { movingWords(in: geo.size) }
                     .onChange(of: geo.size.height, initial: true) { _, height in
                         viewportHeight = height
                         clampScroll()
@@ -4246,8 +4261,8 @@ struct RevisionEditor: View {
         }
     }
 
-    /// The words, laid out one by one so each can say where it is, with the insertion caret drawn
-    /// over them while a hold is recording into a gap.
+    /// The words, laid out one by one so each can say where it is, with a caret drawn over them
+    /// while a hold is recording into a gap or the selection is being carried to one.
     private var textContent: some View {
         RevisionFlowLayout(lineSpacing: lineSpacing) {
             ForEach(Array(revision.tokens.enumerated()), id: \.element.id) { index, token in
@@ -4256,7 +4271,7 @@ struct RevisionEditor: View {
         }
         .frame(minHeight: fontSize * 1.4, alignment: .topLeading)
         .coordinateSpace(name: Self.space)
-        .overlay(alignment: .topLeading) { insertionCaret }
+        .overlay(alignment: .topLeading) { caret }
         .overlay(alignment: .topLeading) {
             if revision.tokens.isEmpty {
                 Text("Nothing here yet. Hold anywhere and speak.")
@@ -4281,6 +4296,7 @@ struct RevisionEditor: View {
     private func wordView(_ token: RevisionText.Token, index: Int) -> some View {
         let selected = selectedRange?.contains(index) ?? false
         let targeted = recordTarget?.replaces(token.id) ?? false
+        let carriesReset = showsReset && justRecorded?.span.first == token.id
         return Text(token.word)
             .font(.system(size: fontSize))
             .strikethrough(token.isStruck, color: WW.ember)
@@ -4295,7 +4311,7 @@ struct RevisionEditor: View {
                     Rectangle().fill(WW.moss.opacity(0.2))
                 }
             }
-            .opacity(token.isPending ? 0.4 : 1)
+            .opacity(token.isPending || (selected && moveDrag != nil) ? 0.4 : 1)
             .background {
                 GeometryReader { geo in
                     Color.clear.onChange(of: geo.frame(in: .named(Self.space)), initial: true) { _, frame in
@@ -4303,6 +4319,13 @@ struct RevisionEditor: View {
                     }
                 }
             }
+            // The Reset button rides on the first word spoken in, so it sits over the selection
+            // wherever that has wrapped to. It's drawn only: the tap is read by `registerTap`,
+            // which knows where it is from the same word's frame.
+            .overlay(alignment: .topLeading) {
+                if carriesReset { resetButton.offset(y: -Self.resetLift) }
+            }
+            .zIndex(carriesReset ? 1 : 0)
             .onDisappear { frames.words[token.id] = nil }
             .layoutValue(key: RevisionLineBreaks.self, value: token.lineBreaks)
     }
@@ -4310,21 +4333,40 @@ struct RevisionEditor: View {
     private func wordColor(_ token: RevisionText.Token) -> Color {
         if token.isPlaceholder { return WW.inkTertiary }
         if token.isStruck { return WW.inkSecondary }
-        if token.isNew { return WW.moss }
         return WW.ink
     }
 
-    /// While a hold records into a gap, an ember caret stands in it.
+    private var resetButton: some View {
+        Label("Reset", systemImage: "arrow.uturn.backward")
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundStyle(WW.moss)
+            .frame(width: Self.resetSize.width, height: Self.resetSize.height)
+            .background(WW.surface, in: Capsule())
+            .overlay(Capsule().stroke(WW.moss.opacity(0.5), lineWidth: 1))
+            .shadow(color: .black.opacity(0.12), radius: 8, y: 2)
+            .fixedSize()
+            .allowsHitTesting(false)
+            .accessibilityLabel("Reset to what was there before")
+    }
+
+    /// An ember caret in the gap a hold is recording into; a blue one in the gap the selection
+    /// would be moved to.
     @ViewBuilder
-    private var insertionCaret: some View {
-        if case .insert(_, let caret?) = recordTarget {
-            Capsule()
-                .fill(WW.ember)
-                .frame(width: 3, height: caret.height)
-                .shadow(color: WW.ember.opacity(0.5), radius: 3)
-                .offset(x: caret.minX - 1.5, y: caret.minY)
-                .allowsHitTesting(false)
+    private var caret: some View {
+        if case .insert(_, let rect?) = recordTarget {
+            caretMark(rect, tint: WW.ember)
+        } else if let rect = moveDrag?.caret {
+            caretMark(rect, tint: WW.dropBlue)
         }
+    }
+
+    private func caretMark(_ rect: CGRect, tint: Color) -> some View {
+        Capsule()
+            .fill(tint)
+            .frame(width: 3, height: rect.height)
+            .shadow(color: tint.opacity(0.5), radius: 3)
+            .offset(x: rect.minX - 1.5, y: rect.minY)
+            .allowsHitTesting(false)
     }
 
     /// The elapsed counter, floating above the finger that's holding — as on the graph canvas.
@@ -4348,6 +4390,30 @@ struct RevisionEditor: View {
                       y: max(30, anchor.y - fontSize - 44))
             .allowsHitTesting(false)
             .transition(.opacity)
+        }
+    }
+
+    /// The selected words, lifted and following the finger while they're carried — above it
+    /// rather than under it, so the gap they'd drop into stays in sight.
+    @ViewBuilder
+    private func movingWords(in size: CGSize) -> some View {
+        if let drag = moveDrag, let range = selectedRange {
+            Text(revision.tokens[range].map(\.word).joined(separator: " "))
+                .font(.system(size: fontSize * 0.8))
+                .strikethrough(revision.tokens[range].allSatisfy(\.isStruck), color: WW.ember)
+                .foregroundStyle(WW.ink)
+                .lineLimit(2)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .frame(maxWidth: min(size.width - 48, 360))
+                .fixedSize(horizontal: false, vertical: true)
+                .background(WW.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(WW.dropBlue.opacity(0.6), lineWidth: 1))
+                .shadow(color: .black.opacity(0.18), radius: 12, y: 4)
+                .position(x: min(max(100, drag.location.x), max(100, size.width - 100)),
+                          y: max(30, drag.location.y - fontSize - 40))
+                .allowsHitTesting(false)
         }
     }
 
@@ -4388,16 +4454,19 @@ struct RevisionEditor: View {
     }
 
     private var hint: String {
+        if moveDrag != nil { return "Let go to move the words to the blue caret." }
         if isRecording {
             if case .insert = recordTarget { return "Speak — let go to put it in here." }
+            if holdIsOnSelection { return "Speak — let go and it takes their place. Drag to move instead." }
             return "Speak — let go and it takes their place."
         }
         if revision.hasPendingEdit { return "Transcribing…" }
+        if showsReset { return "Hold to try again · Reset puts back what was there" }
         if selection != nil {
-            return "Tap to strike through · hold to speak over · double-tap to let go"
+            return "Double-tap to strike through · hold to speak over · hold and drag to move"
         }
         if revision.tokens.contains(where: \.isStruck) {
-            return "Hold struck words to speak over them · triple-tap to unstrike · struck words go on Done"
+            return "Hold struck words to speak over them · struck words go on Done"
         }
         return "Swipe to select · hold anywhere to speak in"
     }
@@ -4413,9 +4482,9 @@ struct RevisionEditor: View {
 
     private func touchChanged(_ value: DragGesture.Value) {
         if touchStart != value.startLocation { beginTouch(at: value.startLocation) }
+        let moved = value.translation
         switch touchMode {
         case .undecided:
-            let moved = value.translation
             guard hypot(moved.width, moved.height) > Self.slop else { return }
             cancelHoldTimer()
             if abs(moved.width) >= abs(moved.height) {
@@ -4431,7 +4500,14 @@ struct RevisionEditor: View {
             extendSelection(to: value.location)
         case .scrolling:
             scroll(to: scrollAtTouch - value.translation.height)
-        case .recording, .ignored:
+        case .recording, .heldSelection:
+            // A hold on the selection that sets off somewhere is a move, not speech.
+            if holdIsOnSelection, hypot(moved.width, moved.height) > Self.moveSlop {
+                beginMove(at: value.location)
+            }
+        case .moving:
+            updateMove(to: value.location)
+        case .ignored:
             break
         }
     }
@@ -4441,19 +4517,23 @@ struct RevisionEditor: View {
         let mode = touchMode
         touchStart = nil
         touchMode = .undecided
+        holdIsOnSelection = false
         switch mode {
         case .undecided: registerTap(at: value.startLocation)
         case .selecting: if selection != nil { WWHaptics.light() }
         case .recording: finishHold()
-        case .scrolling, .ignored: break
+        case .moving: finishMove()
+        case .scrolling, .heldSelection, .ignored: break
         }
     }
 
     private func touchCancelled() {
         cancelHoldTimer()
         if touchMode == .recording { finishHold() }
+        moveDrag = nil
         touchStart = nil
         touchMode = .undecided
+        holdIsOnSelection = false
     }
 
     /// A finger has gone down: it's a tap, a swipe or a hold — which one is up to what it does
@@ -4462,6 +4542,7 @@ struct RevisionEditor: View {
         cancelHoldTimer()
         touchStart = point
         touchMode = .undecided
+        holdIsOnSelection = false
         scrollAtTouch = scrollOffset
         WWHaptics.prepare()
         holdTask = Task { @MainActor in
@@ -4507,76 +4588,88 @@ struct RevisionEditor: View {
 
     // MARK: Tapping
 
-    /// Count the tap, and act once it's clear how many there are going to be. A third tap is the
-    /// most anything listens for, so that one acts at once.
+    /// A tap outside the selection lets it go, at once. On the selection, one tap does nothing and
+    /// a second close behind it strikes the words through — or, if they're all struck already,
+    /// takes the strike off. A tap on Reset is Reset.
     private func registerTap(at point: CGPoint) {
-        let now = Date()
-        if now.timeIntervalSince(lastTapTime) < Self.multiTapInterval,
-           hypot(point.x - lastTapPoint.x, point.y - lastTapPoint.y) < 40 {
-            tapCount += 1
-        } else {
-            tapCount = 1
-        }
-        lastTapTime = now
-        lastTapPoint = point
-        tapTask?.cancel()
-        let count = tapCount
         let spot = contentPoint(point)
-        guard count < 3 else {
-            tapCount = 0
-            resolveTaps(3, at: spot)
+        if let reset = resetFrame, reset.contains(spot) {
+            performReset()
+            lastTapTime = .distantPast
             return
         }
-        tapTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: UInt64(Self.multiTapInterval * 1_000_000_000))
-            guard !Task.isCancelled else { return }
-            tapCount = 0
-            resolveTaps(count, at: spot)
+        let now = Date()
+        let isDouble = now.timeIntervalSince(lastTapTime) < Self.doubleTapInterval
+            && hypot(point.x - lastTapPoint.x, point.y - lastTapPoint.y) < 40
+        // A double tap is used up: a third tap starts counting again.
+        lastTapTime = isDouble ? .distantPast : now
+        lastTapPoint = point
+
+        guard let range = selectedRange, let index = tokenIndex(at: spot), range.contains(index) else {
+            if selection != nil { selection = nil }
+            return
         }
+        guard isDouble, !isBusy, !revision.tokens[range].contains(where: \.isPlaceholder) else { return }
+        let allStruck = revision.tokens[range].allSatisfy(\.isStruck)
+        change { $0.setStruck(!allStruck, in: range) }
+        WWHaptics.light()
     }
 
-    /// On the selection: one tap strikes it through, two let it go, three take the strike off and
-    /// let it go. On struck words that aren't selected, three taps take the strike off.
-    private func resolveTaps(_ count: Int, at point: CGPoint) {
-        guard !isBusy, let index = tokenIndex(at: point) else { return }
-        if let range = selectedRange, range.contains(index) {
-            switch count {
-            case 1:
-                guard !revision.tokens[range].allSatisfy(\.isStruck) else { return }
-                change { $0.setStruck(true, in: range) }
-                WWHaptics.light()
-            case 2:
-                selection = nil
-            default:
-                change { $0.setStruck(false, in: range) }
-                selection = nil
-                WWHaptics.light()
-            }
-        } else if count >= 3, let run = revision.struckRun(around: index) {
-            change { $0.setStruck(false, in: run) }
-            WWHaptics.light()
-        }
+    // MARK: Reset
+
+    /// Reset shows over the words a recording just put in, for as long as they're still what's
+    /// selected and nothing else has changed.
+    private var showsReset: Bool {
+        guard let justRecorded, !isBusy else { return false }
+        return selection == justRecorded.span
+    }
+
+    /// Where the Reset button is, in the text's coordinates: lifted above the first word spoken in.
+    private var resetFrame: CGRect? {
+        guard showsReset, let id = justRecorded?.span.first, let word = frames.words[id] else { return nil }
+        return CGRect(origin: CGPoint(x: word.minX, y: word.minY - Self.resetLift),
+                      size: Self.resetSize)
+            .insetBy(dx: -6, dy: -6)
+    }
+
+    /// Put back what was there before the last recording — and keep it selected, so holding on it
+    /// again is another try. (After an insertion there's nothing left to select.)
+    private func performReset() {
+        guard let just = justRecorded else { return }
+        revision = just.before
+        selection = just.restores
+        if history.last == just.before { history.removeLast() }
+        justRecorded = nil
+        WWHaptics.light()
     }
 
     // MARK: Holding to speak
 
     /// The finger has been held still. Over the selection, or over struck words, what's said will
-    /// replace them; anywhere else, it goes in at the gap nearest the finger.
+    /// replace them; anywhere else, it goes in at the gap nearest the finger. A hold on the
+    /// selection may yet turn into a move, if the finger sets off.
     private func beginHold(at point: CGPoint) {
+        let spot = contentPoint(point)
+        if let reset = resetFrame, reset.contains(spot) {
+            touchMode = .ignored
+            return
+        }
+        let hit = tokenIndex(at: spot)
+        let range = selectedRange
+        holdIsOnSelection = hit.map { range?.contains($0) ?? false } ?? false
         guard !revision.hasPendingEdit else {
-            // One clip at a time, so each one's words land where it was spoken.
+            // One clip at a time, so each one's words land where they were spoken.
             touchMode = .ignored
             return
         }
         guard canRecord() else {
-            touchMode = .ignored
+            touchMode = holdIsOnSelection ? .heldSelection : .ignored
             return
         }
-        let spot = contentPoint(point)
         let target: RecordTarget
-        if let index = tokenIndex(at: spot), let range = selectedRange, range.contains(index) {
+        if holdIsOnSelection, let range {
             target = .replace(ids: revision.tokens[range].map(\.id))
-        } else if let index = tokenIndex(at: spot), let run = revision.struckRun(around: index) {
+        } else if let hit, let run = revision.struckRun(around: hit) {
             target = .replace(ids: revision.tokens[run].map(\.id))
         } else {
             let gap = gap(at: spot)
@@ -4586,7 +4679,7 @@ struct RevisionEditor: View {
             try recorder.start(to: model.documents.newAudioURL().url)
         } catch {
             errorMessage = error.localizedDescription
-            touchMode = .ignored
+            touchMode = holdIsOnSelection ? .heldSelection : .ignored
             return
         }
         recordTarget = target
@@ -4595,7 +4688,8 @@ struct RevisionEditor: View {
         WWHaptics.recordingStarted()
     }
 
-    /// The finger lifted: stop, hold the spot, and put the words in when they arrive.
+    /// The finger lifted: stop, hold the spot, and put the words in when they arrive — selected,
+    /// with Reset over them.
     private func finishHold() {
         guard let target = recordTarget else { return }
         recordTarget = nil
@@ -4608,19 +4702,21 @@ struct RevisionEditor: View {
         }
         let before = revision
         let edit: RevisionText.Edit
+        var restores: TokenSpan?
         switch target {
         case .replace(let ids):
             let indices = ids.compactMap { revision.index(of: $0) }
             if let lower = indices.min(), let upper = indices.max() {
                 edit = revision.beginReplacing(lower...upper)
+                restores = TokenSpan(first: revision.tokens[lower].id, last: revision.tokens[upper].id)
             } else {
                 edit = revision.beginInserting(at: revision.tokens.count)
             }
-            if let range = selectedRange, indices.contains(range.lowerBound) { selection = nil }
         case .insert(let gap, _):
             edit = revision.beginInserting(at: gap)
         }
         history.append(before)
+        justRecorded = nil
         WWHaptics.light()
         Task { @MainActor in
             let outcome = await model.transcribeRevisionClip(audioURL: result.url,
@@ -4628,7 +4724,12 @@ struct RevisionEditor: View {
                                                              in: documentID)
             switch outcome {
             case .text(let text):
-                revision.finish(edit, with: text)
+                let spoken = revision.finish(edit, with: text)
+                if let first = spoken.first, let last = spoken.last {
+                    let span = TokenSpan(first: first, last: last)
+                    selection = span
+                    justRecorded = JustRecorded(before: before, span: span, restores: restores)
+                }
             case .nothing:
                 revision.finish(edit, with: nil)
                 if history.last == revision { history.removeLast() }
@@ -4654,17 +4755,71 @@ struct RevisionEditor: View {
         return true
     }
 
+    // MARK: Moving the selection
+
+    /// A hold on the selection has set off: whatever it was recording is dropped — the finger was
+    /// asking to carry the words, not to speak over them — and the words lift and follow it.
+    private func beginMove(at point: CGPoint) {
+        if recordTarget != nil {
+            recordTarget = nil
+            recordAnchor = nil
+            if let result = recorder.stop() { try? FileManager.default.removeItem(at: result.url) }
+        }
+        guard selectedRange != nil else {
+            touchMode = .ignored
+            return
+        }
+        touchMode = .moving
+        moveDrag = MoveDrag(location: point)
+        WWHaptics.medium()
+        updateMove(to: point)
+    }
+
+    /// Follow the finger: the gap nearest it, unless that's in or right beside the words being
+    /// carried (dropping them there would leave them where they are). Near the top or bottom
+    /// edge, the text scrolls to bring more of it under the finger.
+    private func updateMove(to point: CGPoint) {
+        guard var drag = moveDrag, let range = selectedRange else { return }
+        if point.y < 60 {
+            scroll(to: scrollOffset - 10)
+        } else if point.y > viewportHeight - 60 {
+            scroll(to: scrollOffset + 10)
+        }
+        drag.location = point
+        let gap = gap(at: contentPoint(point))
+        if RevisionText.moves(range, to: gap.index) {
+            drag.gap = gap.index
+            drag.caret = gap.caret
+        } else {
+            drag.gap = nil
+            drag.caret = nil
+        }
+        if drag.gap != moveDrag?.gap { WWHaptics.light() }
+        moveDrag = drag
+    }
+
+    /// The finger lifted: the words go into the gap, and stay selected.
+    private func finishMove() {
+        guard let drag = moveDrag else { return }
+        moveDrag = nil
+        guard let gap = drag.gap, let range = selectedRange else { return }
+        change { $0.move(range, to: gap) }
+        WWHaptics.medium()
+    }
+
     // MARK: Changes
 
     private func change(_ body: (inout RevisionText) -> Void) {
         history.append(revision)
         body(&revision)
+        justRecorded = nil
     }
 
     private func undo() {
         guard !isBusy, let previous = history.popLast() else { return }
         revision = previous
         selection = nil
+        justRecorded = nil
         WWHaptics.light()
     }
 
@@ -4682,8 +4837,7 @@ struct RevisionEditor: View {
     /// Nothing left running behind a closed editor: a recording in progress is dropped.
     private func tearDown() {
         cancelHoldTimer()
-        tapTask?.cancel()
-        tapTask = nil
+        moveDrag = nil
         guard recordTarget != nil else { return }
         recordTarget = nil
         recordAnchor = nil
@@ -4737,7 +4891,12 @@ struct RevisionEditor: View {
 
     // MARK: Small types
 
-    private enum TouchMode { case undecided, selecting, scrolling, recording, ignored }
+    private enum TouchMode {
+        case undecided, selecting, scrolling, recording, moving, ignored
+        /// Held on the selection without a recording running (no microphone permission): it can
+        /// still become a move.
+        case heldSelection
+    }
 
     /// What a hold is recording for.
     private enum RecordTarget {
@@ -4753,10 +4912,26 @@ struct RevisionEditor: View {
     }
 
     /// A selection, by the words at its ends rather than their positions, so it stays on the same
-    /// words when spoken ones arrive in front of it.
+    /// words when spoken ones arrive in front of it, or when it's moved.
     private struct TokenSpan: Equatable {
         let first: UUID
         let last: UUID
+    }
+
+    /// The selection on its way somewhere: where the finger is (viewport points), and the gap it
+    /// would drop into, if any.
+    private struct MoveDrag {
+        var location: CGPoint
+        var gap: Int?
+        var caret: CGRect?
+    }
+
+    /// What a recording has just done, so **Reset** can undo it: the text before, the words that
+    /// went in, and the words to select again once they're back (nil after an insertion).
+    private struct JustRecorded {
+        let before: RevisionText
+        let span: TokenSpan
+        let restores: TokenSpan?
     }
 }
 
