@@ -14,7 +14,7 @@ import ActivityKit
 /// the stretches the recording was paused for, exactly like the in-app counter.
 public struct RecordingActivityAttributes: Codable, Hashable, Sendable {
     /// What the recorder is doing, taken from the recording sheet's own title ("New Recording",
-    /// "Insert Recording", "Revise Paragraph", …), so the Lock Screen names the same task the app
+    /// "Insert Recording", "Redo Paragraph", …), so the Lock Screen names the same task the app
     /// does.
     public var taskName: String
 

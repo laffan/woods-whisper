@@ -36,6 +36,11 @@ struct DocumentsView: View {
     /// Rows push their document by value rather than wrapping it in a `NavigationLink`, so a row can
     /// carry both a tap (open / toggle) and a long press (enter selection) without the two competing.
     @State private var path: [Route] = []
+    /// `path`, as scene state, so the document you had open is the one you come back to after iOS
+    /// has ended the app in the background (see `ContentView.selectedTab`). Written on every
+    /// change, read back once, the first time the list appears.
+    @SceneStorage("DocumentsView.path") private var savedPath = ""
+    @State private var didRestorePath = false
 
     // Long-press-to-select, mirroring the Inbox's batch mode: Copy / Pin / Share / Delete applied to
     // several documents at once.
@@ -228,7 +233,12 @@ struct DocumentsView: View {
             // visible, onAppear for one that switched tabs before this view existed (the pending
             // id waits in the launcher until then).
             .onChange(of: opener.pendingDocumentID) { openPendingDocument() }
-            .onAppear { openPendingDocument() }
+            .onChange(of: path) { _, path in savedPath = Route.encode(path) }
+            .onAppear {
+                restorePath()
+                // After the restore, so a widget tap or a document link that launched the app wins.
+                openPendingDocument()
+            }
             // A hold whose finger never came back — a tab switched away mid-recording — is filed
             // rather than left running behind the list.
             .onDisappear { finishHoldRecording() }
@@ -276,6 +286,21 @@ struct DocumentsView: View {
         }
         if selectionMode { exitSelection() }
         path = [.document(id)]
+    }
+
+    /// Put back the documents that were open when the app was last ended in the background —
+    /// skipping any that have gone since (deleted, or sent to the Trash on another screen).
+    private func restorePath() {
+        guard !didRestorePath else { return }
+        didRestorePath = true
+        guard path.isEmpty else { return }
+        let restored = Route.decode(savedPath).filter { route in
+            switch route {
+            case .document(let id): return model.documents.document(with: id) != nil
+            case .trash: return true
+            }
+        }
+        if !restored.isEmpty { path = restored }
     }
 
     /// "Restore and Open", for a link to a document in the Trash.
@@ -547,6 +572,25 @@ struct DocumentsView: View {
     enum Route: Hashable {
         case document(UUID)
         case trash
+
+        /// A stack of routes as one string, for scene storage: `trash`, or a document's id, one
+        /// per line.
+        static func encode(_ routes: [Route]) -> String {
+            routes.map { route in
+                switch route {
+                case .document(let id): return id.uuidString
+                case .trash: return "trash"
+                }
+            }
+            .joined(separator: "\n")
+        }
+
+        static func decode(_ string: String) -> [Route] {
+            string.split(separator: "\n").compactMap { line in
+                if line == "trash" { return .trash }
+                return UUID(uuidString: String(line)).map(Route.document)
+            }
+        }
     }
 
     /// Why a document link couldn't be followed — see `openPendingDocument`.

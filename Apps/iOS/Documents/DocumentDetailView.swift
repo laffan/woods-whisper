@@ -19,9 +19,9 @@ import GameController
 /// separate "Recordings" section at the bottom.
 ///
 /// • The body reads top-to-bottom. Between paragraphs, a "+" inserts a fresh recording's transcript
-///   at that spot. Swipe a paragraph for Delete / Revise / Move / Edit / Transform. Hold one and
+///   at that spot. Swipe a paragraph for Delete / Redo / Move / Edit / Revise / Transform. Hold one and
 ///   drag it: onto another paragraph to merge into it (held there two seconds, at a precise spot),
-///   between two to move it. A long press released without moving enters reorder mode. A "Revise"
+///   between two to move it. A long press released without moving enters reorder mode. A "Redo"
 ///   clip is set aside in a "Revisions" section.
 /// • Recordings are source material: play them, or "Re-transcribe" to append their text to the body.
 ///   Long-press a recording to enter selection mode for batch actions.
@@ -115,6 +115,9 @@ struct DocumentDetailView: View {
     // Recording flows (insert / replace / re-record / add) routed through one sheet
     @State private var recorderTask: RecorderTask?
 
+    /// The section open in the Revise editor (swipe right → Revise).
+    @State private var revisingParagraph: RevisionSubject?
+
     // "Import Text File…" from the overflow menu
     @State private var showingTextImporter = false
 
@@ -128,6 +131,7 @@ struct DocumentDetailView: View {
     /// is the ⌘ at the left of this document's Auto transform strip — or, in half of a joint
     /// document, the canvas's own beside its minimap.)
     @ObservedObject private var modifierKeys = ModifierKeyMonitor.shared
+    @Environment(\.scenePhase) private var scenePhase
 
     private var document: Document? { model.documents.document(with: documentID) }
 
@@ -155,11 +159,27 @@ struct DocumentDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { if !isEmbedded { toolbarContent(for: document) } }
         .onAppear { playback.onError = { message in model.setupError = message } }
+        // Going to the background saves an open edit where it stands — the editor stays open —
+        // since iOS may end the app before it's brought back, and an edit that's only in the
+        // buffer would go with it.
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .background, let id = editingParagraphID {
+                model.documents.updateParagraph(id, in: documentID, to: editingText)
+            }
+        }
         // Leaving the document commits an open in-place edit rather than dropping it.
         .onDisappear {
             playback.stop()
             finishEditing()
             cancelSectionDrag()
+        }
+        .fullScreenCover(item: $revisingParagraph) { subject in
+            RevisionEditor(title: "Revise Section", text: subject.text,
+                           documentID: documentID) { text in
+                model.documents.replaceParagraph(subject.id, in: documentID,
+                                                 withTextSplitInto: text)
+                wwLog("Revised a section", .general)
+            }
         }
         .sheet(item: $recorderTask) { task in
             RecordingSheet(title: task.sheetTitle,
@@ -234,6 +254,13 @@ struct DocumentDetailView: View {
                             movingParagraphID = nil
                         }
                         wwLog("Moved a section to “\(target.title)”", .general)
+                    },
+                    // Back to the Inbox, as an entry of its own — the way imported text arrives.
+                    onInbox: {
+                        withAnimation(.snappy(duration: 0.22)) {
+                            model.moveParagraphToInbox(paragraphID, from: documentID)
+                            movingParagraphID = nil
+                        }
                     })
             }
         }
@@ -440,7 +467,7 @@ struct DocumentDetailView: View {
     ///
     /// The paragraph being edited drops every gesture the others carry: its row *is* the editor, so
     /// a double tap belongs to the text view (select a word), a long press to the selection handles,
-    /// and a swipe to the caret — not to reorder, delete, or revise.
+    /// and a swipe to the caret — not to reorder, delete, or redo.
     @ViewBuilder
     private func paragraphRow(_ para: Document.Paragraph, position: Int) -> some View {
         let isEditing = editingParagraphID == para.id
@@ -475,25 +502,26 @@ struct DocumentDetailView: View {
                 .rowHold(onPhase: { handleSectionHold($0, on: para) },
                          fallback: sectionDragGesture(for: para))
                 .opacity(sectionDrag?.paragraphID == para.id ? 0.35 : 1)
-                // Swipe left → Delete / Revise / Move
+                // Swipe left → Delete / Redo / Move
                 .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                     Button("Delete", role: .destructive) {
                         model.documents.deleteParagraph(para.id, in: documentID)
                     }
                     .tint(WW.ember)
-                    Button("Revise") { recorderTask = .revise(paragraphID: para.id) }.tint(WW.amber)
+                    Button("Redo") { recorderTask = .redo(paragraphID: para.id) }.tint(WW.amber)
                     // The Inbox's Move, for a section: another document, or a new one made of it.
                     Button("Move") {
                         withAnimation(.snappy(duration: 0.22)) { movingParagraphID = para.id }
                     }
                     .tint(WW.slate)
                 }
-                // Swipe right → Transform / Edit
+                // Swipe right → Transform / Edit / Revise
                 .swipeActions(edge: .leading, allowsFullSwipe: false) {
                     Button("Transform") {
                         withAnimation(.snappy(duration: 0.22)) { paragraphTransformTarget = para.id }
                     }.tint(WW.violet)
                     Button("Edit") { startEditing(para) }.tint(WW.slate)
+                    Button("Revise") { startRevising(para) }.tint(WW.moss)
                 }
         }
     }
@@ -1345,8 +1373,8 @@ struct DocumentDetailView: View {
         case .insertBody(let position):
             model.addDeviceRecording(audioURL: url, duration: duration, toDocument: documentID,
                                      body: .at(position))
-        case .revise(let paragraphID):
-            model.captureRevisingParagraph(audioURL: url, duration: duration,
+        case .redo(let paragraphID):
+            model.captureRedoingParagraph(audioURL: url, duration: duration,
                                            paragraphID: paragraphID, in: documentID)
         case .rerecord(let recordingID):
             model.rerecordRecording(recordingID, in: documentID, audioURL: url, duration: duration)
@@ -1382,13 +1410,13 @@ struct DocumentDetailView: View {
     // MARK: Paragraph editing (in place)
 
     /// The paragraph, in place, inside its outline — with the actions the editor sheet used to
-    /// carry along the bottom of that same outline: Revise / Insert / Transform at the left, Done
+    /// carry along the bottom of that same outline: Redo / Insert / Transform at the left, Done
     /// at the right.
     private func paragraphEditBox() -> some View {
         WWInlineEditBox(onDone: { finishEditing() }) {
             InlineTextEditor(text: $editingText, selection: $editingSelection, style: .documentBody)
         } actions: {
-            WWInlineEditAction("Revise", "mic.fill") { reviseEditingParagraph() }
+            WWInlineEditAction("Redo", "mic.fill") { redoEditingParagraph() }
             WWInlineEditAction("Insert", "text.insert") { insertIntoEditingParagraph() }
             WWInlineEditAction("Transform", "wand.and.stars", enabled: model.modelReady) {
                 transformEditingParagraph()
@@ -1446,13 +1474,22 @@ struct DocumentDetailView: View {
         model.documents.replaceParagraph(id, in: documentID, withTextSplitInto: editingText)
     }
 
-    /// "Revise": keep what's been typed, then record a clip that replaces the whole paragraph. Saved
+    /// **Revise** (swipe right): open the section in the Revise editor — large type, worked over
+    /// with a finger and a voice. Whatever was open in place is committed first, so the editor
+    /// starts from the words as they stand.
+    private func startRevising(_ para: Document.Paragraph) {
+        finishEditing()
+        let text = document?.paragraphs.first(where: { $0.id == para.id })?.text ?? para.text
+        revisingParagraph = RevisionSubject(id: para.id, text: text)
+    }
+
+    /// "Redo": keep what's been typed, then record a clip that replaces the whole paragraph. Saved
     /// in place (not split) so the paragraph keeps the identity the recorder task refers to.
-    private func reviseEditingParagraph() {
+    private func redoEditingParagraph() {
         guard let id = editingParagraphID else { return }
         editingParagraphID = nil
         model.documents.updateParagraph(id, in: documentID, to: editingText)
-        recorderTask = .revise(paragraphID: id)
+        recorderTask = .redo(paragraphID: id)
     }
 
     /// "Insert": record a clip and splice its transcript in at the caret. The buffer rides along with
@@ -1478,7 +1515,7 @@ struct DocumentDetailView: View {
     enum RecorderTask: Identifiable, Equatable {
         case addToRecordings
         case insertBody(at: Int)
-        case revise(paragraphID: UUID)
+        case redo(paragraphID: UUID)
         case rerecord(recordingID: UUID)
         /// Record a clip, transcribe it, and splice the transcript into `baseText` at `caret`, then
         /// replace the paragraph — the editor's "Insert" action.
@@ -1492,7 +1529,7 @@ struct DocumentDetailView: View {
             switch self {
             case .addToRecordings:        return "add"
             case .insertBody(let i):      return "insert-\(i)"
-            case .revise(let pid):        return "revise-\(pid)"
+            case .redo(let pid):          return "redo-\(pid)"
             case .rerecord(let rid):      return "rerecord-\(rid)"
             case .insertAtCaret(let pid, _, _): return "insert-caret-\(pid)"
             case .continueRecording(let rid, _, _): return "continue-\(rid)"
@@ -1503,7 +1540,7 @@ struct DocumentDetailView: View {
             switch self {
             case .addToRecordings: return "New Recording"
             case .insertBody:      return "Insert Recording"
-            case .revise:          return "Revise Paragraph"
+            case .redo:            return "Redo Paragraph"
             case .rerecord:        return "Re-record"
             case .insertAtCaret:   return "Insert Recording"
             case .continueRecording: return "Continue Recording"
@@ -2920,6 +2957,7 @@ struct RecordingSheet: View {
 /// without an xcodegen regen.
 struct InboxView: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.scenePhase) private var scenePhase
     let documentID: UUID
 
     @State private var showingRecorder = false
@@ -2955,6 +2993,9 @@ struct InboxView: View {
 
     // Move-to-document pane: the recordings being moved (one, from a swipe; or many, from batch).
     @State private var movingIDs: Set<UUID>?
+
+    /// The entry open in the Revise editor (swipe right → Revise).
+    @State private var revisingEntry: RevisionSubject?
 
     // Swipe-right Transform: which recording is picking a preset, and which are mid-transform
     // (their rows show a spinner in place of the transcript preview).
@@ -3049,6 +3090,12 @@ struct InboxView: View {
         .safeAreaInset(edge: .top, spacing: 0) { tagFilterBar() }
         // Leaving mid-hold files what was said rather than leaving the microphone open.
         .onDisappear { finishTagRecording() }
+        // Going to the background saves an open edit where it stands — the editor stays open —
+        // since iOS may end the app before it's brought back, and an edit that's only in the
+        // buffer would go with it.
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .background { persistEditing() }
+        }
         .onChange(of: tagsInUse) { wasInUse, inUse in
             // The last entry under this tag has just gone (deleted, moved, re-filed): drop the
             // filter rather than leaving an empty list behind. A tag that never had anything under
@@ -3146,6 +3193,12 @@ struct InboxView: View {
                             presenting: heldEntryID) { id in
             Button("Continue Recording") { continueEntry(id) }
             Button("Select") { enterSelection(with: id) }
+        }
+        .fullScreenCover(item: $revisingEntry) { subject in
+            RevisionEditor(title: "Revise Entry", text: subject.text,
+                           documentID: documentID) { text in
+                saveRevision(text, to: subject.id)
+            }
         }
         // Continue Recording: the recorder on the end of the entry, its counter carrying on from
         // the entry's length. Saved, the two are joined and the whole entry is heard again.
@@ -3263,7 +3316,7 @@ struct InboxView: View {
                     Button("Move") { withAnimation(.snappy(duration: 0.22)) { movingIDs = [recording.id] } }
                         .tint(WW.slate)
                 }
-                // Swipe right → Tag / Copy / Transform.
+                // Swipe right → Tag / Copy / Transform / Revise.
                 .swipeActions(edge: .leading, allowsFullSwipe: false) {
                     Button("Tag") {
                         withAnimation(.snappy(duration: 0.22)) { taggingIDs = [recording.id] }
@@ -3272,6 +3325,10 @@ struct InboxView: View {
                     Button("Transform") { transformTargetID = recording.id }
                         .tint(WW.violet)
                         .disabled(!model.modelReady)
+                    // Not until there are words to work over (an entry still being transcribed).
+                    Button("Revise") { startRevising(recording) }
+                        .tint(WW.slate)
+                        .disabled(recording.transcript == nil)
                 }
         }
     }
@@ -3375,6 +3432,23 @@ struct InboxView: View {
             return
         }
         shareTarget = ShareTarget(items: [url])
+    }
+
+    /// **Revise** (swipe right): open the entry in the Revise editor, committing an open edit
+    /// first so it starts from the words as they stand.
+    private func startRevising(_ recording: Recording) {
+        finishEditing()
+        let text = recordings.first(where: { $0.id == recording.id })?.transcript ?? ""
+        revisingEntry = RevisionSubject(id: recording.id,
+                                        text: text.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    /// The Revise editor's Done: the revised words become the entry's transcript.
+    private func saveRevision(_ text: String, to recordingID: UUID) {
+        guard var recording = recordings.first(where: { $0.id == recordingID }) else { return }
+        recording.transcript = text
+        model.documents.updateRecording(recording, inDocument: documentID)
+        wwLog("Revised “\(recording.name)”", .general)
     }
 
     /// Run a preset over the open entry and re-seed the editor from the result.
@@ -3953,6 +4027,9 @@ struct MoveToDocumentOverlay: View {
     let onCancel: () -> Void
     let onNewDocument: () -> Void
     let onPick: (Document) -> Void
+    /// The Inbox as a destination, ahead of everything else — offered by a document's section,
+    /// which can go back to being an entry; an Inbox entry has nowhere to go by it.
+    var onInbox: (() -> Void)? = nil
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -3969,7 +4046,7 @@ struct MoveToDocumentOverlay: View {
 
     private var pane: some View {
         VStack(spacing: 0) {
-            Text("Move to Document")
+            Text(onInbox == nil ? "Move to Document" : "Move To")
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(WW.ink)
                 .lineLimit(1)
@@ -3978,6 +4055,17 @@ struct MoveToDocumentOverlay: View {
             WWHairline()
             ScrollView {
                 VStack(spacing: 0) {
+                    if let onInbox {
+                        Button(action: onInbox) {
+                            Label(DocumentStore.inboxTitle, systemImage: "tray.and.arrow.down")
+                                .foregroundStyle(WW.ink)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 16).padding(.vertical, 12)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        WWHairline().padding(.leading, 16)
+                    }
                     Button(action: onNewDocument) {
                         Label("New Document", systemImage: "plus")
                             .foregroundStyle(WW.moss)
@@ -4001,6 +4089,729 @@ struct MoveToDocumentOverlay: View {
             }
             .frame(maxHeight: 320)
         }
+    }
+}
+
+// MARK: - Revise
+
+/// What the Revise editor has open — a section of a document, or an Inbox entry — and its words as
+/// they stood when it opened.
+struct RevisionSubject: Identifiable {
+    let id: UUID
+    let text: String
+}
+
+/// **Revise**: a section or an Inbox entry, opened in large type to be worked over with a finger
+/// and a voice rather than a keyboard. It isn't a text field — there's no caret and no keyboard —
+/// and each gesture means one thing:
+///
+/// • **Swipe** across words to select them. No hold first: the swipe is the selecting.
+/// • **Tap** the selection to strike it through, **double-tap** it to let it go. A struck run keeps
+///   its strike once it's let go, and is a thing of its own from then on.
+/// • **Hold** the selection, or a struck run, and speak: let go, and what you said takes its place.
+/// • **Hold** anywhere else in the text and speak: let go, and it goes in at the gap you held —
+///   the graph canvas's hold, in a line of text.
+/// • **Triple-tap** struck words to take the strike off.
+/// • Drag **up or down** to scroll; a swipe that starts sideways is a selection.
+///
+/// Struck words are left out of what's saved — striking a word through is how you say it should
+/// go. Words spoken in are drawn in moss until then, so what's new is easy to read back.
+struct RevisionEditor: View {
+    let title: String
+    /// Where a clip that couldn't be transcribed is kept, so what was said isn't lost.
+    let documentID: UUID
+    let onSave: (String) -> Void
+
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.transcriptTextSize) private var transcriptTextSize: Double
+
+    @State private var revision: RevisionText
+    /// What Undo steps back through: the text before each change.
+    @State private var history: [RevisionText] = []
+    @State private var selection: TokenSpan?
+    @State private var frames = RevisionFrames()
+
+    // Scrolling, done by hand: the touch that scrolls is the same touch that selects, decided by
+    // which way it sets off.
+    @State private var scrollOffset: CGFloat = 0
+    @State private var contentHeight: CGFloat = 0
+    @State private var viewportHeight: CGFloat = 0
+
+    // The finger: where it went down, what it's turned out to be, and the timer that makes a
+    // still finger a hold.
+    @State private var touchStart: CGPoint?
+    @State private var touchMode: TouchMode = .undecided
+    @State private var scrollAtTouch: CGFloat = 0
+    @State private var selectionAnchor: Int?
+    @State private var holdTask: Task<Void, Never>?
+    @GestureState private var isTouching = false
+
+    // Taps are counted, since one, two and three of them on the same words mean different things.
+    @State private var tapCount = 0
+    @State private var lastTapTime = Date.distantPast
+    @State private var lastTapPoint = CGPoint.zero
+    @State private var tapTask: Task<Void, Never>?
+
+    // A hold that's recording: what it's for, and where the finger is (viewport points).
+    @StateObject private var recorder = AudioRecorder()
+    @State private var recordTarget: RecordTarget?
+    @State private var recordAnchor: CGPoint?
+
+    @State private var errorMessage: String?
+    @State private var showingDiscardConfirm = false
+
+    init(title: String, text: String, documentID: UUID, onSave: @escaping (String) -> Void) {
+        self.title = title
+        self.documentID = documentID
+        self.onSave = onSave
+        _revision = State(initialValue: RevisionText(text))
+    }
+
+    // MARK: Metrics
+
+    /// Larger than the text it came from — half as big again, and never under 26 points — since
+    /// it's worked with a fingertip, word by word.
+    private var fontSize: CGFloat { min(max(CGFloat(transcriptTextSize) * 1.5, 26), 48) }
+    private var wordGap: CGFloat { fontSize * 0.3 }
+    private var lineSpacing: CGFloat { fontSize * 0.3 }
+    private static let insetX: CGFloat = 22
+    private static let insetTop: CGFloat = 20
+    private static let space = "revisionText"
+    /// How far a finger moves before it's a swipe rather than a tap or a hold.
+    private static let slop: CGFloat = 10
+    private static let holdDelay: UInt64 = 450_000_000
+    /// How close together taps have to come to count as one double or triple tap.
+    private static let multiTapInterval: TimeInterval = 0.32
+
+    private var isRecording: Bool { recordTarget != nil }
+    private var isBusy: Bool { isRecording || revision.hasPendingEdit }
+
+    // MARK: Body
+
+    var body: some View {
+        NavigationStack {
+            GeometryReader { geo in
+                textContent
+                    .frame(width: geo.size.width, alignment: .topLeading)
+                    .offset(y: -scrollOffset)
+                    .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
+                    .clipped()
+                    .contentShape(Rectangle())
+                    .gesture(touchGesture)
+                    .overlay { recordingReadout(in: geo.size) }
+                    .onChange(of: geo.size.height, initial: true) { _, height in
+                        viewportHeight = height
+                        clampScroll()
+                    }
+            }
+            .background(WW.paper)
+            .safeAreaInset(edge: .bottom, spacing: 0) { bottomBar }
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        if revision.hasChanges { showingDiscardConfirm = true } else { close() }
+                    }
+                    .disabled(isRecording)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { save() }
+                        .fontWeight(.semibold)
+                        .disabled(isBusy)
+                }
+            }
+        }
+        .onChange(of: isTouching) { _, touching in
+            // A touch the system took back never reaches `onEnded`. Given a beat for an `onEnded`
+            // that *is* coming, then finish whatever the finger was doing.
+            guard !touching else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+                if !isTouching, touchStart != nil { touchCancelled() }
+            }
+        }
+        .onDisappear { tearDown() }
+        .confirmationDialog("Discard your changes?", isPresented: $showingDiscardConfirm,
+                            titleVisibility: .visible) {
+            Button("Discard", role: .destructive) { close() }
+            Button("Keep Revising", role: .cancel) { }
+        }
+        .alert("Couldn't use that recording",
+               isPresented: Binding(get: { errorMessage != nil },
+                                    set: { if !$0 { errorMessage = nil } })) {
+            Button("OK", role: .cancel) { errorMessage = nil }
+        } message: {
+            Text(errorMessage ?? "")
+        }
+    }
+
+    /// The words, laid out one by one so each can say where it is, with the insertion caret drawn
+    /// over them while a hold is recording into a gap.
+    private var textContent: some View {
+        RevisionFlowLayout(lineSpacing: lineSpacing) {
+            ForEach(Array(revision.tokens.enumerated()), id: \.element.id) { index, token in
+                wordView(token, index: index)
+            }
+        }
+        .frame(minHeight: fontSize * 1.4, alignment: .topLeading)
+        .coordinateSpace(name: Self.space)
+        .overlay(alignment: .topLeading) { insertionCaret }
+        .overlay(alignment: .topLeading) {
+            if revision.tokens.isEmpty {
+                Text("Nothing here yet. Hold anywhere and speak.")
+                    .font(.system(size: fontSize * 0.7))
+                    .foregroundStyle(WW.inkTertiary)
+                    .allowsHitTesting(false)
+            }
+        }
+        .padding(.horizontal, Self.insetX)
+        .padding(.top, Self.insetTop)
+        .padding(.bottom, 160)
+        .background {
+            GeometryReader { geo in
+                Color.clear.onChange(of: geo.size.height, initial: true) { _, height in
+                    contentHeight = height
+                    clampScroll()
+                }
+            }
+        }
+    }
+
+    private func wordView(_ token: RevisionText.Token, index: Int) -> some View {
+        let selected = selectedRange?.contains(index) ?? false
+        let targeted = recordTarget?.replaces(token.id) ?? false
+        return Text(token.word)
+            .font(.system(size: fontSize))
+            .strikethrough(token.isStruck, color: WW.ember)
+            .foregroundStyle(wordColor(token))
+            .fixedSize()
+            .padding(.horizontal, wordGap / 2)
+            .padding(.vertical, 2)
+            .background {
+                if targeted {
+                    Rectangle().fill(WW.ember.opacity(0.16))
+                } else if selected {
+                    Rectangle().fill(WW.moss.opacity(0.2))
+                }
+            }
+            .opacity(token.isPending ? 0.4 : 1)
+            .background {
+                GeometryReader { geo in
+                    Color.clear.onChange(of: geo.frame(in: .named(Self.space)), initial: true) { _, frame in
+                        frames.words[token.id] = frame
+                    }
+                }
+            }
+            .onDisappear { frames.words[token.id] = nil }
+            .layoutValue(key: RevisionLineBreaks.self, value: token.lineBreaks)
+    }
+
+    private func wordColor(_ token: RevisionText.Token) -> Color {
+        if token.isPlaceholder { return WW.inkTertiary }
+        if token.isStruck { return WW.inkSecondary }
+        if token.isNew { return WW.moss }
+        return WW.ink
+    }
+
+    /// While a hold records into a gap, an ember caret stands in it.
+    @ViewBuilder
+    private var insertionCaret: some View {
+        if case .insert(_, let caret?) = recordTarget {
+            Capsule()
+                .fill(WW.ember)
+                .frame(width: 3, height: caret.height)
+                .shadow(color: WW.ember.opacity(0.5), radius: 3)
+                .offset(x: caret.minX - 1.5, y: caret.minY)
+                .allowsHitTesting(false)
+        }
+    }
+
+    /// The elapsed counter, floating above the finger that's holding — as on the graph canvas.
+    @ViewBuilder
+    private func recordingReadout(in size: CGSize) -> some View {
+        if isRecording, let anchor = recordAnchor {
+            HStack(spacing: 9) {
+                Circle()
+                    .fill(WW.ember)
+                    .frame(width: 10, height: 10)
+                Text(Recording.durationLabel(recorder.elapsed))
+                    .font(.system(size: 17, weight: .medium, design: .rounded).monospacedDigit())
+                    .foregroundStyle(WW.ink)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 9)
+            .background(WW.surface, in: Capsule())
+            .overlay(Capsule().stroke(WW.hairline, lineWidth: 1))
+            .shadow(color: .black.opacity(0.16), radius: 14, y: 4)
+            .position(x: min(max(80, anchor.x), max(80, size.width - 80)),
+                      y: max(30, anchor.y - fontSize - 44))
+            .allowsHitTesting(false)
+            .transition(.opacity)
+        }
+    }
+
+    /// Undo at the left; at the right, a line saying what the finger can do *now* — the gestures
+    /// mean different things over a selection, and there's no menu to read them off.
+    private var bottomBar: some View {
+        VStack(spacing: 0) {
+            WWHairline()
+            HStack(spacing: 12) {
+                Button {
+                    undo()
+                } label: {
+                    Image(systemName: "arrow.uturn.backward")
+                        .font(.system(size: 17, weight: .regular))
+                        .frame(width: 40, height: 36)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(WW.moss)
+                .disabled(history.isEmpty || isBusy)
+                .opacity(history.isEmpty || isBusy ? 0.35 : 1)
+                .accessibilityLabel("Undo")
+
+                if revision.hasPendingEdit, !isRecording {
+                    ProgressView().controlSize(.small)
+                }
+                Text(hint)
+                    .font(.footnote)
+                    .foregroundStyle(WW.inkSecondary)
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .multilineTextAlignment(.trailing)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+        }
+        .background(WW.surface)
+    }
+
+    private var hint: String {
+        if isRecording {
+            if case .insert = recordTarget { return "Speak — let go to put it in here." }
+            return "Speak — let go and it takes their place."
+        }
+        if revision.hasPendingEdit { return "Transcribing…" }
+        if selection != nil {
+            return "Tap to strike through · hold to speak over · double-tap to let go"
+        }
+        if revision.tokens.contains(where: \.isStruck) {
+            return "Hold struck words to speak over them · triple-tap to unstrike · struck words go on Done"
+        }
+        return "Swipe to select · hold anywhere to speak in"
+    }
+
+    // MARK: The finger
+
+    private var touchGesture: some Gesture {
+        DragGesture(minimumDistance: 0, coordinateSpace: .local)
+            .updating($isTouching) { _, state, _ in state = true }
+            .onChanged { value in touchChanged(value) }
+            .onEnded { value in touchEnded(value) }
+    }
+
+    private func touchChanged(_ value: DragGesture.Value) {
+        if touchStart != value.startLocation { beginTouch(at: value.startLocation) }
+        switch touchMode {
+        case .undecided:
+            let moved = value.translation
+            guard hypot(moved.width, moved.height) > Self.slop else { return }
+            cancelHoldTimer()
+            if abs(moved.width) >= abs(moved.height) {
+                // Sideways: a swipe across words, selecting them.
+                touchMode = .selecting
+                selectionAnchor = nearestTokenIndex(to: contentPoint(value.startLocation))
+                extendSelection(to: value.location)
+            } else {
+                touchMode = .scrolling
+                scroll(to: scrollAtTouch - moved.height)
+            }
+        case .selecting:
+            extendSelection(to: value.location)
+        case .scrolling:
+            scroll(to: scrollAtTouch - value.translation.height)
+        case .recording, .ignored:
+            break
+        }
+    }
+
+    private func touchEnded(_ value: DragGesture.Value) {
+        cancelHoldTimer()
+        let mode = touchMode
+        touchStart = nil
+        touchMode = .undecided
+        switch mode {
+        case .undecided: registerTap(at: value.startLocation)
+        case .selecting: if selection != nil { WWHaptics.light() }
+        case .recording: finishHold()
+        case .scrolling, .ignored: break
+        }
+    }
+
+    private func touchCancelled() {
+        cancelHoldTimer()
+        if touchMode == .recording { finishHold() }
+        touchStart = nil
+        touchMode = .undecided
+    }
+
+    /// A finger has gone down: it's a tap, a swipe or a hold — which one is up to what it does
+    /// next. Kept still long enough, it's a hold.
+    private func beginTouch(at point: CGPoint) {
+        cancelHoldTimer()
+        touchStart = point
+        touchMode = .undecided
+        scrollAtTouch = scrollOffset
+        WWHaptics.prepare()
+        holdTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: Self.holdDelay)
+            guard !Task.isCancelled, touchStart == point, touchMode == .undecided else { return }
+            beginHold(at: point)
+        }
+    }
+
+    private func cancelHoldTimer() {
+        holdTask?.cancel()
+        holdTask = nil
+    }
+
+    /// A point on screen (the viewport) as a point in the laid-out text.
+    private func contentPoint(_ point: CGPoint) -> CGPoint {
+        CGPoint(x: point.x - Self.insetX, y: point.y - Self.insetTop + scrollOffset)
+    }
+
+    private func scroll(to offset: CGFloat) {
+        scrollOffset = min(max(0, offset), max(0, contentHeight - viewportHeight))
+    }
+
+    private func clampScroll() { scroll(to: scrollOffset) }
+
+    // MARK: Selecting
+
+    private var selectedRange: ClosedRange<Int>? {
+        guard let selection,
+              let first = revision.index(of: selection.first),
+              let last = revision.index(of: selection.last) else { return nil }
+        return min(first, last)...max(first, last)
+    }
+
+    private func extendSelection(to point: CGPoint) {
+        guard let anchor = selectionAnchor,
+              let index = nearestTokenIndex(to: contentPoint(point)) else { return }
+        let range = min(anchor, index)...max(anchor, index)
+        let tokens = revision.tokens
+        let span = TokenSpan(first: tokens[range.lowerBound].id, last: tokens[range.upperBound].id)
+        if span != selection { selection = span }
+    }
+
+    // MARK: Tapping
+
+    /// Count the tap, and act once it's clear how many there are going to be. A third tap is the
+    /// most anything listens for, so that one acts at once.
+    private func registerTap(at point: CGPoint) {
+        let now = Date()
+        if now.timeIntervalSince(lastTapTime) < Self.multiTapInterval,
+           hypot(point.x - lastTapPoint.x, point.y - lastTapPoint.y) < 40 {
+            tapCount += 1
+        } else {
+            tapCount = 1
+        }
+        lastTapTime = now
+        lastTapPoint = point
+        tapTask?.cancel()
+        let count = tapCount
+        let spot = contentPoint(point)
+        guard count < 3 else {
+            tapCount = 0
+            resolveTaps(3, at: spot)
+            return
+        }
+        tapTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(Self.multiTapInterval * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            tapCount = 0
+            resolveTaps(count, at: spot)
+        }
+    }
+
+    /// On the selection: one tap strikes it through, two let it go, three take the strike off and
+    /// let it go. On struck words that aren't selected, three taps take the strike off.
+    private func resolveTaps(_ count: Int, at point: CGPoint) {
+        guard !isBusy, let index = tokenIndex(at: point) else { return }
+        if let range = selectedRange, range.contains(index) {
+            switch count {
+            case 1:
+                guard !revision.tokens[range].allSatisfy(\.isStruck) else { return }
+                change { $0.setStruck(true, in: range) }
+                WWHaptics.light()
+            case 2:
+                selection = nil
+            default:
+                change { $0.setStruck(false, in: range) }
+                selection = nil
+                WWHaptics.light()
+            }
+        } else if count >= 3, let run = revision.struckRun(around: index) {
+            change { $0.setStruck(false, in: run) }
+            WWHaptics.light()
+        }
+    }
+
+    // MARK: Holding to speak
+
+    /// The finger has been held still. Over the selection, or over struck words, what's said will
+    /// replace them; anywhere else, it goes in at the gap nearest the finger.
+    private func beginHold(at point: CGPoint) {
+        guard !revision.hasPendingEdit else {
+            // One clip at a time, so each one's words land where it was spoken.
+            touchMode = .ignored
+            return
+        }
+        guard canRecord() else {
+            touchMode = .ignored
+            return
+        }
+        let spot = contentPoint(point)
+        let target: RecordTarget
+        if let index = tokenIndex(at: spot), let range = selectedRange, range.contains(index) {
+            target = .replace(ids: revision.tokens[range].map(\.id))
+        } else if let index = tokenIndex(at: spot), let run = revision.struckRun(around: index) {
+            target = .replace(ids: revision.tokens[run].map(\.id))
+        } else {
+            let gap = gap(at: spot)
+            target = .insert(gap: gap.index, caret: gap.caret)
+        }
+        do {
+            try recorder.start(to: model.documents.newAudioURL().url)
+        } catch {
+            errorMessage = error.localizedDescription
+            touchMode = .ignored
+            return
+        }
+        recordTarget = target
+        recordAnchor = point
+        touchMode = .recording
+        WWHaptics.recordingStarted()
+    }
+
+    /// The finger lifted: stop, hold the spot, and put the words in when they arrive.
+    private func finishHold() {
+        guard let target = recordTarget else { return }
+        recordTarget = nil
+        recordAnchor = nil
+        guard let result = recorder.stop() else { return }
+        // A hold let go the instant it's recognised isn't a recording.
+        guard result.duration >= GraphCanvas.minimumClip else {
+            try? FileManager.default.removeItem(at: result.url)
+            return
+        }
+        let before = revision
+        let edit: RevisionText.Edit
+        switch target {
+        case .replace(let ids):
+            let indices = ids.compactMap { revision.index(of: $0) }
+            if let lower = indices.min(), let upper = indices.max() {
+                edit = revision.beginReplacing(lower...upper)
+            } else {
+                edit = revision.beginInserting(at: revision.tokens.count)
+            }
+            if let range = selectedRange, indices.contains(range.lowerBound) { selection = nil }
+        case .insert(let gap, _):
+            edit = revision.beginInserting(at: gap)
+        }
+        history.append(before)
+        WWHaptics.light()
+        Task { @MainActor in
+            let outcome = await model.transcribeRevisionClip(audioURL: result.url,
+                                                             duration: result.duration,
+                                                             in: documentID)
+            switch outcome {
+            case .text(let text):
+                revision.finish(edit, with: text)
+            case .nothing:
+                revision.finish(edit, with: nil)
+                if history.last == revision { history.removeLast() }
+            case .failed(let message):
+                revision.finish(edit, with: nil)
+                if history.last == revision { history.removeLast() }
+                errorMessage = message
+            }
+        }
+    }
+
+    /// Permission is checked, never awaited: by the time a hold is recognised the finger is
+    /// already down, and a wait here would be silence at the head of the clip.
+    private func canRecord() -> Bool {
+        guard AVAudioApplication.shared.recordPermission == .granted else {
+            Task { @MainActor in
+                if !(await recorder.requestPermission()) {
+                    errorMessage = "Microphone permission is required to record."
+                }
+            }
+            return false
+        }
+        return true
+    }
+
+    // MARK: Changes
+
+    private func change(_ body: (inout RevisionText) -> Void) {
+        history.append(revision)
+        body(&revision)
+    }
+
+    private func undo() {
+        guard !isBusy, let previous = history.popLast() else { return }
+        revision = previous
+        selection = nil
+        WWHaptics.light()
+    }
+
+    private func save() {
+        guard !isBusy else { return }
+        if revision.hasChanges { onSave(revision.revisedText) }
+        close()
+    }
+
+    private func close() {
+        tearDown()
+        dismiss()
+    }
+
+    /// Nothing left running behind a closed editor: a recording in progress is dropped.
+    private func tearDown() {
+        cancelHoldTimer()
+        tapTask?.cancel()
+        tapTask = nil
+        guard recordTarget != nil else { return }
+        recordTarget = nil
+        recordAnchor = nil
+        if let result = recorder.stop() { try? FileManager.default.removeItem(at: result.url) }
+    }
+
+    // MARK: Where the words are
+
+    private func placedTokens() -> [(index: Int, rect: CGRect)] {
+        revision.tokens.indices.compactMap { index in
+            frames.words[revision.tokens[index].id].map { (index: index, rect: $0) }
+        }
+    }
+
+    /// The words on the line nearest `point`, left to right.
+    private func nearestLine(to point: CGPoint) -> [(index: Int, rect: CGRect)] {
+        let slots = placedTokens()
+        guard let nearest = slots.min(by: { abs($0.rect.midY - point.y) < abs($1.rect.midY - point.y) })
+        else { return [] }
+        return slots
+            .filter { abs($0.rect.midY - nearest.rect.midY) < 2 }
+            .sorted { $0.rect.minX < $1.rect.minX }
+    }
+
+    /// The word under `point`, with a little give between lines.
+    private func tokenIndex(at point: CGPoint) -> Int? {
+        placedTokens().first { slot in
+            slot.rect.insetBy(dx: 0, dy: -lineSpacing / 2).contains(point)
+        }?.index
+    }
+
+    /// The word nearest `point` — what a swipe that has wandered off the words is pointing at.
+    private func nearestTokenIndex(to point: CGPoint) -> Int? {
+        let line = nearestLine(to: point)
+        return (line.first { point.x < $0.rect.maxX } ?? line.last)?.index
+    }
+
+    /// The gap nearest `point`: on the nearest line, either side of the word under it. Counted as
+    /// the index of the word it comes before (the token count for the very end), with the caret to
+    /// draw there.
+    private func gap(at point: CGPoint) -> (index: Int, caret: CGRect?) {
+        let line = nearestLine(to: point)
+        guard let last = line.last else { return (revision.tokens.count, nil) }
+        if let hit = line.first(where: { point.x < $0.rect.midX }) {
+            return (hit.index, CGRect(x: hit.rect.minX, y: hit.rect.minY, width: 0,
+                                      height: hit.rect.height))
+        }
+        return (last.index + 1, CGRect(x: last.rect.maxX, y: last.rect.minY, width: 0,
+                                       height: last.rect.height))
+    }
+
+    // MARK: Small types
+
+    private enum TouchMode { case undecided, selecting, scrolling, recording, ignored }
+
+    /// What a hold is recording for.
+    private enum RecordTarget {
+        /// Speaking over these words.
+        case replace(ids: [UUID])
+        /// Speaking in at a gap, with where its caret is drawn.
+        case insert(gap: Int, caret: CGRect?)
+
+        func replaces(_ id: UUID) -> Bool {
+            if case .replace(let ids) = self { return ids.contains(id) }
+            return false
+        }
+    }
+
+    /// A selection, by the words at its ends rather than their positions, so it stays on the same
+    /// words when spoken ones arrive in front of it.
+    private struct TokenSpan: Equatable {
+        let first: UUID
+        let last: UUID
+    }
+}
+
+/// Where each word of the Revise editor is, in the text's own coordinates. A class so the words
+/// can keep it current without redrawing the editor.
+final class RevisionFrames {
+    var words: [UUID: CGRect] = [:]
+}
+
+/// How many line breaks follow a word in the Revise editor.
+private struct RevisionLineBreaks: LayoutValueKey {
+    static let defaultValue = 0
+}
+
+/// Words left to right, wrapping at the width offered and breaking the line wherever the text
+/// does — a blank line where it leaves one. The words carry their own spacing (it's part of each
+/// word's frame, so a selection is one unbroken band).
+private struct RevisionFlowLayout: Layout {
+    var lineSpacing: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        arrange(width: proposal.width ?? .infinity, subviews: subviews).size
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews,
+                       cache: inout ()) {
+        let points = arrange(width: bounds.width, subviews: subviews).points
+        for (index, point) in points.enumerated() {
+            subviews[index].place(at: CGPoint(x: bounds.minX + point.x, y: bounds.minY + point.y),
+                                  proposal: .unspecified)
+        }
+    }
+
+    private func arrange(width: CGFloat, subviews: Subviews) -> (points: [CGPoint], size: CGSize) {
+        var points: [CGPoint] = []
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var lineHeight: CGFloat = 0
+        var widest: CGFloat = 0
+        func newLine(extra: CGFloat = 0) {
+            y += lineHeight + lineSpacing + extra
+            x = 0
+            lineHeight = 0
+        }
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > 0, x + size.width > width { newLine() }
+            points.append(CGPoint(x: x, y: y))
+            x += size.width
+            widest = max(widest, x)
+            lineHeight = max(lineHeight, size.height)
+            let breaks = subview[RevisionLineBreaks.self]
+            if breaks > 0 { newLine(extra: CGFloat(breaks - 1) * lineHeight * 0.6) }
+        }
+        return (points, CGSize(width: width.isFinite ? width : widest, height: y + lineHeight))
     }
 }
 
@@ -4594,13 +5405,14 @@ enum JointViewMode: String {
 /// way (see `AppModel.captureGraphNode`).
 struct GraphDocumentView: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.scenePhase) private var scenePhase
     /// The size transcription text is set in (Settings → Display) — a node's words here.
     @Environment(\.transcriptTextSize) private var transcriptTextSize: Double
     let documentID: UUID
     /// True when this canvas is one pane of a joint document — see `DocumentDetailView.isEmbedded`.
     var isEmbedded = false
 
-    /// The recorder behind hold-to-record. (Revise uses the ordinary `RecordingSheet` instead —
+    /// The recorder behind hold-to-record. (Redo uses the ordinary `RecordingSheet` instead —
     /// replacing a node deliberately deserves the pause/discard controls.)
     @StateObject private var recorder = AudioRecorder()
 
@@ -4720,7 +5532,7 @@ struct GraphDocumentView: View {
     @State private var menuNodeID: UUID?
     @State private var transformTargetID: UUID?
     @State private var transformingNodeIDs: Set<UUID> = []
-    @State private var reviseTask: ReviseTask?
+    @State private var redoTask: RedoTask?
 
     /// Measured card sizes, so a drop lands on the node it looks like it lands on and the "+" sits
     /// on the actual edge rather than an assumed one.
@@ -4850,8 +5662,13 @@ struct GraphDocumentView: View {
             highlightedNodeID = nil
             finishEditing()
         }
-        .sheet(item: $reviseTask) { task in
-            RecordingSheet(title: "Revise Node",
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .background, let id = editingNodeID {
+                model.documents.setNodeText(id, in: documentID, to: editingText)
+            }
+        }
+        .sheet(item: $redoTask) { task in
+            RecordingSheet(title: "Redo Node",
                            makeURL: { model.documents.newAudioURL().url }) { url, duration in
                 model.captureGraphNode(audioURL: url, duration: duration,
                                        nodeID: task.nodeID, in: documentID)
@@ -5196,7 +6013,7 @@ struct GraphDocumentView: View {
                 GraphColorDot(colorID: node.colorID) { colorID in
                     model.documents.setNodeColor(node.id, in: documentID, to: colorID)
                 }
-                WWInlineEditAction("Revise", "mic.fill") { reviseEditingNode() }
+                WWInlineEditAction("Redo", "mic.fill") { redoEditingNode() }
                 WWInlineEditAction("Transform", "wand.and.stars", enabled: model.modelReady) {
                     transformEditingNode()
                 }
@@ -6567,12 +7384,12 @@ struct GraphDocumentView: View {
         }
     }
 
-    /// "Revise" from inside the editor: keep what's typed, then record a clip that replaces it.
-    private func reviseEditingNode() {
+    /// "Redo" from inside the editor: keep what's typed, then record a clip that replaces it.
+    private func redoEditingNode() {
         guard let id = editingNodeID else { return }
         editingNodeID = nil
         model.documents.setNodeText(id, in: documentID, to: editingText)
-        reviseTask = ReviseTask(nodeID: id)
+        redoTask = RedoTask(nodeID: id)
     }
 
     /// "Delete" from inside the editor: the node goes, and the editor closes with it. What was
@@ -6747,9 +7564,9 @@ struct GraphDocumentView: View {
         let items: [NodeMenuItem] = [
             NodeMenuItem(title: "Edit", icon: "pencil") { startEditing(node) },
             NodeMenuItem(title: "Add Child", icon: "plus") { addChild(to: node) },
-            NodeMenuItem(title: "Revise", icon: "mic.fill") {
+            NodeMenuItem(title: "Redo", icon: "mic.fill") {
                 menuNodeID = nil
-                reviseTask = ReviseTask(nodeID: node.id)
+                redoTask = RedoTask(nodeID: node.id)
             },
             NodeMenuItem(title: "Transform", icon: "wand.and.stars", enabled: model.modelReady) {
                 menuNodeID = nil
@@ -7789,7 +8606,7 @@ struct GraphDocumentView: View {
     /// a canvas nobody is looking at.)
     private var acceptsKeyCommands: Bool {
         isOnScreen && editingNodeID == nil && menuNodeID == nil && labelingGroupID == nil
-            && !showingRename && reviseTask == nil && transformTargetID == nil
+            && !showingRename && redoTask == nil && transformTargetID == nil
     }
 
     /// ⌘T. With cards picked out it lines up **their** children — the selection is what you're
@@ -8304,8 +9121,8 @@ struct GraphDocumentView: View {
 
     // MARK: Small types
 
-    /// Drives the `RecordingSheet` that records a node's replacement ("Revise").
-    private struct ReviseTask: Identifiable {
+    /// Drives the `RecordingSheet` that records a node's replacement ("Redo").
+    private struct RedoTask: Identifiable {
         let nodeID: UUID
         var id: UUID { nodeID }
     }

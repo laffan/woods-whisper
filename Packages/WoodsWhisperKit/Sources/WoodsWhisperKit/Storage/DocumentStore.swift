@@ -293,7 +293,7 @@ public final class DocumentStore: ObservableObject {
     }
 
     /// Drop any node's link to a recording that has just left this document (deleted or moved
-    /// away). The node keeps its words — they're its own copy — but stops offering to play, revise
+    /// away). The node keeps its words — they're its own copy — but stops offering to play, redo
     /// or re-transcribe a clip that isn't there any more.
     private func unlinkNodes(from recordingIDs: Set<UUID>, at idx: Int) {
         guard documents[idx].isGraph else { return }
@@ -552,7 +552,7 @@ public final class DocumentStore: ObservableObject {
         } else {
             // A section edited (or transformed) in place is still the words of the recording it
             // came from, so what replaces it remembers that — unless it's the words of a recording
-            // of its own (a Revise clip's).
+            // of its own (a Redo clip's).
             let source = documents[docIdx].paragraphs[pIdx].recordingID
             let carried = replacements.map { replacement -> Document.Paragraph in
                 var replacement = replacement
@@ -716,7 +716,7 @@ public final class DocumentStore: ObservableObject {
         persistDocuments()
     }
 
-    /// Point a node at the clip it was spoken into — or at nothing (`nil`), which is what "Revise"
+    /// Point a node at the clip it was spoken into — or at nothing (`nil`), which is what "Redo"
     /// does before it records a replacement.
     public func linkNode(_ nodeID: UUID, toRecording recordingID: UUID?, in documentID: UUID) {
         guard let docIdx = index(of: documentID),

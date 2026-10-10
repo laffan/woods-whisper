@@ -301,10 +301,10 @@ final class AppModel: ObservableObject {
     }
 
     /// Capture a clip (into the Recordings section), transcribe it, and replace the text of an
-    /// existing body paragraph with the result. Backs a paragraph's "Revise" swipe action. The clip
+    /// existing body paragraph with the result. Backs a paragraph's "Redo" swipe action. The clip
     /// is flagged `isRevision` so it's set aside in the "Revisions" section rather than mixed in with
     /// the original recordings.
-    func captureRevisingParagraph(audioURL: URL, duration: TimeInterval,
+    func captureRedoingParagraph(audioURL: URL, duration: TimeInterval,
                                   paragraphID: UUID, in documentID: UUID) {
         let name = Recording.defaultName(for: Date(), duration: duration,
                                          byteCount: Recording.fileSize(at: audioURL))
@@ -332,7 +332,7 @@ final class AppModel: ObservableObject {
     }
 
     /// "Reset with Originals": rebuild the document body from the recordings' own transcripts,
-    /// discarding any edits/transforms. Revision clips (captured via "Revise") are kept separate:
+    /// discarding any edits/transforms. Revision clips (captured via "Redo") are kept separate:
     /// their transcripts are appended below the originals under a "--- Revisions ---" heading.
     ///
     /// A transcript that carries line breaks — a transform ran over it in the Inbox and handed back
@@ -463,7 +463,7 @@ final class AppModel: ObservableObject {
     /// lifts, then transcribes it. The words reach the node itself through `fillGraphNodes`, so this
     /// path doesn't have to wait around for them.
     ///
-    /// It's also how "Revise" replaces a node: the node's text is cleared and re-pointed at the new
+    /// It's also how "Redo" replaces a node: the node's text is cleared and re-pointed at the new
     /// clip, which is precisely the state a fresh capture is in.
     func captureGraphNode(audioURL: URL, duration: TimeInterval, nodeID: UUID, in documentID: UUID) {
         let name = Recording.defaultName(for: Date(), duration: duration,
@@ -486,7 +486,7 @@ final class AppModel: ObservableObject {
     /// Give a graph node the words of the clip it was spoken into, as soon as they exist.
     ///
     /// Only a node with nothing in it is filled, so re-transcribing a clip can't overwrite what
-    /// you've since typed or transformed — and "Revise", which empties the node before recording
+    /// you've since typed or transformed — and "Redo", which empties the node before recording
     /// over it, is the deliberate way to replace what's there.
     private func fillGraphNodes(forRecording recordingID: UUID, in documentID: UUID) {
         guard let document = documents.document(with: documentID), document.isGraph else { return }
@@ -500,7 +500,7 @@ final class AppModel: ObservableObject {
 
     /// Put a clip's words where they were captured to go: the paragraph a recording made *for the
     /// body* was always meant to become — appended, inserted at a spot, or in place of the paragraph
-    /// it was recorded to revise.
+    /// it was recorded to redo.
     ///
     /// This is the one place a capture's transcript reaches the body, so it doesn't matter how long
     /// the words took. A clip recorded while the speech model is still downloading is left pending,
@@ -565,6 +565,63 @@ final class AppModel: ObservableObject {
         return text.isEmpty ? nil : text
     }
 
+    /// What a clip spoken into the **Revise** editor came to.
+    enum RevisionClipResult {
+        /// Its words, to go into the text where the finger was held.
+        case text(String)
+        /// Nothing worth putting in — too short, or silence.
+        case nothing
+        /// It couldn't be transcribed. The clip has been kept (see `keepRevisionClip`), and this
+        /// says why and where it went.
+        case failed(String)
+    }
+
+    /// Transcribe a clip spoken into the **Revise** editor, for its words alone.
+    ///
+    /// Unlike every other capture, a clip that works isn't filed anywhere: it's a few words spoken
+    /// over a few others, its text goes straight into the editor, and the audio is let go — a
+    /// recording kept for each of them would bury a document's Recordings (and an Inbox) under
+    /// fragments. A clip that *doesn't* work is kept, so what was said is never lost to a model
+    /// that wasn't ready or a transcription that failed. Errors are handed back rather than raised
+    /// as an alert, since the editor is presented over the screen that would show one.
+    func transcribeRevisionClip(audioURL: URL, duration: TimeInterval,
+                                in documentID: UUID) async -> RevisionClipResult {
+        guard transcriptionReady else {
+            let kept = keepRevisionClip(audioURL, duration: duration, in: documentID)
+            return .failed("The speech model isn't ready yet, so what you said was saved \(kept).")
+        }
+        do {
+            let result = try await transcription.transcribe(audioFileAt: audioURL)
+            try? FileManager.default.removeItem(at: audioURL)
+            let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            wwLog("Transcribed a \(String(format: "%.1f", duration))s clip into a revision", .transcription)
+            return text.isEmpty ? .nothing : .text(text)
+        } catch TranscriptionError.audioTooShort {
+            try? FileManager.default.removeItem(at: audioURL)
+            return .nothing
+        } catch {
+            wwLog("Couldn't transcribe a revision clip: \(error.localizedDescription)", .error)
+            let kept = keepRevisionClip(audioURL, duration: duration, in: documentID)
+            return .failed("Couldn't transcribe that (\(error.localizedDescription)), so what you said was saved \(kept).")
+        }
+    }
+
+    /// File a Revise clip that couldn't become words, and say where it went: in the Inbox, as an
+    /// entry of its own (transcribed when it can be); in a document, among its Revisions.
+    private func keepRevisionClip(_ url: URL, duration: TimeInterval, in documentID: UUID) -> String {
+        if documents.document(with: documentID)?.title == DocumentStore.inboxTitle {
+            addDeviceRecording(audioURL: url, duration: duration, toDocument: documentID)
+            return "as an Inbox entry of its own"
+        }
+        let name = Recording.defaultName(for: Date(), duration: duration,
+                                         byteCount: Recording.fileSize(at: url))
+        let recording = Recording(name: name, duration: duration,
+                                  audioFileName: url.lastPathComponent, origin: deviceOrigin(),
+                                  isRevision: true)
+        documents.addRecording(recording, toDocument: documentID)
+        return "under this document's Revisions"
+    }
+
     /// Import an audio file shared into the app (share sheet / "Open in…"). Treated exactly like a
     /// normal recording: copied into the store, filed in the Inbox, and auto-transcribed.
     func importSharedAudio(from url: URL) {
@@ -624,6 +681,23 @@ final class AppModel: ObservableObject {
         documents.addRecording(entry, toDocument: documentID)
         wwLog("Imported \(trimmed.count) characters of text into the Inbox", .general)
         return true
+    }
+
+    /// A document's section sent back to the Inbox — the swipe-left **Move** pane's top row. It
+    /// arrives as an entry of its own, the way imported text does: words with no clip behind them
+    /// (a section never carries its recording with it when it moves), filed by its first word if
+    /// that word is a tag. An empty section has nothing to become an entry, so it stays put.
+    func moveParagraphToInbox(_ paragraphID: UUID, from documentID: UUID) {
+        guard let text = documents.document(with: documentID)?
+            .paragraphs.first(where: { $0.id == paragraphID })?
+            .text.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return }
+        let inbox = documents.inboxDocument()
+        guard inbox.id != documentID else { return }
+        var entry = Recording.textEntry(text, origin: deviceOrigin())
+        entry.tag = InboxTag.autoTag(for: text, from: AppSettings.shared.inboxTagNames)
+        documents.addRecording(entry, toDocument: inbox.id)
+        documents.deleteParagraph(paragraphID, in: documentID)
+        wwLog("Moved a section to the Inbox", .general)
     }
 
     /// The clipboard's text, or nil (having said so) when there's nothing on it to import.

@@ -36,7 +36,7 @@ public struct Recording: Identifiable, Codable, Hashable, Sendable {
     /// Lifecycle of this recording's transcription.
     public var status: Status
 
-    /// True when this clip was captured via "Revise" (replacing a body paragraph) rather than as
+    /// True when this clip was captured via "Redo" (replacing a body paragraph) rather than as
     /// part of the original document. Revisions are set aside in their own section and, on
     /// "Reset with Originals", appended below the body under a "--- Revisions ---" heading.
     public var isRevision: Bool
@@ -50,7 +50,7 @@ public struct Recording: Identifiable, Codable, Hashable, Sendable {
     /// Where this clip's words are still owed to its document's **body**, if anywhere.
     ///
     /// A clip captured *into* a document — the record button, a row's "+", an "insert here", a
-    /// "Revise" — is meant to become a paragraph (or to replace one), but the words can't arrive
+    /// "Redo" — is meant to become a paragraph (or to replace one), but the words can't arrive
     /// until the speech model has loaded, which may be minutes away — or a relaunch away — at the
     /// moment of capture. So the destination is written down here, on the clip, rather than kept in
     /// memory by whoever recorded it: the transcription that eventually happens knows what to do
@@ -71,7 +71,7 @@ public struct Recording: Identifiable, Codable, Hashable, Sendable {
         case append
         /// At a particular paragraph index — one of the body's "insert here" rules.
         case at(Int)
-        /// In place of a paragraph that's already there — "Revise".
+        /// In place of a paragraph that's already there — "Redo".
         case replacing(UUID)
         /// In place of the sections this clip's words became before — **Continue Recording**,
         /// which re-transcribes the whole of a recording that has grown. The new words go where

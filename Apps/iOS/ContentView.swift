@@ -8,8 +8,15 @@ struct ContentView: View {
     @ObservedObject private var launcher = RecordingLauncher.shared
 
     /// Tab selection, so the widget's deep links can land on the Documents tab.
-    enum Tab: Hashable { case inbox, documents, log, settings }
-    @State private var selectedTab: Tab = .inbox
+    ///
+    /// Kept as *scene* state rather than view state: iOS ends a suspended app whenever it wants the
+    /// memory back — and one holding a speech model and a language model is first in line — and
+    /// relaunches it the next time you switch to it. Plain `@State` starts over at the Inbox then;
+    /// scene storage is handed back by the system, so you come back to the tab you left. (It's
+    /// cleared when the app is swiped away in the app switcher, which is the one time starting
+    /// over is what was asked for.)
+    enum Tab: String, Hashable { case inbox, documents, log, settings }
+    @SceneStorage("ContentView.selectedTab") private var selectedTab: Tab = .inbox
 
     var body: some View {
         TabView(selection: $selectedTab) {

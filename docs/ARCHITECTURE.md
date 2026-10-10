@@ -110,6 +110,14 @@ storage, and connectivity code without the model dependencies.
   (`updateGroupMembership(after:in:leaving:)`, driven by `NodeDragMode.leavesGroups`): a **⌘ drag**
   clear of the ring, which takes the card out of the tree as well, or **⌘⇧**, which takes it out of
   the ring alone and leaves the tree — and the card's own branch — exactly as it was.
+- **`RevisionText`** — the text the **Revise** editor works on, word by word: each word keeps the
+  whitespace after it (so line breaks survive), can be struck through, and can be replaced by — or
+  have inserted beside it — words spoken over a hold. An edit is begun when the finger lifts (the
+  words it replaces marked pending, or a placeholder standing in the gap) and finished when the
+  transcript arrives, or undone if nothing was said; spoken words are fitted to the sentence they
+  land in. `revisedText` — what's saved — leaves the struck words out. Never persisted: it lives
+  only while the editor is open (`RevisionEditor` in the app), and the clips behind it are let go
+  once transcribed (`AppModel.transcribeRevisionClip`), kept only when they couldn't be.
 - **`PromptPreset`** — a named, reusable instruction (`systemPrompt` + `template` with a
   `{{transcript}}` token) plus generation params. Three built-ins ship; users add their own.
 - **`DeviceLink`** — describes the Watch↔host pairing; for the direct-to-iPad path it stores the
@@ -138,7 +146,7 @@ soft break you typed stays inside its paragraph.
 
 **Where a capture's words land is carried by the clip, not by whoever recorded it.** A recording
 made *into* a document — the record button, the Documents list's "+", an "insert here", a
-"Revise" — is saved with a `Recording.bodyDestination` (`.append` / `.at(index)` /
+"Redo" — is saved with a `Recording.bodyDestination` (`.append` / `.at(index)` /
 `.replacing(paragraphID)`), and `AppModel.fillDocumentBody`, at the end of every transcription,
 is the single place that files the text. That matters because the words may be a long way off: a
 clip captured while the speech model is still downloading is left `.pending`, picked up by
@@ -152,7 +160,7 @@ does the graph's half of the job, and for the same reason.
 turns a transcript into body text tags what it makes — `fillDocumentBody`, Reset with Originals,
 Append / Re-transcribe, and `DocumentStore.fileRecordings` for entries moved in from the Inbox — and
 `replaceParagraph(_:with:)` carries the tag onto whatever replaces a section (an in-place edit, a
-paragraph transform), unless the replacement is a recording's words of its own (a Revise clip's).
+paragraph transform), unless the replacement is a recording's words of its own (a Redo clip's).
 Sections saved before this existed have no tag; `Document.continuation(forParagraph:)` matches those
 to the recording whose transcript contains their words, whitespace and case aside.
 
@@ -592,7 +600,7 @@ it off `transcribe` is what makes it work for arrivals that know nothing about g
 `DocumentStore.addRecording` gives a Watch clip, a shared audio file, or a recording moved in from
 the Inbox a node of its own (unless one already claims it), and the words catch up through the same
 hook. Filling only *empty* nodes is what keeps a Retranscribe from overwriting what you've since
-typed; "Revise" empties the node deliberately, which is exactly how it replaces it.
+typed; "Redo" empties the node deliberately, which is exactly how it replaces it.
 
 Microphone permission is *checked* (`AVAudioApplication.shared.recordPermission`), never awaited, on
 every path that starts capture from a hold — the canvas's, both "+" buttons' and the Documents

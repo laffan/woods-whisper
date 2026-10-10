@@ -70,7 +70,8 @@ the rest of the app depends on.
 - **Inbox gestures.** **Tap** an entry to read the whole thing: the row opens out to every line of
   the transcript, and tapping again folds it back to a few. **Double-tap** to edit it — **in place**,
   where it sits (see *Editing in place* below). **Swipe left** for **Move** (into a document) and
-  **Delete**; **swipe right** for **Tag**, **Copy** and **Transform**. **Long-press** for **Continue
+  **Delete**; **swipe right** for **Tag**, **Copy**, **Transform** and **Revise** (see *Revise*
+  below). **Long-press** for **Continue
   Recording** (see below) or **Select**, which enters batch selection. (An entry that came in as
   text has no recording to continue, so a hold on it goes straight to selecting.)
 - **Continue a recording.** Long-press an Inbox entry, or hold a document's section and let go
@@ -123,10 +124,12 @@ the rest of the app depends on.
   its Recordings and what they said goes onto the end of its body (an entry not yet transcribed
   adds its words the moment it is).
 - **Moving a section out.** Swipe a document's section left → **Move** — the Inbox's Move, for a
-  paragraph: the same pane slides up with **New Document** at its head and the other documents
-  below it. Pick a document and the section goes onto the end of its body; pick **New Document**,
-  name it (the section's first two words are suggested), and the section becomes its body. Graphs
-  aren't offered — there's no body for a paragraph to join.
+  paragraph: the same pane slides up with the **Inbox** at its head, **New Document** under it, and
+  the other documents below. Pick the Inbox and the section goes back to being an entry of its own
+  — words with no clip behind them, the way imported text arrives, filed by its first word if that
+  word is a tag. Pick a document and the section goes onto the end of its body; pick **New
+  Document**, name it (the section's first two words are suggested), and the section becomes its
+  body. Graphs aren't offered — there's no body for a paragraph to join.
 - **Merging sections by dragging.** Hold a section and drag it: it lifts and follows your finger.
   Between two sections, a blue rule shows where it'll move to. Over *another section*, that section
   gets a **dotted blue outline** — let go and the dragged text is **appended onto the end** of it,
@@ -150,9 +153,42 @@ the rest of the app depends on.
   around it left where it was. The actions sit along the bottom of that same box, inside the
   outline — a compressed row of icons at the **left**, **Done** at the **right**. For an Inbox entry
   the icons are **Copy / Share / Transform / Reset** (Share hands off either the text or the audio
-  clip); for a paragraph they're **Revise / Insert / Transform**. **Done** saves and closes; blank
+  clip); for a paragraph they're **Redo / Insert / Transform**. **Done** saves and closes; blank
   lines you added split the block into separate paragraphs (a single line break you typed stays
   inside the paragraph — it's text the *app* wrote that splits on every line).
+- **Redo.** Swipe a section left → **Redo** (or tap **Redo** in its edit bar, or a graph card's) to
+  record the whole thing again: the recorder opens, and what you say replaces the section (or the
+  card) outright. The clip is kept under the document's **Revisions**. (This was called *Revise*;
+  that name now belongs to the editor below.)
+- **Revise.** Swipe a section right → **Revise** (or an Inbox entry right → **Revise**) and it
+  opens in an editor of its own, in large type — not a text field: there's no keyboard and no
+  caret, and every gesture is for a finger and a voice.
+  - **Swipe** across words to select them — no hold first.
+  - **Tap** the selection to strike it through; **double-tap** it to let it go. Struck words keep
+    their strike once they're let go, and from then on are a thing of their own.
+  - **Hold** the selection — or struck words — and speak: a recording starts under your finger (the
+    graph's tick, and the counter floats above it), and when you let go what you said takes their
+    place.
+  - **Hold** anywhere else in the text and speak: let go, and it goes in at the gap you held, shown
+    by an ember caret while you talk.
+  - **Triple-tap** struck words to take the strike off.
+  - Drag **up or down** to scroll a long entry; a swipe that sets off sideways is a selection.
+
+  Spoken words are drawn in green until you're done, so what's new is easy to read back, and they're
+  fitted to where they land — lower-cased mid-sentence, a full stop dropped when the sentence goes
+  on, the punctuation of the words they replaced kept. (A name spoken mid-sentence gets lower-cased
+  too; that's the one thing the fitting can't tell.) **Undo** at the bottom left steps back a change
+  at a time; a line beside it says what the finger can do right now. **Done** saves — **struck words
+  are left out**, striking a word through being how you say it should go — and **Cancel** asks
+  before throwing changes away. A clip that works isn't kept: it's a few words, and its text is the
+  point. One that can't be transcribed (the speech model not ready yet, say) is kept — among the
+  document's Revisions, or as an Inbox entry of its own — and the editor says so.
+- **Coming back to where you were.** Switch to another app and back and you're on the screen you
+  left: the same tab, the same document open. iOS ends a suspended app when it wants the memory —
+  one holding two models is first in line — and the app now asks the system to hand back where it
+  was rather than starting over at the Inbox. A paragraph, entry or card open for editing is saved as
+  the app goes into the background, so nothing typed is lost if it doesn't come back on its own.
+  (Swiping the app away in the app switcher still starts it fresh.)
 - **The "+" between sections.** The thin rule with a **"+"** at its middle, under every paragraph,
   records a clip and drops its transcript in at that spot. Hold **⌘** and
   the glyph becomes a caret: tap it then and you get an **empty section to type into**, opened for
@@ -207,7 +243,7 @@ the rest of the app depends on.
   it, leaving room to strike out in any direction for the next one.
 - **Working with nodes.** Nodes are the same edit blocks as everywhere else, shrunk to
   cards: **tap twice** to edit one in place — the row along the bottom of the open card opens with a
-  **colour dot** and carries **Revise / Transform / Tidy Children**, and a red **trash** that
+  **colour dot** and carries **Redo / Transform / Tidy Children**, and a red **trash** that
   deletes the node outright — or **long-press** it (or **⌃-click** it, with a pointer) for the
   card's menu, below. **Return closes an open card**: a node is a
   card rather than a page, so the key that ends a line ends the edit instead — exactly what **Done**
@@ -290,7 +326,7 @@ the rest of the app depends on.
   you can see, a ring only shows if everything in it does, and picking a hidden node from **List
   Nodes** brings the whole graph back first.
 - **The card's menu.** A **long press** on a card opens it, and so does a **⌃-click** — one menu,
-  whichever way you ask: **Edit**, **Add Child**, **Revise**, **Transform**, **Tidy Children**,
+  whichever way you ask: **Edit**, **Add Child**, **Redo**, **Transform**, **Tidy Children**,
   **Rotate ▸**, **Copy ▸**, **Paste as Child**, **Detach ▸**, **Isolate Branch** and **Delete**. A
   row with a **▸** has more than one version, and tapping it opens them in place beneath it (tap it
   again, or another one, to fold it away):
