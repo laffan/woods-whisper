@@ -8,6 +8,7 @@ DerivedData/
 
 # XcodeGen output (regenerated from project.yml)
 WoodsWhisper.xcodeproj/
+Apps/**/*.entitlements
 
 # Swift Package Manager
 .build/
