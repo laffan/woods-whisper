@@ -30,8 +30,9 @@ struct DocumentsView: View {
     // into right now. One at a time — it's one finger on one button.
     @StateObject private var recorder = AudioRecorder()
     @State private var recordingDocumentID: UUID?
-    @State private var editingDoc: Document?
-    @State private var editingText = ""
+    /// The document open in the Revise editor (swipe right → Revise). Its id is the document's
+    /// own, which is how the editor knows it's every section rather than one.
+    @State private var revisingDoc: RevisionSubject?
 
     /// Rows push their document by value rather than wrapping it in a `NavigationLink`, so a row can
     /// carry both a tap (open / toggle) and a long press (enter selection) without the two competing.
@@ -210,9 +211,13 @@ struct DocumentsView: View {
                 ActivityView(activityItems: [item.text])
             }
             .nearbySendSheet($nearbySend)
-            .sheet(item: $editingDoc) { doc in
-                TextEditorSheet(title: doc.title, text: $editingText) {
-                    model.documents.setParagraphs(Document.paragraphs(from: editingText), in: doc.id)
+            .fullScreenCover(item: $revisingDoc) { subject in
+                RevisionEditor(title: "Revise Document", text: subject.text,
+                               documentID: subject.id) { text in
+                    let old = model.documents.document(with: subject.id)?.paragraphs ?? []
+                    model.documents.setParagraphs(Document.paragraphs(revising: text, from: old),
+                                                  in: subject.id)
+                    wwLog("Revised the whole of a document", .general)
                 }
             }
             .alert(Text(unreachableLink?.title ?? ""),
@@ -378,7 +383,7 @@ struct DocumentsView: View {
         .swipeActions(edge: .leading) {
             if !selectionMode {
                 // Copy and Share hand over the body as text either way — for a graph that's its
-                // outline. Edit is the one action a graph has no answer to: there's no column of
+                // outline. Revise is the one action a graph has no answer to: there's no column of
                 // text to open, and writing one back would quietly bury the canvas.
                 Button("Copy") { copy(doc) }.tint(WW.inkTertiary)
                 Button("Share") { shareItem = ShareItem(text: doc.combinedText) }.tint(WW.violet)
@@ -387,7 +392,7 @@ struct DocumentsView: View {
                 // document of the same name, so it can go back and forth.
                 Button("Send") { nearbySend = NearbySendRequest(documentIDs: [doc.id]) }.tint(WW.moss)
                 if !doc.isGraph {
-                    Button("Edit") { startEdit(doc) }.tint(WW.slate)
+                    Button("Revise") { startRevise(doc) }.tint(WW.slate)
                 }
             }
         }
@@ -556,9 +561,10 @@ struct DocumentsView: View {
         renameTarget = document
     }
 
-    private func startEdit(_ document: Document) {
-        editingText = document.combinedText
-        editingDoc = document
+    /// **Revise** (swipe right): every section of the document at once, in the Revise editor —
+    /// typing is a tap away (open the document), so the list offers the voice-and-finger pass.
+    private func startRevise(_ document: Document) {
+        revisingDoc = RevisionSubject(id: document.id, text: document.combinedText)
     }
 
     private func copy(_ document: Document) {

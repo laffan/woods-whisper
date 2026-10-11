@@ -90,6 +90,10 @@ struct DocumentDetailView: View {
     @State private var editingText = ""
     @State private var editingSelection = NSRange(location: 0, length: 0)
 
+    // Whole-document editing (the "Edit" action)
+    @State private var showingDocEditor = false
+    @State private var docEditorText = ""
+
     // Share
     @State private var shareItem: ShareItem?
     @State private var audioShareItem: AudioShareItem?
@@ -201,6 +205,11 @@ struct DocumentDetailView: View {
                             presenting: heldSectionID) { paragraphID in
             Button("Continue Recording") { continueRecording(from: paragraphID) }
             Button("Reorder Sections") { withAnimation { editMode = .active } }
+        }
+        .sheet(isPresented: $showingDocEditor) {
+            TextEditorSheet(title: "Edit Document", text: $docEditorText) {
+                model.documents.setParagraphs(Document.paragraphs(from: docEditorText), in: documentID)
+            }
         }
         .sheet(item: $shareItem) { item in
             ActivityView(activityItems: [item.text])
@@ -872,7 +881,7 @@ struct DocumentDetailView: View {
         return CGRect(x: span.minX, y: y - 1.5, width: span.width, height: 3)
     }
 
-    // MARK: Document actions (Copy / Share / Revise / Transform)
+    // MARK: Document actions (Copy / Share / Edit / Revise / Transform)
 
     @ViewBuilder
     private func documentActionsSection(for document: Document) -> some View {
@@ -885,9 +894,11 @@ struct DocumentDetailView: View {
                         docActionButton("Share", "square.and.arrow.up") {
                             shareItem = ShareItem(text: document.combinedText)
                         }
+                        docActionButton("Edit", "pencil") {
+                            docEditorText = document.combinedText
+                            showingDocEditor = true
+                        }
                         // Every section at once in the Revise editor, a blank line between each.
-                        // (Typing into a section is a double tap on it, so this row doesn't need
-                        // an Edit.)
                         docActionButton("Revise", "pencil.line") { reviseWholeDocument(document) }
                         docActionButton("Transform", "wand.and.stars") {
                             withAnimation(.snappy(duration: 0.22)) { showingDocTransform = true }
