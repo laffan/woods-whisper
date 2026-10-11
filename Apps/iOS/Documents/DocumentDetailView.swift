@@ -4142,6 +4142,7 @@ struct RevisionEditor: View {
     @State private var scrollOffset: CGFloat = 0
     @State private var contentHeight: CGFloat = 0
     @State private var viewportHeight: CGFloat = 0
+    @State private var glideTask: Task<Void, Never>?
 
     // The finger: where it went down, what it's turned out to be, and the timer that makes a
     // still finger a hold.
@@ -4207,6 +4208,10 @@ struct RevisionEditor: View {
         NavigationStack {
             GeometryReader { geo in
                 textContent
+                    // Its whole height, not the screen's: offered the viewport's height, the text
+                    // would be squeezed into it (its frame only sets a minimum), measure no taller
+                    // than the screen, and leave nothing to scroll.
+                    .fixedSize(horizontal: false, vertical: true)
                     .frame(width: geo.size.width, alignment: .topLeading)
                     .offset(y: -scrollOffset)
                     .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
@@ -4215,6 +4220,7 @@ struct RevisionEditor: View {
                     .gesture(touchGesture)
                     .overlay { recordingReadout(in: geo.size) }
                     .overlay { movingWords(in: geo.size) }
+                    .overlay(alignment: .topTrailing) { scrollIndicator(in: geo.size) }
                     .onChange(of: geo.size.height, initial: true) { _, height in
                         viewportHeight = height
                         clampScroll()
@@ -4417,6 +4423,24 @@ struct RevisionEditor: View {
         }
     }
 
+    /// A thin bar down the right edge, there whenever the text runs past the screen: how much of it
+    /// there is, and where you are in it. Scrolling here is done by hand, so there's no system
+    /// indicator to lean on.
+    @ViewBuilder
+    private func scrollIndicator(in size: CGSize) -> some View {
+        let overflow = contentHeight - size.height
+        if overflow > 1, contentHeight > 0 {
+            let track = size.height - 16
+            let length = max(36, track * size.height / contentHeight)
+            let travel = track - length
+            Capsule()
+                .fill(WW.inkTertiary.opacity(touchMode == .scrolling ? 0.7 : 0.35))
+                .frame(width: 4, height: length)
+                .offset(x: -4, y: 8 + travel * min(max(scrollOffset / overflow, 0), 1))
+                .allowsHitTesting(false)
+        }
+    }
+
     /// Undo at the left; at the right, a line saying what the finger can do *now* — the gestures
     /// mean different things over a selection, and there's no menu to read them off.
     private var bottomBar: some View {
@@ -4497,6 +4521,7 @@ struct RevisionEditor: View {
                 scroll(to: scrollAtTouch - moved.height)
             }
         case .selecting:
+            autoScroll(near: value.location)
             extendSelection(to: value.location)
         case .scrolling:
             scroll(to: scrollAtTouch - value.translation.height)
@@ -4521,9 +4546,10 @@ struct RevisionEditor: View {
         switch mode {
         case .undecided: registerTap(at: value.startLocation)
         case .selecting: if selection != nil { WWHaptics.light() }
+        case .scrolling: glide(from: value)
         case .recording: finishHold()
         case .moving: finishMove()
-        case .scrolling, .heldSelection, .ignored: break
+        case .heldSelection, .ignored: break
         }
     }
 
@@ -4540,6 +4566,7 @@ struct RevisionEditor: View {
     /// next. Kept still long enough, it's a hold.
     private func beginTouch(at point: CGPoint) {
         cancelHoldTimer()
+        stopGlide()
         touchStart = point
         touchMode = .undecided
         holdIsOnSelection = false
@@ -4567,6 +4594,39 @@ struct RevisionEditor: View {
     }
 
     private func clampScroll() { scroll(to: scrollOffset) }
+
+    /// A flick carries on: the text eases out to where the finger's speed says it was heading.
+    /// Stepped by hand rather than animated, so the offset on screen is the offset the next touch
+    /// reads — a finger put down mid-glide stops it where it is, as on the graph canvas.
+    private func glide(from value: DragGesture.Value) {
+        let flung = value.predictedEndTranslation.height - value.translation.height
+        guard abs(flung) > 30 else { return }
+        let target = min(max(0, scrollOffset - flung), max(0, contentHeight - viewportHeight))
+        stopGlide()
+        glideTask = Task { @MainActor in
+            var steps = 0
+            while !Task.isCancelled, abs(target - scrollOffset) > 0.5, steps < 90 {
+                scroll(to: scrollOffset + (target - scrollOffset) * 0.16)
+                steps += 1
+                try? await Task.sleep(nanoseconds: 16_000_000)
+            }
+        }
+    }
+
+    private func stopGlide() {
+        glideTask?.cancel()
+        glideTask = nil
+    }
+
+    /// A finger carrying a swipe-selection or a move near the top or bottom edge brings more of
+    /// the text under it.
+    private func autoScroll(near point: CGPoint) {
+        if point.y < 60 {
+            scroll(to: scrollOffset - 10)
+        } else if point.y > viewportHeight - 60 {
+            scroll(to: scrollOffset + 10)
+        }
+    }
 
     // MARK: Selecting
 
@@ -4780,11 +4840,7 @@ struct RevisionEditor: View {
     /// edge, the text scrolls to bring more of it under the finger.
     private func updateMove(to point: CGPoint) {
         guard var drag = moveDrag, let range = selectedRange else { return }
-        if point.y < 60 {
-            scroll(to: scrollOffset - 10)
-        } else if point.y > viewportHeight - 60 {
-            scroll(to: scrollOffset + 10)
-        }
+        autoScroll(near: point)
         drag.location = point
         let gap = gap(at: contentPoint(point))
         if RevisionText.moves(range, to: gap.index) {
@@ -4837,6 +4893,7 @@ struct RevisionEditor: View {
     /// Nothing left running behind a closed editor: a recording in progress is dropped.
     private func tearDown() {
         cancelHoldTimer()
+        stopGlide()
         moveDrag = nil
         guard recordTarget != nil else { return }
         recordTarget = nil
