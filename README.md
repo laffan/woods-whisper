@@ -162,7 +162,12 @@ the rest of the app depends on.
   that name now belongs to the editor below.)
 - **Revise.** Swipe a section right → **Revise** (or an Inbox entry right → **Revise**) and it
   opens in an editor of its own, in large type — not a text field: there's no keyboard and no
-  caret, and every gesture is for a finger and a voice.
+  caret, and every gesture is for a finger and a voice. To work on **every section at once**, tap
+  **Revise** in the row under a document's body (Copy / Share / Revise / Transform — it took Edit's
+  place, since a double tap on a section already edits it): the sections open together with a
+  blank line between each, so words can be struck, spoken over and moved from one section to
+  another. Saved, a section that came back unchanged — or changed where it stood — keeps its place
+  in the document and its link to the recording it came from.
   - **Swipe** across words to select them — no hold first.
   - **Double-tap** the selection to strike it through (double-tap a struck selection to take the
     strike off). **Tap** anywhere outside the selection to let it go. Struck words keep their
@@ -517,7 +522,7 @@ the rest of the app depends on.
   the top-right corner of its pane (no titles: the row you tapped already said what this is, so
   **Rename** moves into that menu) — so nothing about either of them changes by being paired. On a
   **phone**, where two panes share the height, the document half's **Auto transform** strip moves
-  off the bottom and into the list, under the Copy / Share / Edit / Transform row. The **"+"** on a joint document's row
+  off the bottom and into the list, under the Copy / Share / Revise / Transform row. The **"+"** on a joint document's row
   records into the **document** half: a clip spoken at a list row is a thought to write down, and it
   lands as a paragraph at the end rather than as a node somewhere on the canvas nobody chose. The
   pair takes one row in **Documents**, counting what's in both. **Separate Joint Document**, in
@@ -531,8 +536,8 @@ the rest of the app depends on.
   same way the backup folder writes them. **Done** leaves selection mode.
 - **Insert while editing.** While editing a paragraph, **Insert** records a clip, transcribes it, and
   splices the text in at the cursor — the clip is saved with the document's other recordings.
-- **Find & replace.** The whole-document editor has a find/replace bar at the bottom (the magnifying
-  glass in the editor's toolbar) — search, step through matches, and Replace / Replace All.
+- **Find & replace.** The whole-document text editor — swipe a document right in the **Documents**
+  list → **Edit** — has a find/replace bar at the bottom (the magnifying glass in the editor's toolbar) — search, step through matches, and Replace / Replace All.
 - **Send a document to another device, and back.** Swipe a document right and tap **Send** (or
   select several and tap **Send**, or **⋯ → Send to Nearby Device…**), and a list of your other
   iPhones and iPads with Woods Whisper open nearby slides up. Tap one, and the document — audio,

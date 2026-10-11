@@ -99,6 +99,25 @@ final class RevisionTextTests: XCTestCase {
         XCTAssertEqual(revision.revisedText, "first\nsecond line end")
     }
 
+    func testRevisingAWholeBodyKeepsItsSections() {
+        let recording = UUID()
+        let old = [Document.Paragraph(text: "First section.", recordingID: recording),
+                   Document.Paragraph(text: "Second section."),
+                   Document.Paragraph(text: "Third section.")]
+        // The first edited in place, the second struck out entirely, the third unchanged.
+        let revised = Document.paragraphs(revising: "First part.\n\nThird section.", from: old)
+        XCTAssertEqual(revised.map(\.text), ["First part.", "Third section."])
+        XCTAssertEqual(revised[0].id, old[0].id)
+        XCTAssertEqual(revised[0].recordingID, recording)
+        XCTAssertEqual(revised[1].id, old[2].id)
+    }
+
+    func testStrikingTheEndOfASectionKeepsSectionsApart() {
+        var revision = RevisionText("One two.\n\nThree four.")
+        revision.setStruck(true, in: 1...1)
+        XCTAssertEqual(Document.paragraphs(from: revision.revisedText).map(\.text), ["One", "Three four."])
+    }
+
     func testWordsThatStayCapitalised() {
         XCTAssertEqual(RevisionText.decapitalized("I'm"), "I'm")
         XCTAssertEqual(RevisionText.decapitalized("I"), "I")

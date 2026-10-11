@@ -195,6 +195,36 @@ public struct Document: Identifiable, Codable, Hashable, Sendable {
         return blocks.isEmpty ? [] : blocks.map { Paragraph(text: $0) }
     }
 
+    /// The body after the whole of it was revised as one text — `text`, its sections set apart by
+    /// blank lines, as `combinedText` gives it — keeping each section's identity, and the recording
+    /// it came from, wherever it can be told: a section whose words came back unchanged is that
+    /// section still, wherever it now stands, and a changed one in the same place is that section,
+    /// said differently. Anything else is a new section.
+    public static func paragraphs(revising text: String, from old: [Paragraph]) -> [Paragraph] {
+        let blocks = paragraphs(from: text).map(\.text)
+        var used = Set<UUID>()
+        var result: [Paragraph?] = Array(repeating: nil, count: blocks.count)
+        for (index, block) in blocks.enumerated() {
+            if let same = old.first(where: {
+                !used.contains($0.id) && $0.text.trimmingCharacters(in: .whitespacesAndNewlines) == block
+            }) {
+                used.insert(same.id)
+                result[index] = same
+            }
+        }
+        for (index, block) in blocks.enumerated() where result[index] == nil {
+            if old.indices.contains(index), !used.contains(old[index].id) {
+                used.insert(old[index].id)
+                var edited = old[index]
+                edited.text = block
+                result[index] = edited
+            } else {
+                result[index] = Paragraph(text: block)
+            }
+        }
+        return result.compactMap { $0 }
+    }
+
     // MARK: Search
 
     /// Whether `text` contains `query`, the way a search field should read it: ignoring case and
