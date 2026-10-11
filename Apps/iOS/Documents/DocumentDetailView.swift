@@ -177,7 +177,7 @@ struct DocumentDetailView: View {
         .fullScreenCover(item: $revisingParagraph) { subject in
             let isWhole = subject.id == documentID
             RevisionEditor(title: isWhole ? "Revise Document" : "Revise Section", text: subject.text,
-                           documentID: documentID) { text in
+                           documentID: documentID, linesAreSections: true) { text in
                 if isWhole {
                     let old = document?.paragraphs ?? []
                     model.documents.setParagraphs(Document.paragraphs(revising: text, from: old),
@@ -500,6 +500,12 @@ struct DocumentDetailView: View {
             row
         } else {
             row
+                // Three taps revise, two edit in place. The triple is attached first so the
+                // double waits to see whether a third tap is coming.
+                .onTapGesture(count: 3) {
+                    guard !editMode.isEditing else { return }
+                    startRevising(para)
+                }
                 .onTapGesture(count: 2) {
                     guard !editMode.isEditing else { return }
                     startEditing(para)
@@ -3309,6 +3315,14 @@ struct InboxView: View {
             onDoubleTapLabel: {
                 if selectionMode { toggle(recording.id) } else { startEditing(recording) }
             },
+            onTripleTapLabel: {
+                if selectionMode {
+                    toggle(recording.id)
+                } else if recording.transcript != nil {
+                    // Not until there are words to work over, as with the swipe's Revise.
+                    startRevising(recording)
+                }
+            },
             onLongPress: { entryHeld(recording) },
             onCopy: { copy(recording) },
             onRetranscribe: { Task { await model.transcribe(recordingID: recording.id, inDocument: documentID) } },
@@ -3951,6 +3965,7 @@ private struct InboxRecordingRow<Editor: View>: View {
     let isExpanded: Bool
     let onTapLabel: () -> Void
     let onDoubleTapLabel: () -> Void
+    let onTripleTapLabel: () -> Void
     let onLongPress: () -> Void
     let onCopy: () -> Void
     let onRetranscribe: () -> Void
@@ -3970,8 +3985,8 @@ private struct InboxRecordingRow<Editor: View>: View {
             }
 
             // A few lines of the transcript over the capture date/time — **tap** to see the rest of
-            // it, **double-tap** to edit it (or either, to toggle the row, when selecting). While
-            // editing, the editor takes the preview's place.
+            // it, **double-tap** to edit it, **triple-tap** to revise it (or any of them, to toggle
+            // the row, when selecting). While editing, the editor takes the preview's place.
             VStack(alignment: .leading, spacing: 4) {
                 if isEditing {
                     editor
@@ -4004,7 +4019,8 @@ private struct InboxRecordingRow<Editor: View>: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
-            .modifier(TapsUnless(disabled: isEditing, tap: onTapLabel, doubleTap: onDoubleTapLabel))
+            .modifier(TapsUnless(disabled: isEditing, tap: onTapLabel, doubleTap: onDoubleTapLabel,
+                                 tripleTap: onTripleTapLabel))
 
             if !selectionMode && !isEditing {
                 Menu {
@@ -4126,9 +4142,10 @@ struct RevisionSubject: Identifiable {
 /// and each gesture means one thing:
 ///
 /// • **Swipe** across words to select them. No hold first: the swipe is the selecting.
+/// • **Tap** a word to select its sentence.
 /// • **Double-tap** the selection to strike it through (and again to take the strike off). A struck
 ///   run keeps its strike once it's let go, and is a thing of its own from then on.
-/// • **Tap** anywhere outside the selection to let it go.
+/// • **Tap** off the words to let the selection go.
 /// • **Hold** the selection, or a struck run, and speak: let go, and what you said takes its place.
 /// • **Hold and drag** the selection to move it: a blue caret shows where it'll go.
 /// • **Hold** anywhere else in the text and speak: let go, and it goes in at the gap you held —
@@ -4138,10 +4155,18 @@ struct RevisionSubject: Identifiable {
 /// What was just spoken in arrives **selected**, so trying again is one more hold on it, with a
 /// **Reset** button above it that puts back what was there before. Struck words are left out of
 /// what's saved — striking a word through is how you say it should go.
+///
+/// The footer has **Undo**, **Delete** while there's a selection (the words go at once, not on
+/// Done), and **Transform**, which runs a preset over the text and puts its answer in the editor
+/// rather than saving it, so revising carries on from there.
 struct RevisionEditor: View {
     let title: String
     /// Where a clip that couldn't be transcribed is kept, so what was said isn't lost.
     let documentID: UUID
+    /// Whether what's being revised is a document's body, where each line of a transform's answer
+    /// is a section of its own (as the swipe's Transform files it) — so the answer comes in with a
+    /// blank line between its lines, the way the editor sets sections apart.
+    let linesAreSections: Bool
     let onSave: (String) -> Void
 
     @EnvironmentObject private var model: AppModel
@@ -4187,11 +4212,22 @@ struct RevisionEditor: View {
     @State private var moveDrag: MoveDrag?
 
     @State private var errorMessage: String?
+    /// Whether `errorMessage` is about a transform rather than a recording, for the alert's title.
+    @State private var transformFailed = false
     @State private var showingDiscardConfirm = false
 
-    init(title: String, text: String, documentID: UUID, onSave: @escaping (String) -> Void) {
+    // Transform: the preset picker, and a transform on its way back. The text holds still while it
+    // runs, since the answer replaces all of it.
+    @State private var showingTransformPicker = false
+    @State private var isTransforming = false
+    /// What `AppModel.isThinking` knows this editor's transform by.
+    @State private var transformID = UUID()
+
+    init(title: String, text: String, documentID: UUID, linesAreSections: Bool = false,
+         onSave: @escaping (String) -> Void) {
         self.title = title
         self.documentID = documentID
+        self.linesAreSections = linesAreSections
         self.onSave = onSave
         _revision = State(initialValue: RevisionText(text))
     }
@@ -4220,7 +4256,9 @@ struct RevisionEditor: View {
     private static let resetLift: CGFloat = 42
 
     private var isRecording: Bool { recordTarget != nil }
-    private var isBusy: Bool { isRecording || moveDrag != nil || revision.hasPendingEdit }
+    private var isBusy: Bool {
+        isRecording || moveDrag != nil || revision.hasPendingEdit || isTransforming
+    }
 
     // MARK: Body
 
@@ -4273,12 +4311,18 @@ struct RevisionEditor: View {
             }
         }
         .onDisappear { tearDown() }
+        .confirmationDialog("Transform — \(AppSettings.shared.model.shortName)",
+                            isPresented: $showingTransformPicker, titleVisibility: .visible) {
+            ForEach(model.documents.presets) { preset in
+                Button(preset.name) { runTransform(preset) }
+            }
+        }
         .confirmationDialog("Discard your changes?", isPresented: $showingDiscardConfirm,
                             titleVisibility: .visible) {
             Button("Discard", role: .destructive) { close() }
             Button("Keep Revising", role: .cancel) { }
         }
-        .alert("Couldn't use that recording",
+        .alert(transformFailed ? "Couldn't transform that" : "Couldn't use that recording",
                isPresented: Binding(get: { errorMessage != nil },
                                     set: { if !$0 { errorMessage = nil } })) {
             Button("OK", role: .cancel) { errorMessage = nil }
@@ -4481,13 +4525,24 @@ struct RevisionEditor: View {
                 .opacity(history.isEmpty || isBusy ? 0.35 : 1)
                 .accessibilityLabel("Undo")
 
-                if revision.hasPendingEdit, !isRecording {
+                if selection != nil {
+                    footerButton("trash", label: "Delete", tint: WW.ember,
+                                 enabled: canDeleteSelection) {
+                        deleteSelection()
+                    }
+                }
+                footerButton("wand.and.stars", label: "Transform", tint: WW.violet,
+                             enabled: model.modelReady && !isBusy && !revision.revisedText.isEmpty) {
+                    showingTransformPicker = true
+                }
+
+                if (revision.hasPendingEdit && !isRecording) || isTransforming {
                     ProgressView().controlSize(.small)
                 }
                 Text(hint)
                     .font(.footnote)
                     .foregroundStyle(WW.inkSecondary)
-                    .lineLimit(2)
+                    .lineLimit(3)
                     .frame(maxWidth: .infinity, alignment: .trailing)
                     .multilineTextAlignment(.trailing)
             }
@@ -4497,7 +4552,24 @@ struct RevisionEditor: View {
         .background(WW.surface)
     }
 
+    /// An icon button the size of Undo, beside it in the footer.
+    private func footerButton(_ systemImage: String, label: String, tint: Color, enabled: Bool,
+                              action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 17, weight: .regular))
+                .frame(width: 40, height: 36)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(tint)
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.35)
+        .accessibilityLabel(label)
+    }
+
     private var hint: String {
+        if isTransforming { return model.isThinking(transformID) ? "Thinking…" : "Transforming…" }
         if moveDrag != nil { return "Let go to move the words to the blue caret." }
         if isRecording {
             if case .insert = recordTarget { return "Speak — let go to put it in here." }
@@ -4512,7 +4584,7 @@ struct RevisionEditor: View {
         if revision.tokens.contains(where: \.isStruck) {
             return "Hold struck words to speak over them · struck words go on Done"
         }
-        return "Swipe to select · hold anywhere to speak in"
+        return "Tap a sentence or swipe to select · hold anywhere to speak in"
     }
 
     // MARK: The finger
@@ -4591,6 +4663,12 @@ struct RevisionEditor: View {
         touchMode = .undecided
         holdIsOnSelection = false
         scrollAtTouch = scrollOffset
+        // The words are about to be replaced by a transform's answer: nothing done to them now
+        // would survive it.
+        if isTransforming {
+            touchMode = .ignored
+            return
+        }
         WWHaptics.prepare()
         holdTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: Self.holdDelay)
@@ -4668,9 +4746,10 @@ struct RevisionEditor: View {
 
     // MARK: Tapping
 
-    /// A tap outside the selection lets it go, at once. On the selection, one tap does nothing and
-    /// a second close behind it strikes the words through — or, if they're all struck already,
-    /// takes the strike off. A tap on Reset is Reset.
+    /// A tap on a word outside the selection selects the sentence it's in; a tap off the words lets
+    /// the selection go. On the selection, one tap does nothing and a second close behind it
+    /// strikes the words through — or, if they're all struck already, takes the strike off — so a
+    /// double tap on a sentence selects it and strikes it. A tap on Reset is Reset.
     private func registerTap(at point: CGPoint) {
         let spot = contentPoint(point)
         if let reset = resetFrame, reset.contains(spot) {
@@ -4685,8 +4764,17 @@ struct RevisionEditor: View {
         lastTapTime = isDouble ? .distantPast : now
         lastTapPoint = point
 
-        guard let range = selectedRange, let index = tokenIndex(at: spot), range.contains(index) else {
+        guard let index = tokenIndex(at: spot) else {
             if selection != nil { selection = nil }
+            return
+        }
+        guard let range = selectedRange, range.contains(index) else {
+            if let sentence = revision.sentence(around: index) {
+                let tokens = revision.tokens
+                selection = TokenSpan(first: tokens[sentence.lowerBound].id,
+                                      last: tokens[sentence.upperBound].id)
+                WWHaptics.light()
+            }
             return
         }
         guard isDouble, !isBusy, !revision.tokens[range].contains(where: \.isPlaceholder) else { return }
@@ -4758,6 +4846,7 @@ struct RevisionEditor: View {
         do {
             try recorder.start(to: model.documents.newAudioURL().url)
         } catch {
+            transformFailed = false
             errorMessage = error.localizedDescription
             touchMode = holdIsOnSelection ? .heldSelection : .ignored
             return
@@ -4816,6 +4905,7 @@ struct RevisionEditor: View {
             case .failed(let message):
                 revision.finish(edit, with: nil)
                 if history.last == revision { history.removeLast() }
+                transformFailed = false
                 errorMessage = message
             }
         }
@@ -4827,6 +4917,7 @@ struct RevisionEditor: View {
         guard AVAudioApplication.shared.recordPermission == .granted else {
             Task { @MainActor in
                 if !(await recorder.requestPermission()) {
+                    transformFailed = false
                     errorMessage = "Microphone permission is required to record."
                 }
             }
@@ -4881,6 +4972,54 @@ struct RevisionEditor: View {
         guard let gap = drag.gap, let range = selectedRange else { return }
         change { $0.move(range, to: gap) }
         WWHaptics.medium()
+    }
+
+    // MARK: Delete and Transform
+
+    private var canDeleteSelection: Bool {
+        guard let range = selectedRange, !isBusy else { return false }
+        return !revision.tokens[range].contains(where: \.isPlaceholder)
+    }
+
+    /// **Delete**: the selection goes now, not on Done as struck words do.
+    private func deleteSelection() {
+        guard canDeleteSelection, let range = selectedRange else { return }
+        change { $0.delete(range) }
+        selection = nil
+        WWHaptics.light()
+    }
+
+    /// **Transform**: the preset runs over the words as they'd be saved — struck ones left out —
+    /// and its answer takes their place here, in the editor, one Undo away. Nothing is written
+    /// back until Done.
+    private func runTransform(_ preset: PromptPreset) {
+        let source = revision.revisedText
+        guard !source.isEmpty, !isBusy else { return }
+        isTransforming = true
+        transformFailed = false
+        selection = nil
+        Task { @MainActor in
+            defer { isTransforming = false }
+            do {
+                guard let answer = try await model.transformedText(source, with: preset,
+                                                                   id: transformID) else {
+                    transformFailed = true
+                    errorMessage = "“\(preset.name)” came back with nothing. Your text is untouched; try again, or pick another transform."
+                    return
+                }
+                let text = linesAreSections
+                    ? answer.components(separatedBy: .newlines)
+                        .map { $0.trimmingCharacters(in: .whitespaces) }
+                        .filter { !$0.isEmpty }
+                        .joined(separator: "\n\n")
+                    : answer
+                change { $0.replaceAll(with: text) }
+                WWHaptics.light()
+            } catch {
+                transformFailed = true
+                errorMessage = error.localizedDescription
+            }
+        }
     }
 
     // MARK: Changes
@@ -5173,16 +5312,17 @@ private struct ChipGestures<Hold: Gesture>: ViewModifier {
     }
 }
 
-/// Attaches the row's two taps — one to reveal the whole transcript, two to edit it — and only
-/// when `disabled` is false: an open editor needs its taps for the caret, so the gestures have to be
-/// absent rather than merely ignored.
+/// Attaches the row's taps — one to reveal the whole transcript, two to edit it, three to revise
+/// it — and only when `disabled` is false: an open editor needs its taps for the caret, so the
+/// gestures have to be absent rather than merely ignored.
 ///
-/// The double tap is attached *first*. SwiftUI hands a touch to the last gesture that can take it,
-/// so with the single tap on the outside a second tap would never be waited for.
+/// The most taps are attached *first*. SwiftUI hands a touch to the last gesture that can take it,
+/// so with fewer taps on the outside a further tap would never be waited for.
 private struct TapsUnless: ViewModifier {
     let disabled: Bool
     let tap: () -> Void
     let doubleTap: () -> Void
+    let tripleTap: () -> Void
 
     @ViewBuilder
     func body(content: Content) -> some View {
@@ -5190,6 +5330,7 @@ private struct TapsUnless: ViewModifier {
             content
         } else {
             content
+                .onTapGesture(count: 3, perform: tripleTap)
                 .onTapGesture(count: 2, perform: doubleTap)
                 .onTapGesture(perform: tap)
         }

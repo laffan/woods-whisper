@@ -213,7 +213,7 @@ struct DocumentsView: View {
             .nearbySendSheet($nearbySend)
             .fullScreenCover(item: $revisingDoc) { subject in
                 RevisionEditor(title: "Revise Document", text: subject.text,
-                               documentID: subject.id) { text in
+                               documentID: subject.id, linesAreSections: true) { text in
                     let old = model.documents.document(with: subject.id)?.paragraphs ?? []
                     model.documents.setParagraphs(Document.paragraphs(revising: text, from: old),
                                                   in: subject.id)

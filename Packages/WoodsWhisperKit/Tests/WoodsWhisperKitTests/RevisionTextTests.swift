@@ -28,6 +28,40 @@ final class RevisionTextTests: XCTestCase {
         XCTAssertEqual(revision.revisedText, "First line\nSecond line")
     }
 
+    func testDeletingWords() {
+        var revision = RevisionText("The quick brown fox jumps.")
+        revision.delete(1...2)
+        XCTAssertEqual(revision.tokens.map(\.word), ["The", "fox", "jumps."])
+        XCTAssertEqual(revision.revisedText, "The fox jumps.")
+        XCTAssertTrue(revision.hasChanges)
+    }
+
+    func testDeletingTheEndOfALineKeepsTheLineBreak() {
+        var revision = RevisionText("First line end\nSecond line")
+        revision.delete(2...2)
+        XCTAssertEqual(revision.revisedText, "First line\nSecond line")
+    }
+
+    func testReplacingEverythingStillComparesWithTheOriginal() {
+        var revision = RevisionText("Hello world.")
+        revision.replaceAll(with: "Goodbye world.")
+        XCTAssertEqual(revision.revisedText, "Goodbye world.")
+        XCTAssertTrue(revision.hasChanges)
+        revision.replaceAll(with: "Hello world.")
+        XCTAssertFalse(revision.hasChanges)
+    }
+
+    func testSentenceAroundAWord() {
+        let revision = RevisionText("One two. Three four? Five\nSix seven")
+        XCTAssertEqual(revision.sentence(around: 0), 0...1)
+        XCTAssertEqual(revision.sentence(around: 1), 0...1)
+        XCTAssertEqual(revision.sentence(around: 3), 2...3)
+        // A line break ends a sentence that has no punctuation of its own.
+        XCTAssertEqual(revision.sentence(around: 4), 4...4)
+        XCTAssertEqual(revision.sentence(around: 6), 5...6)
+        XCTAssertNil(revision.sentence(around: 7))
+    }
+
     func testReplacingMidSentenceFitsTheSentence() {
         var revision = RevisionText("The quick brown fox jumps.")
         let edit = revision.beginReplacing(1...2)

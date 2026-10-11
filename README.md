@@ -69,7 +69,8 @@ the rest of the app depends on.
   capture date and time. There's no play control on the rows; the text runs the full width.
 - **Inbox gestures.** **Tap** an entry to read the whole thing: the row opens out to every line of
   the transcript, and tapping again folds it back to a few. **Double-tap** to edit it — **in place**,
-  where it sits (see *Editing in place* below). **Swipe left** for **Move** (into a document) and
+  where it sits (see *Editing in place* below) — and **triple-tap** to open it in **Revise** (see
+  *Revise* below). **Swipe left** for **Move** (into a document) and
   **Delete**; **swipe right** for **Tag**, **Copy**, **Transform** and **Revise** (see *Revise*
   below). **Long-press** for **Continue
   Recording** (see below) or **Select**, which enters batch selection. (An entry that came in as
@@ -160,7 +161,7 @@ the rest of the app depends on.
   record the whole thing again: the recorder opens, and what you say replaces the section (or the
   card) outright. The clip is kept under the document's **Revisions**. (This was called *Revise*;
   that name now belongs to the editor below.)
-- **Revise.** Swipe a section right → **Revise** (or an Inbox entry right → **Revise**) and it
+- **Revise.** **Triple-tap** a section or an Inbox entry — or swipe it right → **Revise** — and it
   opens in an editor of its own, in large type — not a text field: there's no keyboard and no
   caret, and every gesture is for a finger and a voice. To work on **every section at once**, tap
   **Revise** in the row under a document's body (Copy / Share / Edit / Revise / Transform), or swipe
@@ -169,9 +170,12 @@ the rest of the app depends on.
   between each, so words can be struck, spoken over and moved from one section to
   another. Saved, a section that came back unchanged — or changed where it stood — keeps its place
   in the document and its link to the recording it came from.
-  - **Swipe** across words to select them — no hold first.
+  - **Swipe** across words to select them — no hold first. Or **tap** a word to select the
+    sentence it's in (a line break ends a sentence too, so a line or a section with no full stop
+    counts as one).
   - **Double-tap** the selection to strike it through (double-tap a struck selection to take the
-    strike off). **Tap** anywhere outside the selection to let it go. Struck words keep their
+    strike off) — so a double tap on a sentence selects it and strikes it. **Tap** off the words
+    to let the selection go. Struck words keep their
     strike once they're let go, and from then on are a thing of their own.
   - **Hold** the selection — or struck words — and speak: a recording starts under your finger (the
     graph's tick, and the counter floats above it), and when you let go what you said takes their
@@ -189,7 +193,12 @@ the rest of the app depends on.
   they land — lower-cased mid-sentence, a full stop dropped when the sentence goes on, the
   punctuation of the words they replaced kept. (A name spoken mid-sentence gets lower-cased too;
   that's the one thing the fitting can't tell.) **Undo** at the bottom left steps back a change at a
-  time; a line beside it says what the finger can do right now. **Done** saves — **struck words are
+  time. Beside it, **Delete** (while there's a selection) takes the selected words out there and
+  then, rather than striking them for Done to leave out; and **Transform** runs a preset over the
+  text as it stands — struck words left out — the way the swipe's Transform would, except the
+  answer lands *in the editor*, which stays open: keep revising it, or Undo it. In a document each
+  line of the answer is a section, as it would be from the swipe. Nothing is written back until
+  **Done**. A line after those buttons says what the finger can do right now. **Done** saves — **struck words are
   left out**, striking a word through being how you say it should go — and **Cancel** asks before
   throwing changes away. A clip that works isn't kept: it's a few words, and its text is the point.
   One that can't be transcribed (the speech model not ready yet, say) is kept — among the

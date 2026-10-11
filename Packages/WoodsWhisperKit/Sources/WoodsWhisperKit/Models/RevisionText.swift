@@ -129,6 +129,50 @@ public struct RevisionText: Equatable {
         return lower...upper
     }
 
+    // MARK: Deleting
+
+    /// Take the words in `range` out now, rather than striking them through for Done to leave out.
+    /// A line break that followed them is kept, as it is for struck words, so deleting the end of a
+    /// line doesn't run it into the next one. Placeholders stay where they are.
+    public mutating func delete(_ range: ClosedRange<Int>) {
+        guard tokens.indices.contains(range.lowerBound), tokens.indices.contains(range.upperBound) else { return }
+        let doomed = tokens[range].filter { !$0.isPlaceholder }
+        guard let last = doomed.last else { return }
+        let ids = Set(doomed.map(\.id))
+        let before = range.lowerBound - 1
+        if tokens.indices.contains(before), last.lineBreaks > tokens[before].lineBreaks {
+            tokens[before].trailing = last.trailing
+        }
+        tokens.removeAll { ids.contains($0.id) }
+    }
+
+    // MARK: Replacing it all
+
+    /// Put `text` in place of everything — a transform's answer. What it's compared against for
+    /// `hasChanges` stays the text the revision opened with.
+    public mutating func replaceAll(with text: String) {
+        tokens = Self.tokens(from: text)
+    }
+
+    // MARK: Sentences
+
+    /// The sentence the word at `index` belongs to — what a single tap selects. A sentence ends on
+    /// a word that closes one (a full stop, question or exclamation mark, ellipsis) or at a line
+    /// break, so a line with no punctuation, or a section of a whole document, is a sentence too.
+    /// Nil when `index` is out of range.
+    public func sentence(around index: Int) -> ClosedRange<Int>? {
+        guard tokens.indices.contains(index) else { return nil }
+        // A placeholder's "…" only holds a spot; it doesn't end anything.
+        func ends(_ i: Int) -> Bool {
+            (!tokens[i].isPlaceholder && Self.endsSentence(tokens[i].word)) || tokens[i].lineBreaks > 0
+        }
+        var lower = index
+        while lower > 0, !ends(lower - 1) { lower -= 1 }
+        var upper = index
+        while upper < tokens.count - 1, !ends(upper) { upper += 1 }
+        return lower...upper
+    }
+
     // MARK: Speaking over and in
 
     /// Begin replacing the words in `range`: they're marked as waiting, and stay on screen until

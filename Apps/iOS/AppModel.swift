@@ -1395,6 +1395,33 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Run a preset over text that isn't stored yet — the Revise editor's words as they stand — and
+    /// hand back the answer rather than writing it anywhere. `id` is what `isThinking` reports the
+    /// transform under. Nil when the model came back with nothing; a failure is thrown, for the
+    /// caller to show where the user is looking.
+    func transformedText(_ text: String, with preset: PromptPreset, id: UUID) async throws -> String? {
+        let source = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !source.isEmpty else { return nil }
+        if preset.isNumberParagraphs { return PromptPreset.numberParagraphs(in: source) }
+        wwLog("Transforming revised text with “\(preset.name)”…", .transform)
+        defer { reasoningIDs.remove(id) }
+        do {
+            let result = try await transform.transform(transcript: source, with: preset,
+                                                       onToken: trackingThinking(id, nil))
+            let answer = result.answer.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !answer.isEmpty else {
+                wwLog("Transform “\(preset.name)” produced no answer — text left as it was", .transform)
+                return nil
+            }
+            wwLog(String(format: "Revise transform “%@” finished (%d chars)", preset.name,
+                         answer.count), .transform)
+            return answer
+        } catch {
+            wwLog("Transform failed: \(error.localizedDescription)", .error)
+            throw error
+        }
+    }
+
     /// Run a preset against a single paragraph, replacing that paragraph's text in place.
     func transformParagraph(_ preset: PromptPreset,
                             paragraphID: UUID,
