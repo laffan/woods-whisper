@@ -4147,18 +4147,23 @@ struct RevisionSubject: Identifiable {
 ///   run keeps its strike once it's let go, and is a thing of its own from then on.
 /// • **Tap** off the words to let the selection go.
 /// • **Hold** the selection, or a struck run, and speak: let go, and what you said takes its place.
-/// • **Hold and drag** the selection to move it: a blue caret shows where it'll go.
+/// • **Hold and drag** the selection to move it: a blue caret, held a line above the finger so it
+///   isn't under it, shows where it'll go.
 /// • **Hold** anywhere else in the text and speak: let go, and it goes in at the gap you held —
 ///   the graph canvas's hold, in a line of text.
+/// • Say only a punctuation mark ("comma") and the mark goes in, not the word; say "wrap in
+///   quotes" (or parentheses, brackets, dashes) over a selection and it's wrapped. See
+///   `RevisionText.SpokenCommand`.
 /// • Drag **up or down** to scroll; a swipe that starts sideways is a selection.
 ///
 /// What was just spoken in arrives **selected**, so trying again is one more hold on it, with a
 /// **Reset** button above it that puts back what was there before. Struck words are left out of
 /// what's saved — striking a word through is how you say it should go.
 ///
-/// The footer has **Undo**, **Delete** while there's a selection (the words go at once, not on
-/// Done), and **Transform**, which runs a preset over the text and puts its answer in the editor
-/// rather than saving it, so revising carries on from there.
+/// The footer has **Undo** (held, it shows the text as it opened until it's let go), **Delete**
+/// while there's a selection (the words go at once, not on Done), and **Transform**, which runs a
+/// preset over the text and puts its answer in the editor rather than saving it, so revising
+/// carries on from there.
 struct RevisionEditor: View {
     let title: String
     /// Where a clip that couldn't be transcribed is kept, so what was said isn't lost.
@@ -4181,6 +4186,13 @@ struct RevisionEditor: View {
     /// The words a recording has just put in, and what was there before them — what **Reset**
     /// puts back. Forgotten as soon as anything else changes the text.
     @State private var justRecorded: JustRecorded?
+    /// The text as the editor opened it — what holding **Undo** shows in place of the revision,
+    /// until the finger lifts.
+    @State private var opened: RevisionText
+    @State private var showingOriginal = false
+    @State private var undoPressBegan = false
+    @State private var undoHoldTask: Task<Void, Never>?
+    @GestureState private var undoPressed = false
 
     // Scrolling, done by hand: the touch that scrolls is the same touch that selects, decided by
     // which way it sets off.
@@ -4230,6 +4242,7 @@ struct RevisionEditor: View {
         self.linesAreSections = linesAreSections
         self.onSave = onSave
         _revision = State(initialValue: RevisionText(text))
+        _opened = State(initialValue: RevisionText(text))
     }
 
     // MARK: Metrics
@@ -4254,6 +4267,9 @@ struct RevisionEditor: View {
     private static let resetSize = CGSize(width: 92, height: 32)
     /// How far above the first word of a just-recorded selection the Reset button sits.
     private static let resetLift: CGFloat = 42
+    /// How far above the finger a move drops the words: the gap a carried selection would go into
+    /// is read a line or so over the fingertip, so the caret is in sight rather than under it.
+    private var moveLift: CGFloat { fontSize * 1.2 + 30 }
 
     private var isRecording: Bool { recordTarget != nil }
     private var isBusy: Bool {
@@ -4279,6 +4295,7 @@ struct RevisionEditor: View {
                     .overlay { recordingReadout(in: geo.size) }
                     .overlay { movingWords(in: geo.size) }
                     .overlay(alignment: .topTrailing) { scrollIndicator(in: geo.size) }
+                    .overlay(alignment: .top) { originalBadge }
                     .onChange(of: geo.size.height, initial: true) { _, height in
                         viewportHeight = height
                         clampScroll()
@@ -4310,6 +4327,14 @@ struct RevisionEditor: View {
                 if !isTouching, touchStart != nil { touchCancelled() }
             }
         }
+        .onChange(of: undoPressed) { _, pressed in
+            // The same for a press on Undo: one the system took back mustn't leave the original
+            // on screen.
+            guard !pressed else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+                if !undoPressed, undoPressBegan { endUndoPress(undoing: false) }
+            }
+        }
         .onDisappear { tearDown() }
         .confirmationDialog("Transform — \(AppSettings.shared.model.shortName)",
                             isPresented: $showingTransformPicker, titleVisibility: .visible) {
@@ -4331,11 +4356,16 @@ struct RevisionEditor: View {
         }
     }
 
+    /// The words on screen: the revision's — or, while Undo is held, the text as it opened.
+    private var shownTokens: [RevisionText.Token] {
+        showingOriginal ? opened.tokens : revision.tokens
+    }
+
     /// The words, laid out one by one so each can say where it is, with a caret drawn over them
     /// while a hold is recording into a gap or the selection is being carried to one.
     private var textContent: some View {
         RevisionFlowLayout(lineSpacing: lineSpacing) {
-            ForEach(Array(revision.tokens.enumerated()), id: \.element.id) { index, token in
+            ForEach(Array(shownTokens.enumerated()), id: \.element.id) { index, token in
                 wordView(token, index: index)
             }
         }
@@ -4343,8 +4373,8 @@ struct RevisionEditor: View {
         .coordinateSpace(name: Self.space)
         .overlay(alignment: .topLeading) { caret }
         .overlay(alignment: .topLeading) {
-            if revision.tokens.isEmpty {
-                Text("Nothing here yet. Hold anywhere and speak.")
+            if shownTokens.isEmpty {
+                Text(showingOriginal ? "It was empty." : "Nothing here yet. Hold anywhere and speak.")
                     .font(.system(size: fontSize * 0.7))
                     .foregroundStyle(WW.inkTertiary)
                     .allowsHitTesting(false)
@@ -4364,7 +4394,8 @@ struct RevisionEditor: View {
     }
 
     private func wordView(_ token: RevisionText.Token, index: Int) -> some View {
-        let selected = selectedRange?.contains(index) ?? false
+        // The selection is counted in the revision's words, not the original's.
+        let selected = !showingOriginal && (selectedRange?.contains(index) ?? false)
         let targeted = recordTarget?.replaces(token.id) ?? false
         let carriesReset = showsReset && justRecorded?.span.first == token.id
         return Text(token.word)
@@ -4423,7 +4454,9 @@ struct RevisionEditor: View {
     /// would be moved to.
     @ViewBuilder
     private var caret: some View {
-        if case .insert(_, let rect?) = recordTarget {
+        if showingOriginal {
+            EmptyView()
+        } else if case .insert(_, let rect?) = recordTarget {
             caretMark(rect, tint: WW.ember)
         } else if let rect = moveDrag?.caret {
             caretMark(rect, tint: WW.dropBlue)
@@ -4463,11 +4496,19 @@ struct RevisionEditor: View {
         }
     }
 
-    /// The selected words, lifted and following the finger while they're carried — above it
-    /// rather than under it, so the gap they'd drop into stays in sight.
+    /// The selected words, lifted and following the finger while they're carried — sitting just
+    /// over the blue caret, which is itself held above the finger (`moveLift`), so both the words
+    /// and the gap they'd drop into stay in sight.
     @ViewBuilder
     private func movingWords(in size: CGSize) -> some View {
         if let drag = moveDrag, let range = selectedRange {
+            let width = min(size.width - 48, 360)
+            let height = fontSize * 2.4 + 24
+            // The bottom of the words: a little over the caret, or over the point the caret
+            // would be at when there's no gap to drop into there.
+            let caretTop = drag.caret.map { $0.minY + Self.insetTop - scrollOffset }
+                ?? drag.location.y - moveLift - fontSize * 0.7
+            let bottom = max(height + 4, caretTop - 10)
             Text(revision.tokens[range].map(\.word).joined(separator: " "))
                 .font(.system(size: fontSize * 0.8))
                 .strikethrough(revision.tokens[range].allSatisfy(\.isStruck), color: WW.ember)
@@ -4475,14 +4516,16 @@ struct RevisionEditor: View {
                 .lineLimit(2)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
-                .frame(maxWidth: min(size.width - 48, 360))
+                .frame(maxWidth: width)
                 .fixedSize(horizontal: false, vertical: true)
                 .background(WW.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .stroke(WW.dropBlue.opacity(0.6), lineWidth: 1))
                 .shadow(color: .black.opacity(0.18), radius: 12, y: 4)
-                .position(x: min(max(100, drag.location.x), max(100, size.width - 100)),
-                          y: max(30, drag.location.y - fontSize - 40))
+                // Pinned by its bottom edge, however many lines it runs to.
+                .frame(width: width, height: height, alignment: .bottom)
+                .position(x: min(max(width / 2 + 24, drag.location.x), max(width / 2 + 24, size.width - width / 2 - 24)),
+                          y: bottom - height / 2)
                 .allowsHitTesting(false)
         }
     }
@@ -4511,19 +4554,19 @@ struct RevisionEditor: View {
         VStack(spacing: 0) {
             WWHairline()
             HStack(spacing: 12) {
-                Button {
-                    undo()
-                } label: {
-                    Image(systemName: "arrow.uturn.backward")
-                        .font(.system(size: 17, weight: .regular))
-                        .frame(width: 40, height: 36)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(WW.moss)
-                .disabled(history.isEmpty || isBusy)
-                .opacity(history.isEmpty || isBusy ? 0.35 : 1)
-                .accessibilityLabel("Undo")
+                // Tap to undo; hold to see the text as it was when the editor opened.
+                Image(systemName: "arrow.uturn.backward")
+                    .font(.system(size: 17, weight: .regular))
+                    .frame(width: 40, height: 36)
+                    .contentShape(Rectangle())
+                    .foregroundStyle(WW.moss)
+                    .opacity(canUndo || showingOriginal ? 1 : 0.35)
+                    .gesture(undoGesture)
+                    .accessibilityElement()
+                    .accessibilityLabel("Undo")
+                    .accessibilityHint("Hold to see the text as it was before you revised it.")
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityAction { undo() }
 
                 if selection != nil {
                     footerButton("trash", label: "Delete", tint: WW.ember,
@@ -4569,6 +4612,7 @@ struct RevisionEditor: View {
     }
 
     private var hint: String {
+        if showingOriginal { return "As it was when you opened it — let go to come back." }
         if isTransforming { return model.isThinking(transformID) ? "Thinking…" : "Transforming…" }
         if moveDrag != nil { return "Let go to move the words to the blue caret." }
         if isRecording {
@@ -4664,8 +4708,8 @@ struct RevisionEditor: View {
         holdIsOnSelection = false
         scrollAtTouch = scrollOffset
         // The words are about to be replaced by a transform's answer: nothing done to them now
-        // would survive it.
-        if isTransforming {
+        // would survive it. And while Undo is held, what's on screen isn't the revision.
+        if isTransforming || showingOriginal {
             touchMode = .ignored
             return
         }
@@ -4717,9 +4761,10 @@ struct RevisionEditor: View {
     }
 
     /// A finger carrying a swipe-selection or a move near the top or bottom edge brings more of
-    /// the text under it.
-    private func autoScroll(near point: CGPoint) {
-        if point.y < 60 {
+    /// the text under it. A move reaches `lift` above the finger, so it's that point that brings
+    /// the text down from the top.
+    private func autoScroll(near point: CGPoint, lift: CGFloat = 0) {
+        if point.y - lift < 60 {
             scroll(to: scrollOffset - 10)
         } else if point.y > viewportHeight - 60 {
             scroll(to: scrollOffset + 10)
@@ -4946,14 +4991,14 @@ struct RevisionEditor: View {
         updateMove(to: point)
     }
 
-    /// Follow the finger: the gap nearest it, unless that's in or right beside the words being
-    /// carried (dropping them there would leave them where they are). Near the top or bottom
-    /// edge, the text scrolls to bring more of it under the finger.
+    /// Follow the finger: the gap nearest the point `moveLift` above it, unless that's in or right
+    /// beside the words being carried (dropping them there would leave them where they are). Near
+    /// the top or bottom edge, the text scrolls to bring more of it into reach.
     private func updateMove(to point: CGPoint) {
         guard var drag = moveDrag, let range = selectedRange else { return }
-        autoScroll(near: point)
+        autoScroll(near: point, lift: moveLift)
         drag.location = point
-        let gap = gap(at: contentPoint(point))
+        let gap = gap(at: contentPoint(CGPoint(x: point.x, y: point.y - moveLift)))
         if RevisionText.moves(range, to: gap.index) {
             drag.gap = gap.index
             drag.caret = gap.caret
@@ -5030,12 +5075,73 @@ struct RevisionEditor: View {
         justRecorded = nil
     }
 
+    private var canUndo: Bool { !history.isEmpty && !isBusy }
+
     private func undo() {
-        guard !isBusy, let previous = history.popLast() else { return }
+        guard canUndo, let previous = history.popLast() else { return }
         revision = previous
         selection = nil
         justRecorded = nil
         WWHaptics.light()
+    }
+
+    // MARK: Holding Undo
+
+    /// Undo's finger: a tap undoes; held, it shows the text as it was when the editor opened, for
+    /// as long as it's held. Letting go of a hold puts the revision back — it doesn't undo.
+    private var undoGesture: some Gesture {
+        DragGesture(minimumDistance: 0)
+            .updating($undoPressed) { _, state, _ in state = true }
+            .onChanged { _ in if !undoPressBegan { beginUndoPress() } }
+            .onEnded { value in
+                endUndoPress(undoing: hypot(value.translation.width, value.translation.height) < 30)
+            }
+    }
+
+    private func beginUndoPress() {
+        undoPressBegan = true
+        undoHoldTask?.cancel()
+        undoHoldTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: Self.holdDelay)
+            // Nothing to compare while nothing has changed, or while a recording or a move has
+            // the text in hand.
+            guard !Task.isCancelled, undoPressBegan, !history.isEmpty, !isRecording, moveDrag == nil
+            else { return }
+            showingOriginal = true
+            WWHaptics.light()
+        }
+    }
+
+    /// The finger's off Undo: back to the revision if it was showing the original, or — if it was
+    /// a tap, lifted where it went down — an undo.
+    private func endUndoPress(undoing: Bool) {
+        undoHoldTask?.cancel()
+        undoHoldTask = nil
+        undoPressBegan = false
+        if showingOriginal {
+            showingOriginal = false
+            WWHaptics.light()
+        } else if undoing {
+            undo()
+        }
+    }
+
+    /// Over the top of the text while Undo is held, so it's plain the words aren't the revision.
+    @ViewBuilder
+    private var originalBadge: some View {
+        if showingOriginal {
+            Text("Original")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(WW.moss)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 6)
+                .background(WW.surface, in: Capsule())
+                .overlay(Capsule().stroke(WW.moss.opacity(0.5), lineWidth: 1))
+                .shadow(color: .black.opacity(0.12), radius: 8, y: 2)
+                .padding(.top, 12)
+                .allowsHitTesting(false)
+                .transition(.opacity)
+        }
     }
 
     private func save() {
@@ -5052,6 +5158,8 @@ struct RevisionEditor: View {
     /// Nothing left running behind a closed editor: a recording in progress is dropped.
     private func tearDown() {
         cancelHoldTimer()
+        undoHoldTask?.cancel()
+        undoHoldTask = nil
         stopGlide()
         moveDrag = nil
         guard recordTarget != nil else { return }

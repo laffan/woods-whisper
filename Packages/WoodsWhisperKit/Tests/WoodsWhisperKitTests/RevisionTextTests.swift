@@ -152,6 +152,95 @@ final class RevisionTextTests: XCTestCase {
         XCTAssertEqual(Document.paragraphs(from: revision.revisedText).map(\.text), ["One", "Three four."])
     }
 
+    func testSpokenCommands() {
+        typealias Command = RevisionText.SpokenCommand
+        XCTAssertEqual(Command("Period."), .mark("."))
+        XCTAssertEqual(Command("Question mark?"), .mark("?"))
+        XCTAssertEqual(Command(" comma, "), .mark(","))
+        XCTAssertEqual(Command("Semi-colon."), .mark(";"))
+        XCTAssertEqual(Command("Em-dash."), .mark("—"))
+        XCTAssertEqual(Command("?"), .mark("?"))
+        XCTAssertEqual(Command("Wrap in parentheses."), .wrap(.parentheses))
+        XCTAssertEqual(Command("Wrap it in quotes"), .wrap(.quotes))
+        XCTAssertEqual(Command("Wrap that in single quotes."), .wrap(.singleQuotes))
+        XCTAssertEqual(Command("Rap in em dashes."), .wrap(.dashes))
+        XCTAssertNil(Command("A comma goes here."))
+        XCTAssertNil(Command("Wrap up the meeting."))
+        XCTAssertNil(Command("Wrap in paper."))
+    }
+
+    func testSpeakingAMarkIntoAGapPutsItOnTheWordBefore() {
+        var revision = RevisionText("I went home and I slept.")
+        let edit = revision.beginInserting(at: 3)
+        let touched = revision.finish(edit, with: "Comma.")
+        XCTAssertEqual(revision.revisedText, "I went home, and I slept.")
+        XCTAssertEqual(touched, [revision.tokens[2].id])
+        XCTAssertFalse(revision.hasPendingEdit)
+    }
+
+    func testAFullStopCapitalisesTheNextWord() {
+        var revision = RevisionText("I went home and I slept.")
+        let edit = revision.beginInserting(at: 3)
+        revision.finish(edit, with: "Period.")
+        XCTAssertEqual(revision.revisedText, "I went home. And I slept.")
+    }
+
+    func testAMarkSpokenOverWordsGoesOnTheirEnd() {
+        var revision = RevisionText("Is it home. It was.")
+        let ids = revision.tokens[0...2].map(\.id)
+        let edit = revision.beginReplacing(0...2)
+        let touched = revision.finish(edit, with: "Question mark?")
+        XCTAssertEqual(revision.revisedText, "Is it home? It was.")
+        XCTAssertEqual(touched, ids)
+        XCTAssertFalse(revision.hasPendingEdit)
+
+        // Said again over the same words, the new mark takes the old one's place.
+        let again = revision.beginReplacing(0...2)
+        revision.finish(again, with: "Comma")
+        XCTAssertEqual(revision.revisedText, "Is it home, it was.")
+    }
+
+    func testADashIsAWordOfItsOwn() {
+        var revision = RevisionText("I saw a cat")
+        let edit = revision.beginInserting(at: 2)
+        revision.finish(edit, with: "Em dash.")
+        XCTAssertEqual(revision.revisedText, "I saw — a cat")
+    }
+
+    func testWrappingInParenthesesAndQuotes() {
+        var revision = RevisionText("I saw a cat, then left.")
+        let edit = revision.beginReplacing(2...3)
+        revision.finish(edit, with: "Wrap in parentheses.")
+        XCTAssertEqual(revision.revisedText, "I saw (a cat), then left.")
+
+        var whole = RevisionText("One. Two three.")
+        let wrapSentence = whole.beginReplacing(1...2)
+        whole.finish(wrapSentence, with: "Wrap it in quotes.")
+        XCTAssertEqual(whole.revisedText, "One. “Two three.”")
+    }
+
+    func testWrappingInDashes() {
+        var revision = RevisionText("I saw a cat, then left.")
+        let ids = revision.tokens[2...3].map(\.id)
+        let edit = revision.beginReplacing(2...3)
+        let touched = revision.finish(edit, with: "Wrap in em dashes.")
+        XCTAssertEqual(revision.revisedText, "I saw — a cat — then left.")
+        XCTAssertEqual(touched, ids)
+
+        // No closing dash after the end of a sentence.
+        var end = RevisionText("I saw a cat.")
+        let atEnd = end.beginReplacing(2...3)
+        end.finish(atEnd, with: "Wrap in dashes")
+        XCTAssertEqual(end.revisedText, "I saw — a cat.")
+    }
+
+    func testWrapSpokenIntoAGapIsWords() {
+        var revision = RevisionText("Hello world.")
+        let edit = revision.beginInserting(at: 1)
+        revision.finish(edit, with: "Wrap in quotes")
+        XCTAssertEqual(revision.revisedText, "Hello wrap in quotes world.")
+    }
+
     func testWordsThatStayCapitalised() {
         XCTAssertEqual(RevisionText.decapitalized("I'm"), "I'm")
         XCTAssertEqual(RevisionText.decapitalized("I"), "I")

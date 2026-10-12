@@ -181,10 +181,24 @@ the rest of the app depends on.
     graph's tick, and the counter floats above it), and when you let go what you said takes their
     place.
   - **Hold and drag** the selection to move it: the words lift and follow your finger, a blue caret
-    shows the gap they'll drop into, and they stay selected where they land. (The hold starts
-    recording, as above; setting off with the finger drops that recording and makes it a move.)
+    shows the gap they'll drop into, and they stay selected where they land. The caret is read a
+    line or so **above** the fingertip, with the carried words just over it, so the spot they're
+    going to is never under your finger. (The hold starts recording, as above; setting off with the
+    finger drops that recording and makes it a move.)
   - **Hold** anywhere else in the text and speak: let go, and it goes in at the gap you held, shown
     by an ember caret while you talk.
+  - **Say a punctuation mark** — "comma", "period" (or "full stop"), "question mark",
+    "exclamation point", "semicolon", "colon", "dash", "ellipsis" — and, if that's all you said,
+    the **mark** goes in rather than the word: held in a gap, on the end of the word before it;
+    held on a selection, on the end of the selection (taking the place of the mark already there,
+    so saying "comma" over "home." makes "home,"). A full stop capitalises the word after it, and
+    swapping one for a comma lower-cases it again. A dash stands on its own, spaced.
+  - **Say "wrap in …"** over a selection — "wrap in parentheses", "wrap it in quotes", "wrap in
+    single quotes", "wrap in brackets", "wrap in em dashes" — and the words are wrapped. Quotes take
+    the punctuation inside them; parentheses close before it ("(a cat),") unless the words are a
+    whole sentence; dashes take the place of a comma that closed the words, and aren't put at the
+    start of a sentence or after its end. The words stay selected, so another hold changes your
+    mind (Reset puts back what was there).
   - Drag **up or down** to scroll a long entry; a swipe that sets off sideways is a selection.
 
   What you've just spoken in arrives **selected**, so if it isn't right, hold on it and say it
@@ -193,7 +207,8 @@ the rest of the app depends on.
   they land — lower-cased mid-sentence, a full stop dropped when the sentence goes on, the
   punctuation of the words they replaced kept. (A name spoken mid-sentence gets lower-cased too;
   that's the one thing the fitting can't tell.) **Undo** at the bottom left steps back a change at a
-  time. Beside it, **Delete** (while there's a selection) takes the selected words out there and
+  time; **hold** it to see the text as it was when the editor opened (an **Original** badge sits
+  over it), and let go to come back to where you are — the hold doesn't undo anything. Beside it, **Delete** (while there's a selection) takes the selected words out there and
   then, rather than striking them for Done to leave out; and **Transform** runs a preset over the
   text as it stands — struck words left out — the way the swipe's Transform would, except the
   answer lands *in the editor*, which stays open: keep revising it, or Undo it. In a document each

@@ -206,10 +206,19 @@ public struct RevisionText: Equatable {
     /// capitalised at the start of one, a full stop dropped when the sentence carries on after
     /// them, and the punctuation that closed a replaced word kept on the end of its replacement.
     ///
+    /// A recording that's only a punctuation mark said by name ("comma", "question mark") puts in
+    /// the mark rather than the word — on the end of the words it was spoken over, or of the word
+    /// before the gap it was spoken into. Spoken over words, "wrap in …" wraps them ("wrap in
+    /// parentheses", "wrap it in quotes", "wrap in em dashes"). See `SpokenCommand`.
+    ///
     /// Returns the ids of the words that went in, in order — empty when nothing did — so the
-    /// editor can select them.
+    /// editor can select them. For a mark or a wrap, that's the words it went on.
     @discardableResult
     public mutating func finish(_ edit: Edit, with transcript: String?) -> [UUID] {
+        if let transcript, let command = SpokenCommand(transcript),
+           let touched = perform(command, for: edit) {
+            return touched
+        }
         var spoken = Self.tokens(from: transcript ?? "")
 
         switch edit {
@@ -290,12 +299,10 @@ public struct RevisionText: Equatable {
     /// they replace, whose closing punctuation they inherit if they have none of their own.
     private func fit(_ spoken: inout [Token], at: Int, replacing replacedLast: String?) {
         guard !spoken.isEmpty else { return }
-        let before = tokens[..<at].last { !$0.isPlaceholder && !$0.isStruck }
         let after = tokens[at...].first { !$0.isPlaceholder && !$0.isStruck }
 
-        let startsSentence = before.map { Self.endsSentence($0.word) || $0.lineBreaks > 0 } ?? true
-        spoken[0].word = startsSentence ? Self.capitalized(spoken[0].word)
-                                        : Self.decapitalized(spoken[0].word)
+        spoken[0].word = startsSentence(at: at) ? Self.capitalized(spoken[0].word)
+                                                : Self.decapitalized(spoken[0].word)
 
         let lastIndex = spoken.count - 1
         if let replacedLast, let mark = Self.closingPunctuation(of: replacedLast),
@@ -307,6 +314,193 @@ public struct RevisionText: Equatable {
             // the end isn't the end of anything.
             spoken[lastIndex].word.removeLast()
         }
+    }
+
+    /// Whether a word put in at `index` would open a sentence: nothing before it, or the word
+    /// before it ends one or ends a line.
+    private func startsSentence(at index: Int) -> Bool {
+        guard let before = tokens[..<index].last(where: { !$0.isPlaceholder && !$0.isStruck }) else {
+            return true
+        }
+        return Self.endsSentence(before.word) || before.lineBreaks > 0
+    }
+
+    // MARK: Spoken punctuation
+
+    /// A recording that says what to do with the words rather than what they should say.
+    public enum SpokenCommand: Equatable {
+        /// A punctuation mark said by name: "comma", "question mark", "em dash".
+        case mark(String)
+        /// "Wrap in parentheses", "wrap it in quotes" — said over words.
+        case wrap(Wrapper)
+
+        /// What can be wrapped around words.
+        public enum Wrapper: Equatable {
+            case parentheses, brackets, quotes, singleQuotes, dashes
+        }
+
+        /// The names a mark can be said by, as they come back from the transcriber once lower-cased
+        /// and stripped of punctuation ("Question mark?" → "question mark", "Em-dash." → "em dash").
+        static let markNames: [String: String] = [
+            "period": ".", "full stop": ".",
+            "comma": ",",
+            "question mark": "?",
+            "exclamation mark": "!", "exclamation point": "!",
+            "semicolon": ";", "semi colon": ";",
+            "colon": ":",
+            "dash": "—", "em dash": "—", "m dash": "—", "emdash": "—",
+            "ellipsis": "…", "dot dot dot": "…",
+        ]
+
+        /// A transcript that's nothing but a mark, typed rather than named.
+        static let bareMarks: [String: String] = [
+            ".": ".", ",": ",", "?": "?", "!": "!", ";": ";", ":": ":",
+            "…": "…", "...": "…", "—": "—", "–": "—", "-": "—", "--": "—",
+        ]
+
+        /// The command `transcript` is, or nil when it's words to put in.
+        public init?(_ transcript: String) {
+            let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let mark = Self.bareMarks[trimmed] {
+                self = .mark(mark)
+                return
+            }
+            let words = trimmed.lowercased()
+                .components(separatedBy: CharacterSet.letters.inverted)
+                .filter { !$0.isEmpty }
+            if let mark = Self.markNames[words.joined(separator: " ")] {
+                self = .mark(mark)
+                return
+            }
+            // "Wrap [it] in …" — or "rap in", which is how the transcriber sometimes hears it.
+            guard let verb = words.first, verb == "wrap" || verb == "rap" else { return nil }
+            var rest = words.dropFirst()
+            if let object = rest.first, ["it", "them", "that", "this", "these", "those"].contains(object) {
+                rest = rest.dropFirst()
+            }
+            guard let preposition = rest.first, preposition == "in" || preposition == "with" else {
+                return nil
+            }
+            let what = rest.dropFirst().joined(separator: " ")
+            if what.contains("paren") {
+                self = .wrap(.parentheses)
+            } else if what.contains("bracket") {
+                self = .wrap(.brackets)
+            } else if what.contains("single") && what.contains("quot") {
+                self = .wrap(.singleQuotes)
+            } else if what.contains("quot") {
+                self = .wrap(.quotes)
+            } else if what.contains("dash") {
+                self = .wrap(.dashes)
+            } else {
+                return nil
+            }
+        }
+    }
+
+    /// Carry out `command` for `edit`, returning the ids of the words it went on — or nil when it
+    /// means nothing here (a wrap with no words to wrap), and what was said goes in as words.
+    private mutating func perform(_ command: SpokenCommand, for edit: Edit) -> [UUID]? {
+        switch edit {
+        case .insert(let placeholderID):
+            guard case .mark(let mark) = command else { return nil }
+            var gap = tokens.count
+            if let at = index(of: placeholderID) {
+                tokens.remove(at: at)
+                gap = at
+            }
+            return [punctuate(at: gap, with: mark)]
+
+        case .replace(let ids):
+            let doomed = Set(ids)
+            let indices = tokens.indices.filter { doomed.contains(tokens[$0].id) }
+            for index in indices { tokens[index].isPending = false }
+            guard let first = indices.first, let last = indices.last else { return [] }
+            let words = tokens[first...last].filter { !$0.isPlaceholder }.map(\.id)
+            switch command {
+            case .mark(let mark): punctuate(at: last + 1, with: mark)
+            case .wrap(let wrapper): wrap(first...last, in: wrapper)
+            }
+            return words
+        }
+    }
+
+    /// Put `mark` in at `gap`: on the end of the word before it — taking the place of the mark
+    /// that word already ends with, so "comma" over "cat." makes "cat," — or, for a dash or with
+    /// no word before it, as a word of its own. The word after is capitalised if the mark has just
+    /// ended a sentence, and lower-cased if it's just stopped ending one. Returns the id of the
+    /// word the mark is on.
+    @discardableResult
+    private mutating func punctuate(at gap: Int, with mark: String) -> UUID {
+        let gap = min(max(gap, 0), tokens.count)
+        guard mark != "—",
+              let target = tokens[..<gap].lastIndex(where: { !$0.isPlaceholder && !$0.isStruck }) else {
+            let atEnd = gap == tokens.count
+            if atEnd, let last = tokens.indices.last, tokens[last].trailing.isEmpty {
+                tokens[last].trailing = " "
+            }
+            let token = Token(word: mark, trailing: atEnd ? "" : " ")
+            tokens.insert(token, at: gap)
+            return token.id
+        }
+        var word = tokens[target].word
+        let endedSentence = Self.closesSentence(word)
+        if Self.closingPunctuation(of: word) != nil, !word.hasSuffix("..") { word.removeLast() }
+        word += mark
+        tokens[target].word = word
+
+        let endsSentence = Self.closesSentence(word)
+        if endsSentence != endedSentence,
+           let next = tokens[(target + 1)...].firstIndex(where: { !$0.isPlaceholder && !$0.isStruck }),
+           tokens[target..<next].allSatisfy({ $0.lineBreaks == 0 }) {
+            tokens[next].word = endsSentence ? Self.capitalized(tokens[next].word)
+                                             : Self.decapitalized(tokens[next].word)
+        }
+        return tokens[target].id
+    }
+
+    /// Wrap the words in `range`. Quotes go round everything, the closing punctuation included.
+    /// Parentheses and brackets close before it ("(a cat),"), unless the words are a sentence of
+    /// their own. Dashes are words of their own, set off by spaces; a comma, semicolon or colon
+    /// that closed the words is the dash's job now, and there's no dash at the start of a sentence
+    /// or after its end.
+    private mutating func wrap(_ range: ClosedRange<Int>, in wrapper: SpokenCommand.Wrapper) {
+        guard tokens.indices.contains(range.lowerBound), tokens.indices.contains(range.upperBound) else { return }
+        let first = range.lowerBound
+        let last = range.upperBound
+        let opensSentence = startsSentence(at: first)
+        switch wrapper {
+        case .quotes, .singleQuotes:
+            let double = wrapper == .quotes
+            tokens[first].word = (double ? "“" : "‘") + tokens[first].word
+            tokens[last].word += double ? "”" : "’"
+        case .parentheses, .brackets:
+            let parens = wrapper == .parentheses
+            tokens[first].word = (parens ? "(" : "[") + tokens[first].word
+            let close = parens ? ")" : "]"
+            var word = tokens[last].word
+            if !(opensSentence && Self.endsSentence(word)), let mark = Self.closingPunctuation(of: word),
+               !word.hasSuffix("..") {
+                word.removeLast()
+                tokens[last].word = word + close + mark
+            } else {
+                tokens[last].word = word + close
+            }
+        case .dashes:
+            if let mark = Self.closingPunctuation(of: tokens[last].word), ",;:".contains(mark) {
+                tokens[last].word.removeLast()
+            }
+            let closes = !Self.endsSentence(tokens[last].word) && tokens[last].lineBreaks == 0
+                && tokens[(last + 1)...].contains { !$0.isPlaceholder && !$0.isStruck }
+            if closes { tokens.insert(Token(word: "—"), at: last + 1) }
+            if !opensSentence { tokens.insert(Token(word: "—"), at: first) }
+        }
+    }
+
+    /// Whether a word ends a sentence in a way that makes the next one start with a capital: a
+    /// full stop, question or exclamation mark — not an ellipsis, which can trail off mid-sentence.
+    static func closesSentence(_ word: String) -> Bool {
+        endsSentence(word) && !word.hasSuffix("…")
     }
 
     // MARK: Words and sentences
