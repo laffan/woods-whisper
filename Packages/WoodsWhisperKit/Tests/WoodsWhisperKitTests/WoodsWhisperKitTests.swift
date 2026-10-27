@@ -722,27 +722,53 @@ final class WoodsWhisperKitTests: XCTestCase {
 
     // MARK: Inbox tags
 
+    /// The tags the app used to start with — still a good set to test the matching against.
+    static let oldTags = ["Question", "Reminder", "Fix"]
+
+    /// The tags it starts with now, in every form they're likely to be said.
+    func testTheDefaultTagsFile() {
+        let tags = InboxTag.defaultNames
+        XCTAssertEqual(tags, ["Journal", "Quote", "LLM", "Story"])
+        XCTAssertEqual(InboxTag.autoTag(for: "Journal. Slept badly", from: tags), "Journal")
+        XCTAssertEqual(InboxTag.autoTag(for: "Journaling about the hike", from: tags), "Journal")
+        XCTAssertEqual(InboxTag.autoTag(for: "Quote: the map is not the land", from: tags), "Quote")
+        XCTAssertEqual(InboxTag.autoTag(for: "Quotes from the ranger", from: tags), "Quote")
+        XCTAssertEqual(InboxTag.autoTag(for: "Quoting Muir", from: tags), "Quote")
+        XCTAssertEqual(InboxTag.autoTag(for: "LLM, summarise this", from: tags), "LLM")
+        XCTAssertEqual(InboxTag.autoTag(for: "LLMs are odd", from: tags), "LLM")
+        XCTAssertEqual(InboxTag.autoTag(for: "Story about the bear", from: tags), "Story")
+        XCTAssertEqual(InboxTag.autoTag(for: "Stories for the kids", from: tags), "Story")
+        XCTAssertNil(InboxTag.autoTag(for: "Storm coming in", from: tags))
+        XCTAssertNil(InboxTag.autoTag(for: "Quiet morning", from: tags))
+    }
+
+    /// The silent "e" is only put back on a word that lost an ending.
+    func testABareWordDoesntGainAnE() {
+        XCTAssertTrue(InboxTag.matches("Notes", tag: "Note"))
+        XCTAssertFalse(InboxTag.matches("Not", tag: "Note"))
+    }
+
     func testTheFirstWordFilesTheEntry() {
         XCTAssertEqual(InboxTag.autoTag(for: "Question — where does the trail cross?",
-                                        from: InboxTag.defaultNames), "Question")
+                                        from: Self.oldTags), "Question")
     }
 
     /// "How it was said" shouldn't decide whether it files: same word, same tag.
     func testVersionsOfTheWordStillFile() {
-        XCTAssertEqual(InboxTag.autoTag(for: "Questions about the pass", from: InboxTag.defaultNames),
+        XCTAssertEqual(InboxTag.autoTag(for: "Questions about the pass", from: Self.oldTags),
                        "Question")
-        XCTAssertEqual(InboxTag.autoTag(for: "Fixed the stove", from: InboxTag.defaultNames), "Fix")
-        XCTAssertEqual(InboxTag.autoTag(for: "Fixing the stove", from: InboxTag.defaultNames), "Fix")
-        XCTAssertEqual(InboxTag.autoTag(for: "Reminders: water filter", from: InboxTag.defaultNames),
+        XCTAssertEqual(InboxTag.autoTag(for: "Fixed the stove", from: Self.oldTags), "Fix")
+        XCTAssertEqual(InboxTag.autoTag(for: "Fixing the stove", from: Self.oldTags), "Fix")
+        XCTAssertEqual(InboxTag.autoTag(for: "Reminders: water filter", from: Self.oldTags),
                        "Reminder")
         XCTAssertEqual(InboxTag.autoTag(for: "remind me to soak the beans",
-                                        from: InboxTag.defaultNames), "Reminder")
+                                        from: Self.oldTags), "Reminder")
     }
 
     /// The word has to *start* the entry — a tag mentioned later is just a word in a sentence.
     func testATagInTheMiddleDoesNotFile() {
         XCTAssertNil(InboxTag.autoTag(for: "I have a question about the pass",
-                                      from: InboxTag.defaultNames))
+                                      from: Self.oldTags))
     }
 
     func testATagWordComesOffTheEntryItFiled() {
@@ -761,6 +787,7 @@ final class WoodsWhisperKitTests: XCTestCase {
                                       from: InboxTag.defaultNames))
         XCTAssertNil(InboxTag.autoTag(for: "", from: InboxTag.defaultNames))
         XCTAssertNil(InboxTag.autoTag(for: "   ", from: InboxTag.defaultNames))
+        XCTAssertNil(InboxTag.autoTag(for: "— dashes first", from: InboxTag.defaultNames))
     }
 
     /// A short tag isn't stemmed away to nothing, and doesn't swallow longer words.
@@ -775,7 +802,7 @@ final class WoodsWhisperKitTests: XCTestCase {
         XCTAssertEqual(InboxTag.autoTag(for: "Fix that", from: ["Fixes", "Fix"]), "Fixes")
     }
 
-    /// The three you start with are three different colours — the point of colouring them at all.
+    /// The four you start with are four different colours — the point of colouring them at all.
     func testTheDefaultTagsAreDifferentColours() {
         let colors = InboxTag.defaultStyles.map(\.colorID)
         XCTAssertEqual(Set(colors).count, colors.count)

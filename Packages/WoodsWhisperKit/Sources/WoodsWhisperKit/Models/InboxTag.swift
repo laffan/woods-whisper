@@ -36,12 +36,13 @@ public enum InboxTag {
     /// own — see `WW.tagColor(_:)` — and holds the light and dark versions there.
     public static let paletteIDs = ["moss", "violet", "amber", "slate", "ember", "ink"]
 
-    /// What the Inbox starts with, before anyone edits the list in Settings — three tags, three
+    /// What the Inbox starts with, before anyone edits the list in Settings — four tags, four
     /// colours, so they tell themselves apart the first time you see them.
     public static let defaultStyles = [
-        InboxTagStyle(name: "Question", colorID: "violet"),
-        InboxTagStyle(name: "Reminder", colorID: "amber"),
-        InboxTagStyle(name: "Fix", colorID: "moss")
+        InboxTagStyle(name: "Journal", colorID: "moss"),
+        InboxTagStyle(name: "Quote", colorID: "violet"),
+        InboxTagStyle(name: "LLM", colorID: "amber"),
+        InboxTagStyle(name: "Story", colorID: "slate")
     ]
 
     /// Just the names — what the matching below works on, and what a `Recording` stores.
@@ -57,9 +58,9 @@ public enum InboxTag {
     /// most text. Ties go to the earlier tag in the list, so the order in Settings is the priority.
     public static func autoTag(for text: String, from tags: [String]) -> String? {
         guard let first = text.split(whereSeparator: { $0.isWhitespace }).first else { return nil }
-        let word = stem(String(first))
-        guard !word.isEmpty else { return nil }
-        return tags.first { stem($0) == word }
+        let word = forms(String(first))
+        guard !word.contains("") else { return nil }
+        return tags.first { !forms($0).isDisjoint(with: word) }
     }
 
     /// `text` with the tag word it opens with taken off — once a first word has filed an entry, it's
@@ -84,8 +85,20 @@ public enum InboxTag {
 
     /// Whether a word is a tag, or a version of it: same stem, nothing more.
     public static func matches(_ word: String, tag: String) -> Bool {
+        let stemmed = forms(word)
+        return !stemmed.contains("") && !stemmed.isDisjoint(with: forms(tag))
+    }
+
+    /// The stem, and — when an ending came off — what the word may have been before it was added:
+    /// with the silent "e" an ending swallows ("quoted" → "quot" → *quote*), or with the "y" a
+    /// plural turns to "i" ("stories" → "stori" → *story*). Only a word that lost an ending gets
+    /// them, so "Not" doesn't become "note".
+    static func forms(_ word: String) -> Set<String> {
         let stemmed = stem(word)
-        return !stemmed.isEmpty && stemmed == stem(tag)
+        guard stemmed != word.lowercased().filter(\.isLetter) else { return [stemmed] }
+        var forms: Set<String> = [stemmed, stemmed + "e"]
+        if stemmed.hasSuffix("i") { forms.insert(stemmed.dropLast() + "y") }
+        return forms
     }
 
     /// A word reduced to what it's about: lowercased, stripped of everything that isn't a letter

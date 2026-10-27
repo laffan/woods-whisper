@@ -91,16 +91,16 @@ the rest of the app depends on.
   another document, or rewritten past recognising by a whole-document transform) offers reorder
   only. If the new clip can't be joined on, it's kept as a recording of its own, after those
   sections or in the Inbox, and you're told why.
-- **Tags.** An Inbox entry can be filed under a tag — **Question**, **Reminder**, **Fix** to start
-  with, each in its own colour, and the list is yours to edit in **Settings → Inbox Tags** (tap a
+- **Tags.** An Inbox entry can be filed under a tag — **Journal**, **Quote**, **LLM**, **Story** to
+  start with, each in its own colour, and the list is yours to edit in **Settings → Inbox Tags** (tap a
   tag's swatch to change its colour; a new tag takes the first colour none of the others is wearing). Two ways in: swipe an entry right
   and tap **Tag**, or simply *say* it — an entry whose **first word is a tag** files itself the
-  moment it's transcribed. It's forgiving about how you said it ("Questions…", "Fixed…", "Reminders…"
+  moment it's transcribed. It's forgiving about how you said it ("Journaling…", "Quotes…", "Stories…", "LLMs…"
   all count) and strict about where: a tag has to open the entry, not turn up in the middle of a
   sentence. A transform runs first, so what the entry ends up saying is what files it, and a tag you
   chose by hand is never overruled. The word that filed it is then **taken off the entry** — with
-  the comma, colon or dash after it — so "Question — where does the trail cross?" reads "Where does
-  the trail cross?" under a Question tag (an entry that says nothing *but* the tag keeps the word).
+  the comma, colon or dash after it — so "Quote — the map is not the land" reads "The map is not the
+  land" under a Quote tag (an entry that says nothing *but* the tag keeps the word).
   A filed entry wears its tag twice: the small pill beside the date, and a **bar of the tag's
   colour down its left edge**, the full height of the row. A row of every tag sits across the top of the Inbox, always —
   tap one to see just those, tap it again for everything. **Hold** one instead and a recording
