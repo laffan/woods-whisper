@@ -745,6 +745,17 @@ final class WoodsWhisperKitTests: XCTestCase {
                                       from: InboxTag.defaultNames))
     }
 
+    func testATagWordComesOffTheEntryItFiled() {
+        XCTAssertEqual(InboxTag.removingTagWord("Question", from: "Question — where does the trail cross?"),
+                       "Where does the trail cross?")
+        XCTAssertEqual(InboxTag.removingTagWord("Reminder", from: "Reminders: water filter"),
+                       "Water filter")
+        XCTAssertEqual(InboxTag.removingTagWord("Fix", from: "Fix the stove."), "The stove.")
+        // Not the tag, or nothing but the tag: left as it was.
+        XCTAssertNil(InboxTag.removingTagWord("Fix", from: "Question about the stove"))
+        XCTAssertNil(InboxTag.removingTagWord("Question", from: "Question."))
+    }
+
     func testOrdinaryTextFilesNowhere() {
         XCTAssertNil(InboxTag.autoTag(for: "Elk by the creek at first light",
                                       from: InboxTag.defaultNames))

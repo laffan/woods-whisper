@@ -66,7 +66,9 @@ the rest of the app depends on.
 - **Inbox is its own tab.** Watch clips and one-tap "New Recording" captures land in the **Inbox**,
   now the first top-level section (ahead of Documents) rather than a row inside the documents list.
   It reads as a capture feed — **newest first**, each entry showing its transcript preview over the
-  capture date and time. There's no play control on the rows; the text runs the full width.
+  capture date and time. There's no play control on the rows; the text runs the full width. An
+  entry longer than its eight folded lines says how much is left out — "· 42 more words" beside the
+  date — until a tap opens it.
 - **Inbox gestures.** **Tap** an entry to read the whole thing: the row opens out to every line of
   the transcript, and tapping again folds it back to a few. **Double-tap** to edit it — **in place**,
   where it sits (see *Editing in place* below) — and **triple-tap** to open it in **Revise** (see
@@ -96,7 +98,11 @@ the rest of the app depends on.
   moment it's transcribed. It's forgiving about how you said it ("Questions…", "Fixed…", "Reminders…"
   all count) and strict about where: a tag has to open the entry, not turn up in the middle of a
   sentence. A transform runs first, so what the entry ends up saying is what files it, and a tag you
-  chose by hand is never overruled. A row of every tag sits across the top of the Inbox, always —
+  chose by hand is never overruled. The word that filed it is then **taken off the entry** — with
+  the comma, colon or dash after it — so "Question — where does the trail cross?" reads "Where does
+  the trail cross?" under a Question tag (an entry that says nothing *but* the tag keeps the word).
+  A filed entry wears its tag twice: the small pill beside the date, and a **bar of the tag's
+  colour down its left edge**, the full height of the row. A row of every tag sits across the top of the Inbox, always —
   tap one to see just those, tap it again for everything. **Hold** one instead and a recording
   starts (the same tick the graph's hold gives, and the chip carries the counter); let go and the
   entry lands in the Inbox **already filed under that tag**. A tag with nothing under it yet is
@@ -177,16 +183,30 @@ the rest of the app depends on.
     strike off) — so a double tap on a sentence selects it and strikes it. **Tap** off the words
     to let the selection go. Struck words keep their
     strike once they're let go, and from then on are a thing of their own.
+  - **Drag** the selection to move it — no hold first: the words lift and follow your finger, a
+    blue caret shows the gap they'll drop into, and they stay selected where they land. The caret is
+    read a line or so **above** the fingertip, with the carried words just over it, so the spot
+    they're going to is never under your finger. On the top line there's no room over the caret
+    for the carried words, so they stand aside until the caret moves down again.
   - **Hold** the selection — or struck words — and speak: a recording starts under your finger (the
     graph's tick, and the counter floats above it), and when you let go what you said takes their
     place.
-  - **Hold and drag** the selection to move it: the words lift and follow your finger, a blue caret
-    shows the gap they'll drop into, and they stay selected where they land. The caret is read a
-    line or so **above** the fingertip, with the carried words just over it, so the spot they're
-    going to is never under your finger. (The hold starts recording, as above; setting off with the
-    finger drops that recording and makes it a move.)
   - **Hold** anywhere else in the text and speak: let go, and it goes in at the gap you held, shown
     by an ember caret while you talk.
+  - **Slide up** out of either hold and a narrow menu opens **to the left of your thumb** (to its
+    right, near the left edge), with **Record** — the recording the hold started — level with your
+    finger. Keep the finger down and slide up or down it; the option you're beside is filled in, and
+    its name floats **above your thumb**, where the counter was, so the thumb never hides what
+    you're about to choose. Above Record are marks to put in — **period**, **comma**, **question
+    mark**, **exclamation point**, nearest first — which go where the recording's words would have:
+    on the end of the selection (taking the place of its mark) or at the gap you held. Below Record,
+    when there's a selection, are things to do to it: **parentheses**, **quotes**, **bold** and
+    **italic** (Markdown's `**` and `*`, closing before a trailing comma), and at the bottom
+    **Stitch**, which takes every mark and capital out of the selection — "I went. To the store."
+    becomes "I went to the store." — keeping a capital that opens a sentence, the mark that closes
+    the last word, "I", acronyms, and the apostrophes, hyphens and decimal points inside words. Let
+    go on anything but Record and the recording is dropped; let go on Record (or never slide up)
+    and it stands, as before.
   - **Say a punctuation mark** — "comma", "period" (or "full stop"), "question mark",
     "exclamation point", "semicolon", "colon", "dash", "ellipsis" — and, if that's all you said,
     the **mark** goes in rather than the word: held in a gap, on the end of the word before it;
@@ -194,7 +214,8 @@ the rest of the app depends on.
     so saying "comma" over "home." makes "home,"). A full stop capitalises the word after it, and
     swapping one for a comma lower-cases it again. A dash stands on its own, spaced.
   - **Say "wrap in …"** over a selection — "wrap in parentheses", "wrap it in quotes", "wrap in
-    single quotes", "wrap in brackets", "wrap in em dashes" — and the words are wrapped. Quotes take
+    single quotes", "wrap in brackets", "wrap in em dashes", "wrap in bold", "wrap in italics" — and
+    the words are wrapped. Quotes take
     the punctuation inside them; parentheses close before it ("(a cat),") unless the words are a
     whole sentence; dashes take the place of a comma that closed the words, and aren't put at the
     start of a sentence or after its end. The words stay selected, so another hold changes your
@@ -736,6 +757,23 @@ split off as it streams and **never reaches your text** — what's saved is the 
 a collapsible **Reasoning** section instead — the placeholder reads **Thinking…** until the answer
 starts, and a run that never gets past thinking writes nothing at all rather than replacing your
 words with half a thought.
+
+**Comparing on-device models: Model Bench.** Which small model tidies a transcript best is easier
+to judge side by side, so there's a separate mini-app for it — the **ModelBench** target and
+scheme (bundle id `com.woodswhisper.bench`), built from the same `project.yml`. It's one screen:
+the **text** (pasted, typed, or a messy sample), the **instruction** (start from one of the app's
+transforms and edit it; the system prompt, temperature and token limit are there too), and a list
+of **models** — LFM2.5 1.2B (the app's), Llama 3.2 1B and 3B, Gemma 3 1B and 4B, Qwen3 1.7B and 4B,
+LFM2.5 2.6B, plus any MLX repo you add as `owner/name`. **Get** downloads a model's weights once;
+tick the downloaded ones and **Run** puts the text through each in turn, loading one model at a
+time and letting it go before the next. Each answer lands under the last with its load time, its
+writing time and a rough tokens per second; a model that reasons first has its reasoning folded
+away under the answer, and **Ask Qwen3 not to reason** adds Qwen3's `/no_think` switch. The last
+run is kept between launches. It uses the main app's own downloader and MLX loading code
+(`GemmaTransformService.swift` is compiled into both targets), so what you see is what the app's
+transform step would do. Its scheme runs a **Release** build, since Debug timings undersell every
+model. Weights live in the bench's own container — downloading a model there doesn't put it in
+Woods Whisper.
 
 **Online models (optional).** When you have a cell signal, you can instead pick **Claude Sonnet
 4.6** or **Claude Haiku 4.5** from the same picker. These stream from Anthropic's API rather than

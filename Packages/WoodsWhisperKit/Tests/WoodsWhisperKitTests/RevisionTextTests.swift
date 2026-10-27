@@ -248,4 +248,59 @@ final class RevisionTextTests: XCTestCase {
         XCTAssertEqual(RevisionText.decapitalized("Slow"), "slow")
         XCTAssertEqual(RevisionText.capitalized("and"), "And")
     }
+
+    func testSpokenBoldAndItalic() {
+        typealias Command = RevisionText.SpokenCommand
+        XCTAssertEqual(Command("Wrap in bold."), .wrap(.bold))
+        XCTAssertEqual(Command("Wrap it in italics"), .wrap(.italic))
+    }
+
+    func testInsertingAMarkFromTheMenu() {
+        var revision = RevisionText("I went home and I slept.")
+        let id = revision.insertMark("?", at: 3)
+        XCTAssertEqual(revision.revisedText, "I went home? And I slept.")
+        XCTAssertEqual(id, revision.tokens[2].id)
+
+        // A mark at a gap with nothing before it stands on its own.
+        var start = RevisionText("hello")
+        start.insertMark(",", at: 0)
+        XCTAssertEqual(start.revisedText, ", hello")
+    }
+
+    func testWrappingInBoldAndItalic() {
+        var revision = RevisionText("I saw a cat, then left.")
+        revision.wrap(2...3, in: .bold)
+        XCTAssertEqual(revision.revisedText, "I saw **a cat**, then left.")
+
+        var sentence = RevisionText("One. Two three.")
+        sentence.wrap(1...2, in: .italic)
+        XCTAssertEqual(sentence.revisedText, "One. *Two three.*")
+    }
+
+    func testStitchingTakesOutMarksAndCapitals() {
+        var revision = RevisionText("I went. To the store. And bought milk.")
+        let ids = revision.tokens.map(\.id)
+        let left = revision.stitch(0...7)
+        XCTAssertEqual(revision.revisedText, "I went to the store and bought milk.")
+        XCTAssertEqual(left, ids)
+    }
+
+    func testStitchingMidSentenceLowersTheFirstWord() {
+        var revision = RevisionText("We left. Early, “Before dawn.” Then rain.")
+        revision.stitch(1...4)
+        XCTAssertEqual(revision.revisedText, "We left early before dawn. Then rain.")
+    }
+
+    func testStitchingKeepsWhatsInsideWords() {
+        var revision = RevisionText("Don't. Well-known, NASA said 3.5% Then.")
+        revision.stitch(0...5)
+        XCTAssertEqual(revision.revisedText, "Don't well-known NASA said 3.5% then.")
+    }
+
+    func testStitchingDropsAWordThatWasOnlyMarks() {
+        var revision = RevisionText("A cat — a dog")
+        let left = revision.stitch(1...3)
+        XCTAssertEqual(revision.revisedText, "A cat a dog")
+        XCTAssertEqual(left.count, 2)
+    }
 }

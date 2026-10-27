@@ -82,6 +82,34 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ENABLE_USER_SCRIPT_SANDBOXING: NO
 
+  # Model Bench: a small separate app for comparing on-device language models on one piece of
+  # text — the transform step only. It shares the main app's MLX downloader/loader file rather
+  # than a copy of it, and keeps its downloaded weights in its own container.
+  ModelBench:
+    type: application
+    platform: iOS
+    sources:
+      - path: Apps/ModelBench
+      - path: Apps/iOS/Services/GemmaTransformService.swift
+    dependencies:
+      - package: WoodsWhisperKit
+      - package: MLXSwiftLM
+        product: MLXLLM
+      - package: MLXSwiftLM
+        product: MLXLMCommon
+      - package: MLXSwiftLM
+        product: MLXHuggingFace
+      - package: SwiftTransformers
+        product: Tokenizers
+      - package: SwiftHuggingFace
+        product: HuggingFace
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.woodswhisper.bench
+        INFOPLIST_FILE: Apps/ModelBench/Resources/Info.plist
+        TARGETED_DEVICE_FAMILY: "1,2"
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+
   # watchOS app (single-target, modern SwiftUI watch app)
   WoodsWhisperWatch:
     type: application
@@ -147,6 +175,13 @@ schemes:
         WoodsWhisperWatch: all
     run:
       config: Debug
+  # The model comparison app. Run in Release: timings from a Debug build undersell every model.
+  ModelBench:
+    build:
+      targets:
+        ModelBench: all
+    run:
+      config: Release
   # Run the watch app directly on an Apple Watch.
   WoodsWhisperWatch:
     build:

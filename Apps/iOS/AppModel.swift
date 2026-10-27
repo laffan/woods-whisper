@@ -674,11 +674,10 @@ final class AppModel: ObservableObject {
             setupError = "There was no text to import."
             return false
         }
-        var entry = Recording.textEntry(trimmed, origin: deviceOrigin())
         // Text arrives already "transcribed", so it never passes the transcription path where a
         // spoken entry files itself — it files itself here instead, by the same rule.
-        entry.tag = InboxTag.autoTag(for: trimmed, from: AppSettings.shared.inboxTagNames)
-        documents.addRecording(entry, toDocument: documentID)
+        documents.addRecording(Self.filedTextEntry(trimmed, origin: deviceOrigin()),
+                               toDocument: documentID)
         wwLog("Imported \(trimmed.count) characters of text into the Inbox", .general)
         return true
     }
@@ -693,11 +692,19 @@ final class AppModel: ObservableObject {
             .text.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return }
         let inbox = documents.inboxDocument()
         guard inbox.id != documentID else { return }
-        var entry = Recording.textEntry(text, origin: deviceOrigin())
-        entry.tag = InboxTag.autoTag(for: text, from: AppSettings.shared.inboxTagNames)
-        documents.addRecording(entry, toDocument: inbox.id)
+        documents.addRecording(Self.filedTextEntry(text, origin: deviceOrigin()), toDocument: inbox.id)
         documents.deleteParagraph(paragraphID, in: documentID)
         wwLog("Moved a section to the Inbox", .general)
+    }
+
+    /// An Inbox entry made of text, filed under the tag its first word names — with that word taken
+    /// off, as a spoken entry's is.
+    private static func filedTextEntry(_ text: String, origin: Recording.Origin) -> Recording {
+        let tag = InboxTag.autoTag(for: text, from: AppSettings.shared.inboxTagNames)
+        let words = tag.flatMap { InboxTag.removingTagWord($0, from: text) } ?? text
+        var entry = Recording.textEntry(words, origin: origin)
+        entry.tag = tag
+        return entry
     }
 
     /// The clipboard's text, or nil (having said so) when there's nothing on it to import.
@@ -953,23 +960,29 @@ final class AppModel: ObservableObject {
 
     // MARK: Inbox tags
 
-    /// File a freshly transcribed Inbox entry under a tag, if its first word says which one.
+    /// File a freshly transcribed Inbox entry under a tag, if its first word says which one — and
+    /// take that word off the transcript, since the tag's pill and edge say it from then on.
     ///
     /// Only the Inbox, and only an entry nobody has filed by hand: the tag is the Inbox's own way of
-    /// sorting a feed of captures, and a choice already made isn't overruled by a rule. Reads the
-    /// transcript back from the store rather than trusting a copy, since an Auto transform may have
-    /// rewritten it a moment ago.
+    /// sorting a feed of captures, and a choice already made isn't overruled by a rule. An entry
+    /// already filed under the tag its first word names — a Continue Recording, transcribed again
+    /// from the start, or a hold on that tag's chip with the tag said anyway — still loses the word.
+    /// Reads the transcript back from the store rather than trusting a copy, since an Auto transform
+    /// may have rewritten it a moment ago.
     func applyAutoTag(recordingID: UUID, in documentID: UUID) {
         guard documents.document(with: documentID)?.title == DocumentStore.inboxTitle,
               var recording = documents.document(with: documentID)?
                 .recordings.first(where: { $0.id == recordingID }),
-              recording.tag == nil,
               let text = recording.transcript,
-              let tag = InboxTag.autoTag(for: text, from: AppSettings.shared.inboxTagNames)
+              let tag = recording.tag ?? InboxTag.autoTag(for: text, from: AppSettings.shared.inboxTagNames)
         else { return }
+        let filing = recording.tag == nil
+        let words = InboxTag.removingTagWord(tag, from: text)
+        guard filing || words != nil else { return }
         recording.tag = tag
+        if let words { recording.transcript = words }
         documents.updateRecording(recording, inDocument: documentID)
-        wwLog("Filed “\(recording.name)” under “\(tag)”", .general)
+        if filing { wwLog("Filed “\(recording.name)” under “\(tag)”", .general) }
     }
 
     /// File an entry by hand — the Tag button behind a swipe. Nil clears the tag.

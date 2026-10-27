@@ -116,7 +116,11 @@ storage, and connectivity code without the model dependencies.
   words it replaces marked pending, or a placeholder standing in the gap) and finished when the
   transcript arrives, or undone if nothing was said; spoken words are fitted to the sentence they
   land in, and `finish` hands back their ids so the editor can select them. `move` carries a run of
-  words to another gap, ids and all. `revisedText` — what's saved — leaves the struck words out. Never persisted: it lives
+  words to another gap, ids and all. The hold menu's actions are the same operations a spoken
+  command reaches, made public for it: `insertMark(_:at:)` (what saying "comma" into a gap does),
+  `wrap(_:in:)` (now with Markdown `.bold` and `.italic` beside the brackets, quotes and dashes) and
+  `stitch(_:)`, which strips marks and capitals from a run while keeping what belongs to its
+  surroundings — an opening capital, the closing mark. `revisedText` — what's saved — leaves the struck words out. Never persisted: it lives
   only while the editor is open (`RevisionEditor` in the app), and the clips behind it are let go
   once transcribed (`AppModel.transcribeRevisionClip`), kept only when they couldn't be.
 - **`PromptPreset`** — a named, reusable instruction (`systemPrompt` + `template` with a
@@ -225,6 +229,18 @@ screen is showing a placeholder for (recording, paragraph, node, document), so t
 read **Thinking…** until the answer starts and **Transforming…** after. The phase is latched beside
 the stream, so an ordinary token costs a comparison rather than a hop back to the main actor.
 
+**The Revise editor's hold (iOS).** `RevisionEditor` reads one `DragGesture(minimumDistance: 0)`
+as a tap, a swipe-select, a scroll, a move or a hold, decided by what the finger does first. A
+finger that lands **on the selection** and travels past the slop is a move (`touchOnSelection`),
+whichever way it sets off; a still finger past `holdDelay` is a hold (`TouchMode.holding`), which
+starts recording at once and records a `Hold` — where it went down, the gap a mark would go into
+(`markGap`, worked out from the same target the recording has), and the menu once it's open.
+Sliding up past `menuReveal` opens the menu: its rows are laid out with Record level with the
+finger, clamped to the screen, and from then on the highlighted row is simply the one level with
+the finger (`menuIndex`). On release, `endHold` keeps the recording when the finger is on Record —
+or never opened the menu — and otherwise drops it (`dropRecording`) and performs the option. A hold
+cancelled by the system keeps a recording but performs nothing else, since nobody chose it.
+
 **Inbox tags (iOS).** `Recording.tag` holds a tag's **name**, not a reference into the list of them
 (`AppSettings.inboxTags`, edited in Settings): the list is a setting the user rearranges, and an
 entry shouldn't lose what it says about itself because a tag was renamed or dropped — a filter for
@@ -240,7 +256,10 @@ then endings taken off repeatedly and never below three characters, so "Question
 only — a tag in the middle of a sentence is a word in a sentence. It runs from `AppModel.transcribe`
 *after* the Auto transform (what the entry ends up saying is what files it) and never over a tag
 already set by hand, and again in `importText(_:intoInbox:)`, since text arrives already
-"transcribed" and never passes the transcription path at all.
+"transcribed" and never passes the transcription path at all. Filing takes the tag word off the
+text (`InboxTag.removingTagWord`, the separators after it included and the next word capitalised),
+and so does a first transcription whose first word names the tag the entry already has: a Continue
+Recording re-transcribes from the start, and would otherwise bring the word back.
 
 **Joint documents (iOS).** A document and a graph shown at once are *two documents and a link*,
 not a third kind of container. `Document.joinedID` is stored on one half only — the one the pair was

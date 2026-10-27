@@ -62,6 +62,26 @@ public enum InboxTag {
         return tags.first { stem($0) == word }
     }
 
+    /// `text` with the tag word it opens with taken off — once a first word has filed an entry, it's
+    /// said what it had to say, and the tag's pill and edge carry it from then on. The marks that
+    /// set it off from the rest go with it ("Question — where…", "Reminder: water filter"), and
+    /// what's left starts with a capital. Nil when the first word isn't `tag`, or when it's all
+    /// there is: an entry that says nothing but its tag keeps the word rather than becoming empty.
+    public static func removingTagWord(_ tag: String, from text: String) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let first = trimmed.split(whereSeparator: { $0.isWhitespace }).first,
+              matches(String(first), tag: tag) else { return nil }
+        let separators = CharacterSet.whitespacesAndNewlines
+            .union(CharacterSet(charactersIn: ".,;:!?…—–-"))
+        var rest = Substring(trimmed[first.endIndex...])
+        while let character = rest.first,
+              character.unicodeScalars.allSatisfy({ separators.contains($0) }) {
+            rest = rest.dropFirst()
+        }
+        guard let opening = rest.first else { return nil }
+        return opening.isLowercase ? opening.uppercased() + rest.dropFirst() : String(rest)
+    }
+
     /// Whether a word is a tag, or a version of it: same stem, nothing more.
     public static func matches(_ word: String, tag: String) -> Bool {
         let stemmed = stem(word)

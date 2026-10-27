@@ -3066,6 +3066,19 @@ struct InboxView: View {
         WW.tagColor(tags.first { $0.name == name }?.colorID)
     }
 
+    /// A row's background: clear, as every row's is, with a bar of its tag's colour down the left
+    /// edge when it's filed under one.
+    private func tagEdge(_ name: String?) -> some View {
+        HStack(spacing: 0) {
+            if name != nil {
+                Rectangle()
+                    .fill(tagColor(name))
+                    .frame(width: 4)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
     /// The tags worth filtering by: the ones entries are actually filed under, in the order Settings
     /// lists them — followed by any an entry still carries that the list has since dropped, since
     /// those entries are exactly the ones you'd want a way back to.
@@ -3333,7 +3346,9 @@ struct InboxView: View {
         ) {
             if isEditing { transcriptEditBox() }
         }
-        .wwRow()
+        // A filed entry carries its tag's colour down its left edge, the full height of the row.
+        .listRowBackground(tagEdge(recording.tag))
+        .listRowSeparatorTint(WW.hairline)
         .listRowInsets(EdgeInsets(top: 12, leading: 20, bottom: 12, trailing: 20))
 
         if isEditing {
@@ -3976,6 +3991,13 @@ private struct InboxRecordingRow<Editor: View>: View {
     var tagColor: Color = WW.moss
     @ViewBuilder var editor: Editor
 
+    @Environment(\.transcriptTextSize) private var transcriptTextSize: Double
+    /// How wide the transcript is set, so the words a folded entry leaves out can be counted.
+    @State private var labelWidth: CGFloat = 0
+
+    /// How many lines a folded entry shows.
+    static var foldedLines: Int { 8 }
+
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             if selectionMode {
@@ -3998,7 +4020,15 @@ private struct InboxRecordingRow<Editor: View>: View {
                             .foregroundStyle(WW.inkSecondary)
                     }
                 } else {
-                    RecordingLabel(recording: recording, lineLimit: isExpanded ? nil : 8)
+                    RecordingLabel(recording: recording, lineLimit: isExpanded ? nil : Self.foldedLines)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background {
+                            GeometryReader { geo in
+                                Color.clear.onChange(of: geo.size.width, initial: true) { _, width in
+                                    labelWidth = width
+                                }
+                            }
+                        }
                 }
                 // The capture time, and — for an entry that's been filed — what it was filed as.
                 // Small and beside the date rather than over the text: it's a note about the entry,
@@ -4015,6 +4045,12 @@ private struct InboxRecordingRow<Editor: View>: View {
                     Text(recording.createdAt.formatted(date: .abbreviated, time: .shortened))
                         .font(.caption2)
                         .foregroundStyle(WW.inkTertiary)
+                    // A folded entry that's longer than its few lines says how much more there is.
+                    if hiddenWords > 0 {
+                        Text("· \(hiddenWords) more word\(hiddenWords == 1 ? "" : "s")")
+                            .font(.caption2)
+                            .foregroundStyle(WW.inkTertiary)
+                    }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -4049,6 +4085,36 @@ private struct InboxRecordingRow<Editor: View>: View {
         .padding(.vertical, 2)
         .contentShape(Rectangle())
         .modifier(LongPressUnless(disabled: isEditing, action: onLongPress))
+    }
+
+    /// The words a folded entry's last line cuts off, counted by laying the transcript out the way
+    /// the row sets it. Nothing while it's open, being edited or rewritten, or not yet words.
+    private var hiddenWords: Int {
+        guard !isExpanded, !isEditing, !isTransforming, recording.status == .done,
+              let transcript = recording.transcript?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !transcript.isEmpty else { return 0 }
+        return Self.wordsPast(lines: Self.foldedLines, of: transcript,
+                              font: InlineTextStyle.inboxTranscript.uiFont(transcriptTextSize),
+                              width: labelWidth)
+    }
+
+    /// How many words of `text` fall after the first `lines` lines, set in `font` at `width`.
+    static func wordsPast(lines: Int, of text: String, font: UIFont, width: CGFloat) -> Int {
+        guard width > 0 else { return 0 }
+        let storage = NSTextStorage(string: text, attributes: [.font: font])
+        let layout = NSLayoutManager()
+        let container = NSTextContainer(size: CGSize(width: width, height: .greatestFiniteMagnitude))
+        container.lineFragmentPadding = 0
+        container.maximumNumberOfLines = lines
+        container.lineBreakMode = .byWordWrapping
+        layout.addTextContainer(container)
+        storage.addLayoutManager(layout)
+        let shown = layout.characterRange(forGlyphRange: layout.glyphRange(for: container),
+                                          actualGlyphRange: nil)
+        let all = text as NSString
+        guard NSMaxRange(shown) < all.length else { return 0 }
+        return all.substring(from: NSMaxRange(shown))
+            .split(whereSeparator: { $0.isWhitespace }).count
     }
 }
 
@@ -4146,14 +4212,18 @@ struct RevisionSubject: Identifiable {
 /// • **Double-tap** the selection to strike it through (and again to take the strike off). A struck
 ///   run keeps its strike once it's let go, and is a thing of its own from then on.
 /// • **Tap** off the words to let the selection go.
+/// • **Drag** the selection to move it: a blue caret, held a line above the finger so it isn't
+///   under it, shows where it'll go.
 /// • **Hold** the selection, or a struck run, and speak: let go, and what you said takes its place.
-/// • **Hold and drag** the selection to move it: a blue caret, held a line above the finger so it
-///   isn't under it, shows where it'll go.
 /// • **Hold** anywhere else in the text and speak: let go, and it goes in at the gap you held —
 ///   the graph canvas's hold, in a line of text.
+/// • **Slide up** out of a hold and a menu opens beside the thumb, recording in the middle of it:
+///   marks to put in above (. , ? !), and — when there's a selection — things to do to it below
+///   (parentheses, quotes, bold, italic, and **Stitch**, which takes its marks and capitals out).
+///   Slide to one and let go; let go on Record and the recording stands.
 /// • Say only a punctuation mark ("comma") and the mark goes in, not the word; say "wrap in
-///   quotes" (or parentheses, brackets, dashes) over a selection and it's wrapped. See
-///   `RevisionText.SpokenCommand`.
+///   quotes" (or parentheses, brackets, dashes, bold, italics) over a selection and it's wrapped.
+///   See `RevisionText.SpokenCommand`.
 /// • Drag **up or down** to scroll; a swipe that starts sideways is a selection.
 ///
 /// What was just spoken in arrives **selected**, so trying again is one more hold on it, with a
@@ -4208,18 +4278,19 @@ struct RevisionEditor: View {
     @State private var scrollAtTouch: CGFloat = 0
     @State private var selectionAnchor: Int?
     @State private var holdTask: Task<Void, Never>?
+    /// Whether the finger went down on the selection: if it sets off from there, it's carrying it.
+    @State private var touchOnSelection = false
     @GestureState private var isTouching = false
 
     // The last tap, so a second one close behind it on the selection reads as a double tap.
     @State private var lastTapTime = Date.distantPast
     @State private var lastTapPoint = CGPoint.zero
 
-    // A hold that's recording: what it's for, and where the finger is (viewport points). A hold
-    // on the selection can still turn into a move, until the finger has stayed put.
+    // A hold: where the finger is and the menu it may slide up into, and the recording it started
+    // (if the microphone could be had), with what that recording is for.
     @StateObject private var recorder = AudioRecorder()
     @State private var recordTarget: RecordTarget?
-    @State private var recordAnchor: CGPoint?
-    @State private var holdIsOnSelection = false
+    @State private var hold: Hold?
     /// The selection being carried to somewhere else in the text.
     @State private var moveDrag: MoveDrag?
 
@@ -4258,9 +4329,14 @@ struct RevisionEditor: View {
     private static let space = "revisionText"
     /// How far a finger moves before it's a swipe rather than a tap or a hold.
     private static let slop: CGFloat = 10
-    /// How far a held finger moves before a hold on the selection is a move rather than speech —
-    /// more than a tap's slop, so a finger that drifts a little while talking still records.
-    private static let moveSlop: CGFloat = 18
+    /// How far a held finger slides up before the hold's menu opens — more than a tap's slop, so a
+    /// finger that drifts a little while talking still just records.
+    private static let menuReveal: CGFloat = 28
+    /// The height of a row of the hold's menu: how far the finger slides from one option to the next.
+    private static let menuRow: CGFloat = 44
+    private static let menuWidth: CGFloat = 56
+    /// How far the menu stands off from the middle of the thumb, so the thumb doesn't cover it.
+    private static let menuGap: CGFloat = 44
     private static let holdDelay: UInt64 = 450_000_000
     /// How close together two taps have to come to count as a double tap.
     private static let doubleTapInterval: TimeInterval = 0.32
@@ -4273,7 +4349,14 @@ struct RevisionEditor: View {
 
     private var isRecording: Bool { recordTarget != nil }
     private var isBusy: Bool {
-        isRecording || moveDrag != nil || revision.hasPendingEdit || isTransforming
+        isRecording || hold != nil || moveDrag != nil || revision.hasPendingEdit || isTransforming
+    }
+
+    /// What letting go of the hold would do: the option the finger is beside in its menu, or —
+    /// with the menu not open — keep the recording.
+    private var heldOption: HoldOption {
+        guard let hold, let menu = hold.menu else { return .record }
+        return menu[hold.highlighted]
     }
 
     // MARK: Body
@@ -4292,7 +4375,8 @@ struct RevisionEditor: View {
                     .clipped()
                     .contentShape(Rectangle())
                     .gesture(touchGesture)
-                    .overlay { recordingReadout(in: geo.size) }
+                    .overlay { holdMenu(in: geo.size) }
+                    .overlay { holdReadout(in: geo.size) }
                     .overlay { movingWords(in: geo.size) }
                     .overlay(alignment: .topTrailing) { scrollIndicator(in: geo.size) }
                     .overlay(alignment: .top) { originalBadge }
@@ -4396,7 +4480,7 @@ struct RevisionEditor: View {
     private func wordView(_ token: RevisionText.Token, index: Int) -> some View {
         // The selection is counted in the revision's words, not the original's.
         let selected = !showingOriginal && (selectedRange?.contains(index) ?? false)
-        let targeted = recordTarget?.replaces(token.id) ?? false
+        let targeted = heldOption == .record && (recordTarget?.replaces(token.id) ?? false)
         let carriesReset = showsReset && justRecorded?.span.first == token.id
         return Text(token.word)
             .font(.system(size: fontSize))
@@ -4456,7 +4540,7 @@ struct RevisionEditor: View {
     private var caret: some View {
         if showingOriginal {
             EmptyView()
-        } else if case .insert(_, let rect?) = recordTarget {
+        } else if case .insert(_, let rect?) = recordTarget, !heldOption.actsOnSelection {
             caretMark(rect, tint: WW.ember)
         } else if let rect = moveDrag?.caret {
             caretMark(rect, tint: WW.dropBlue)
@@ -4472,27 +4556,102 @@ struct RevisionEditor: View {
             .allowsHitTesting(false)
     }
 
-    /// The elapsed counter, floating above the finger that's holding — as on the graph canvas.
+    /// Above the thumb while it holds: the elapsed counter while it's recording — as on the graph
+    /// canvas — or, with the menu open, the option it's beside, since the menu itself is only marks.
     @ViewBuilder
-    private func recordingReadout(in size: CGSize) -> some View {
-        if isRecording, let anchor = recordAnchor {
+    private func holdReadout(in size: CGSize) -> some View {
+        if let hold, isRecording || hold.menu != nil {
+            let option = heldOption
             HStack(spacing: 9) {
-                Circle()
-                    .fill(WW.ember)
-                    .frame(width: 10, height: 10)
-                Text(Recording.durationLabel(recorder.elapsed))
-                    .font(.system(size: 17, weight: .medium, design: .rounded).monospacedDigit())
-                    .foregroundStyle(WW.ink)
+                if option == .record {
+                    Circle()
+                        .fill(isRecording ? WW.ember : WW.inkTertiary)
+                        .frame(width: 10, height: 10)
+                    Text(isRecording ? Recording.durationLabel(recorder.elapsed) : "No recording")
+                        .font(.system(size: 17, weight: .medium, design: .rounded).monospacedDigit())
+                        .foregroundStyle(WW.ink)
+                } else {
+                    Text(option.title)
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(WW.dropBlue)
+                }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 9)
             .background(WW.surface, in: Capsule())
             .overlay(Capsule().stroke(WW.hairline, lineWidth: 1))
             .shadow(color: .black.opacity(0.16), radius: 14, y: 4)
-            .position(x: min(max(80, anchor.x), max(80, size.width - 80)),
-                      y: max(30, anchor.y - fontSize - 44))
+            .fixedSize()
+            // A little to the thumb's right, away from the menu at its left.
+            .position(x: min(max(90, hold.location.x + (hold.menu == nil ? 0 : 30)), max(90, size.width - 90)),
+                      y: max(30, hold.location.y - fontSize - 44))
             .allowsHitTesting(false)
             .transition(.opacity)
+        }
+    }
+
+    /// The hold's menu, once the finger has slid up: a column of marks beside the thumb — to its
+    /// left, or its right when there's no room — with Record in the middle, marks to put in above,
+    /// and what can be done to the selection below. The option beside the finger is filled in.
+    @ViewBuilder
+    private func holdMenu(in size: CGSize) -> some View {
+        if let hold, let options = hold.menu {
+            let width = Self.menuWidth
+            let leftEdge = hold.location.x - Self.menuGap - width
+            let x = leftEdge >= 8
+                ? leftEdge + width / 2
+                : min(hold.location.x + Self.menuGap + width / 2, size.width - width / 2 - 4)
+            VStack(spacing: 0) {
+                ForEach(Array(options.enumerated()), id: \.offset) { index, option in
+                    let lit = index == hold.highlighted
+                    holdGlyph(option, lit: lit)
+                        .frame(width: width - 8, height: Self.menuRow - 4)
+                        .background {
+                            if lit {
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .fill(option == .record ? WW.ember : WW.dropBlue)
+                            }
+                        }
+                        .frame(height: Self.menuRow)
+                }
+            }
+            .frame(width: width)
+            .background(WW.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(WW.hairline, lineWidth: 1))
+            .shadow(color: .black.opacity(0.18), radius: 14, y: 4)
+            .position(x: x, y: hold.menuTop + CGFloat(options.count) * Self.menuRow / 2)
+            .allowsHitTesting(false)
+            .transition(.opacity)
+        }
+    }
+
+    @ViewBuilder
+    private func holdGlyph(_ option: HoldOption, lit: Bool) -> some View {
+        let ink = lit ? Color.white : WW.ink
+        switch option {
+        case .record:
+            Circle()
+                .fill(lit ? Color.white : WW.ember)
+                .frame(width: 12, height: 12)
+        case .mark(let mark):
+            Text(mark)
+                .font(.system(size: 26, weight: .bold, design: .rounded))
+                .foregroundStyle(ink)
+        case .wrap(let wrapper):
+            switch wrapper {
+            case .bold:
+                Text("B").font(.system(size: 20, weight: .heavy)).foregroundStyle(ink)
+            case .italic:
+                Text("I").font(.system(size: 20, weight: .regular).italic()).foregroundStyle(ink)
+            case .quotes:
+                Text("“ ”").font(.system(size: 20, weight: .semibold)).foregroundStyle(ink)
+            default:
+                Text("( )").font(.system(size: 18, weight: .semibold)).foregroundStyle(ink)
+            }
+        case .stitch:
+            Image(systemName: "link")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(ink)
         }
     }
 
@@ -4508,26 +4667,42 @@ struct RevisionEditor: View {
             // would be at when there's no gap to drop into there.
             let caretTop = drag.caret.map { $0.minY + Self.insetTop - scrollOffset }
                 ?? drag.location.y - moveLift - fontSize * 0.7
-            let bottom = max(height + 4, caretTop - 10)
-            Text(revision.tokens[range].map(\.word).joined(separator: " "))
-                .font(.system(size: fontSize * 0.8))
-                .strikethrough(revision.tokens[range].allSatisfy(\.isStruck), color: WW.ember)
-                .foregroundStyle(WW.ink)
-                .lineLimit(2)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .frame(maxWidth: width)
-                .fixedSize(horizontal: false, vertical: true)
-                .background(WW.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(WW.dropBlue.opacity(0.6), lineWidth: 1))
-                .shadow(color: .black.opacity(0.18), radius: 12, y: 4)
-                // Pinned by its bottom edge, however many lines it runs to.
-                .frame(width: width, height: height, alignment: .bottom)
-                .position(x: min(max(width / 2 + 24, drag.location.x), max(width / 2 + 24, size.width - width / 2 - 24)),
-                          y: bottom - height / 2)
-                .allowsHitTesting(false)
+            let words = revision.tokens[range].map(\.word).joined(separator: " ")
+            // On the top line there's no room over the caret, and drawn any lower the words would
+            // cover the gap they're going to — so they stand aside until there's room again.
+            if caretTop - 10 >= carriedHeight(words, width: width) + 4 {
+                carriedWords(words, range: range, width: width, height: height)
+                    .position(x: min(max(width / 2 + 24, drag.location.x), max(width / 2 + 24, size.width - width / 2 - 24)),
+                              y: caretTop - 10 - height / 2)
+            }
         }
+    }
+
+    /// How tall the carried words are drawn: one line or two, and the padding round them.
+    private func carriedHeight(_ words: String, width: CGFloat) -> CGFloat {
+        let font = UIFont.systemFont(ofSize: fontSize * 0.8)
+        let oneLine = (words as NSString).size(withAttributes: [.font: font]).width <= width - 28
+        return font.lineHeight * (oneLine ? 1 : 2) + 16
+    }
+
+    private func carriedWords(_ words: String, range: ClosedRange<Int>, width: CGFloat,
+                              height: CGFloat) -> some View {
+        Text(words)
+            .font(.system(size: fontSize * 0.8))
+            .strikethrough(revision.tokens[range].allSatisfy(\.isStruck), color: WW.ember)
+            .foregroundStyle(WW.ink)
+            .lineLimit(2)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .frame(maxWidth: width)
+            .fixedSize(horizontal: false, vertical: true)
+            .background(WW.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(WW.dropBlue.opacity(0.6), lineWidth: 1))
+            .shadow(color: .black.opacity(0.18), radius: 12, y: 4)
+            // Pinned by its bottom edge, however many lines it runs to.
+            .frame(width: width, height: height, alignment: .bottom)
+            .allowsHitTesting(false)
     }
 
     /// A thin bar down the right edge, there whenever the text runs past the screen: how much of it
@@ -4615,15 +4790,21 @@ struct RevisionEditor: View {
         if showingOriginal { return "As it was when you opened it — let go to come back." }
         if isTransforming { return model.isThinking(transformID) ? "Thinking…" : "Transforming…" }
         if moveDrag != nil { return "Let go to move the words to the blue caret." }
-        if isRecording {
-            if case .insert = recordTarget { return "Speak — let go to put it in here." }
-            if holdIsOnSelection { return "Speak — let go and it takes their place. Drag to move instead." }
-            return "Speak — let go and it takes their place."
+        if let hold {
+            if hold.menu != nil {
+                let option = heldOption
+                if option != .record { return "Let go to \(option.verb)." }
+                return isRecording ? "Let go to keep the recording." : "Let go to leave it as it was."
+            }
+            let more = canActOnSelection ? "slide up for marks and more" : "slide up for marks"
+            guard isRecording else { return "No recording · \(more)" }
+            if case .insert = recordTarget { return "Speak — let go to put it in here · \(more)" }
+            return "Speak — let go and it takes their place · \(more)"
         }
         if revision.hasPendingEdit { return "Transcribing…" }
         if showsReset { return "Hold to try again · Reset puts back what was there" }
         if selection != nil {
-            return "Double-tap to strike through · hold to speak over · hold and drag to move"
+            return "Double-tap to strike through · drag to move · hold to speak over, slide up for more"
         }
         if revision.tokens.contains(where: \.isStruck) {
             return "Hold struck words to speak over them · struck words go on Done"
@@ -4647,7 +4828,10 @@ struct RevisionEditor: View {
         case .undecided:
             guard hypot(moved.width, moved.height) > Self.slop else { return }
             cancelHoldTimer()
-            if abs(moved.width) >= abs(moved.height) {
+            if touchOnSelection {
+                // The selection, dragged: it lifts and follows the finger.
+                beginMove(at: value.location)
+            } else if abs(moved.width) >= abs(moved.height) {
                 // Sideways: a swipe across words, selecting them.
                 touchMode = .selecting
                 selectionAnchor = nearestTokenIndex(to: contentPoint(value.startLocation))
@@ -4661,11 +4845,8 @@ struct RevisionEditor: View {
             extendSelection(to: value.location)
         case .scrolling:
             scroll(to: scrollAtTouch - value.translation.height)
-        case .recording, .heldSelection:
-            // A hold on the selection that sets off somewhere is a move, not speech.
-            if holdIsOnSelection, hypot(moved.width, moved.height) > Self.moveSlop {
-                beginMove(at: value.location)
-            }
+        case .holding:
+            updateHold(to: value.location)
         case .moving:
             updateMove(to: value.location)
         case .ignored:
@@ -4678,24 +4859,24 @@ struct RevisionEditor: View {
         let mode = touchMode
         touchStart = nil
         touchMode = .undecided
-        holdIsOnSelection = false
+        touchOnSelection = false
         switch mode {
         case .undecided: registerTap(at: value.startLocation)
         case .selecting: if selection != nil { WWHaptics.light() }
         case .scrolling: glide(from: value)
-        case .recording: finishHold()
+        case .holding: endHold(cancelled: false)
         case .moving: finishMove()
-        case .heldSelection, .ignored: break
+        case .ignored: break
         }
     }
 
     private func touchCancelled() {
         cancelHoldTimer()
-        if touchMode == .recording { finishHold() }
+        if touchMode == .holding { endHold(cancelled: true) }
         moveDrag = nil
         touchStart = nil
         touchMode = .undecided
-        holdIsOnSelection = false
+        touchOnSelection = false
     }
 
     /// A finger has gone down: it's a tap, a swipe or a hold — which one is up to what it does
@@ -4705,14 +4886,18 @@ struct RevisionEditor: View {
         stopGlide()
         touchStart = point
         touchMode = .undecided
-        holdIsOnSelection = false
         scrollAtTouch = scrollOffset
         // The words are about to be replaced by a transform's answer: nothing done to them now
         // would survive it. And while Undo is held, what's on screen isn't the revision.
         if isTransforming || showingOriginal {
             touchMode = .ignored
+            touchOnSelection = false
             return
         }
+        // A finger that lands on the selection and sets off is carrying it — unless spoken words
+        // are still on their way in, when the words aren't settled enough to be picked up.
+        touchOnSelection = canActOnSelection && !revision.hasPendingEdit
+            && tokenIndex(at: contentPoint(point)).map { selectedRange?.contains($0) ?? false } == true
         WWHaptics.prepare()
         holdTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: Self.holdDelay)
@@ -4859,28 +5044,23 @@ struct RevisionEditor: View {
     // MARK: Holding to speak
 
     /// The finger has been held still. Over the selection, or over struck words, what's said will
-    /// replace them; anywhere else, it goes in at the gap nearest the finger. A hold on the
-    /// selection may yet turn into a move, if the finger sets off.
+    /// replace them; anywhere else, it goes in at the gap nearest the finger. Recording starts at
+    /// once; sliding up from here opens the menu (`updateHold`).
     private func beginHold(at point: CGPoint) {
         let spot = contentPoint(point)
         if let reset = resetFrame, reset.contains(spot) {
             touchMode = .ignored
             return
         }
-        let hit = tokenIndex(at: spot)
-        let range = selectedRange
-        holdIsOnSelection = hit.map { range?.contains($0) ?? false } ?? false
         guard !revision.hasPendingEdit else {
             // One clip at a time, so each one's words land where they were spoken.
             touchMode = .ignored
             return
         }
-        guard canRecord() else {
-            touchMode = holdIsOnSelection ? .heldSelection : .ignored
-            return
-        }
+        let hit = tokenIndex(at: spot)
+        let range = selectedRange
         let target: RecordTarget
-        if holdIsOnSelection, let range {
+        if let hit, let range, range.contains(hit) {
             target = .replace(ids: revision.tokens[range].map(\.id))
         } else if let hit, let run = revision.struckRun(around: hit) {
             target = .replace(ids: revision.tokens[run].map(\.id))
@@ -4888,18 +5068,130 @@ struct RevisionEditor: View {
             let gap = gap(at: spot)
             target = .insert(gap: gap.index, caret: gap.caret)
         }
+        // A mark from the menu goes where the recording's words would: on the end of the words it
+        // would replace, or into the gap.
+        let markGap: Int
+        switch target {
+        case .replace(let ids):
+            markGap = ids.last.flatMap { revision.index(of: $0) }.map { $0 + 1 } ?? revision.tokens.count
+        case .insert(let gap, _):
+            markGap = gap
+        }
+        hold = Hold(start: point, location: point, markGap: markGap)
+        touchMode = .holding
+        // Without the microphone the hold still has its menu; there's just nothing to record.
+        guard canRecord() else {
+            WWHaptics.light()
+            return
+        }
         do {
             try recorder.start(to: model.documents.newAudioURL().url)
         } catch {
             transformFailed = false
             errorMessage = error.localizedDescription
-            touchMode = holdIsOnSelection ? .heldSelection : .ignored
             return
         }
         recordTarget = target
-        recordAnchor = point
-        touchMode = .recording
         WWHaptics.recordingStarted()
+    }
+
+    /// The held finger has moved. Slid far enough up, the menu opens beside it; once it's open,
+    /// the option beside the finger is the one letting go will choose.
+    private func updateHold(to point: CGPoint) {
+        guard var current = hold else { return }
+        current.location = point
+        if current.menu == nil {
+            guard current.start.y - point.y > Self.menuReveal else {
+                hold = current
+                return
+            }
+            let options = holdOptions()
+            let record = CGFloat(options.firstIndex(of: .record) ?? 0)
+            let height = CGFloat(options.count) * Self.menuRow
+            // Record level with the finger, as near as the screen allows.
+            let top = point.y - (record + 0.5) * Self.menuRow
+            current.menuTop = min(max(8, top), max(8, viewportHeight - height - 8))
+            current.menu = options
+            current.highlighted = menuIndex(at: point.y, in: current)
+            WWHaptics.medium()
+        } else {
+            let index = menuIndex(at: point.y, in: current)
+            if index != current.highlighted {
+                current.highlighted = index
+                WWHaptics.light()
+            }
+        }
+        hold = current
+    }
+
+    /// The row of the menu level with `y`, kept to the rows there are.
+    private func menuIndex(at y: CGFloat, in hold: Hold) -> Int {
+        guard let count = hold.menu?.count, count > 0 else { return 0 }
+        let row = Int(((y - hold.menuTop) / Self.menuRow).rounded(.down))
+        return min(max(row, 0), count - 1)
+    }
+
+    /// The menu, top to bottom: marks above Record — the commonest nearest it — and, while there's
+    /// a selection to work on, what can be done to it below, with Stitch at the bottom.
+    private func holdOptions() -> [HoldOption] {
+        var options: [HoldOption] = [.mark("!"), .mark("?"), .mark(","), .mark("."), .record]
+        if canActOnSelection {
+            options += [.wrap(.parentheses), .wrap(.quotes), .wrap(.bold), .wrap(.italic), .stitch]
+        }
+        return options
+    }
+
+    /// Whether there's a selection the menu's actions can work on: one with no placeholder in it.
+    private var canActOnSelection: Bool {
+        guard let range = selectedRange else { return false }
+        return !revision.tokens[range].contains(where: \.isPlaceholder)
+    }
+
+    /// The finger's off. Let go on Record (or without opening the menu) and the recording stands;
+    /// on anything else the recording is dropped and that's done instead. A hold the system took
+    /// back does nothing but keep the recording, if that's what the finger was on.
+    private func endHold(cancelled: Bool) {
+        let option = heldOption
+        let markGap = hold?.markGap
+        hold = nil
+        guard option == .record else {
+            dropRecording()
+            if !cancelled { perform(option, markGap: markGap) }
+            return
+        }
+        finishHold()
+    }
+
+    /// Do what the menu's option says. A mark goes into the hold's gap; the rest work on the
+    /// selection, which stays on the same words.
+    private func perform(_ option: HoldOption, markGap: Int?) {
+        switch option {
+        case .record:
+            return
+        case .mark(let mark):
+            guard let markGap, markGap <= revision.tokens.count else { return }
+            change { $0.insertMark(mark, at: markGap) }
+        case .wrap(let wrapper):
+            guard canActOnSelection, let range = selectedRange else { return }
+            change { $0.wrap(range, in: wrapper) }
+        case .stitch:
+            guard canActOnSelection, let range = selectedRange else { return }
+            var left: [UUID] = []
+            change { left = $0.stitch(range) }
+            if let first = left.first, let last = left.last {
+                selection = TokenSpan(first: first, last: last)
+            } else {
+                selection = nil
+            }
+        }
+        WWHaptics.light()
+    }
+
+    /// Stop a recording nobody wants, and throw its clip away.
+    private func dropRecording() {
+        guard recordTarget != nil else { return }
+        recordTarget = nil
+        if let result = recorder.stop() { try? FileManager.default.removeItem(at: result.url) }
     }
 
     /// The finger lifted: stop, hold the spot, and put the words in when they arrive — selected,
@@ -4907,7 +5199,6 @@ struct RevisionEditor: View {
     private func finishHold() {
         guard let target = recordTarget else { return }
         recordTarget = nil
-        recordAnchor = nil
         guard let result = recorder.stop() else { return }
         // A hold let go the instant it's recognised isn't a recording.
         guard result.duration >= GraphCanvas.minimumClip else {
@@ -4973,14 +5264,8 @@ struct RevisionEditor: View {
 
     // MARK: Moving the selection
 
-    /// A hold on the selection has set off: whatever it was recording is dropped — the finger was
-    /// asking to carry the words, not to speak over them — and the words lift and follow it.
+    /// A finger that went down on the selection has set off: the words lift and follow it.
     private func beginMove(at point: CGPoint) {
-        if recordTarget != nil {
-            recordTarget = nil
-            recordAnchor = nil
-            if let result = recorder.stop() { try? FileManager.default.removeItem(at: result.url) }
-        }
         guard selectedRange != nil else {
             touchMode = .ignored
             return
@@ -5105,7 +5390,8 @@ struct RevisionEditor: View {
             try? await Task.sleep(nanoseconds: Self.holdDelay)
             // Nothing to compare while nothing has changed, or while a recording or a move has
             // the text in hand.
-            guard !Task.isCancelled, undoPressBegan, !history.isEmpty, !isRecording, moveDrag == nil
+            guard !Task.isCancelled, undoPressBegan, !history.isEmpty, !isRecording, hold == nil,
+                  moveDrag == nil
             else { return }
             showingOriginal = true
             WWHaptics.light()
@@ -5162,10 +5448,8 @@ struct RevisionEditor: View {
         undoHoldTask = nil
         stopGlide()
         moveDrag = nil
-        guard recordTarget != nil else { return }
-        recordTarget = nil
-        recordAnchor = nil
-        if let result = recorder.stop() { try? FileManager.default.removeItem(at: result.url) }
+        hold = nil
+        dropRecording()
     }
 
     // MARK: Where the words are
@@ -5216,10 +5500,68 @@ struct RevisionEditor: View {
     // MARK: Small types
 
     private enum TouchMode {
-        case undecided, selecting, scrolling, recording, moving, ignored
-        /// Held on the selection without a recording running (no microphone permission): it can
-        /// still become a move.
-        case heldSelection
+        case undecided, selecting, scrolling, holding, moving, ignored
+    }
+
+    /// A finger held down: where it went down and where it is now (viewport points), the gap a
+    /// mark from the menu goes into, and — once it has slid up — the menu: its options top to
+    /// bottom, where its top is, and which one the finger is beside.
+    private struct Hold {
+        let start: CGPoint
+        var location: CGPoint
+        let markGap: Int
+        var menu: [HoldOption]?
+        var menuTop: CGFloat = 0
+        var highlighted = 0
+    }
+
+    /// What a hold's menu offers.
+    private enum HoldOption: Equatable {
+        /// Keep the recording the hold started.
+        case record
+        /// Put a punctuation mark in.
+        case mark(String)
+        /// Wrap the selection.
+        case wrap(RevisionText.SpokenCommand.Wrapper)
+        /// Take the selection's marks and capitals out (`RevisionText.stitch`).
+        case stitch
+
+        var actsOnSelection: Bool {
+            switch self {
+            case .wrap, .stitch: return true
+            case .record, .mark: return false
+            }
+        }
+
+        /// What it's called, over the thumb while the finger is beside it.
+        var title: String {
+            switch self {
+            case .record: return "Record"
+            case .mark(let mark): return Self.markNames[mark] ?? mark
+            case .wrap(.bold): return "Bold"
+            case .wrap(.italic): return "Italic"
+            case .wrap(.quotes): return "Quotes"
+            case .wrap: return "Parentheses"
+            case .stitch: return "Stitch"
+            }
+        }
+
+        /// What letting go on it does, for the footer's hint.
+        var verb: String {
+            switch self {
+            case .record: return "keep the recording"
+            case .mark("!"): return "put in an exclamation point"
+            case .mark(let mark): return "put in a \((Self.markNames[mark] ?? mark).lowercased())"
+            case .wrap(.bold): return "make it bold"
+            case .wrap(.italic): return "make it italic"
+            case .wrap(.quotes): return "wrap it in quotes"
+            case .wrap: return "wrap it in parentheses"
+            case .stitch: return "take out its marks and capitals"
+            }
+        }
+
+        private static let markNames = [".": "Period", ",": "Comma", "?": "Question mark",
+                                        "!": "Exclamation point"]
     }
 
     /// What a hold is recording for.

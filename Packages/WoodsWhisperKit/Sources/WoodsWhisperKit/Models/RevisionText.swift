@@ -334,9 +334,9 @@ public struct RevisionText: Equatable {
         /// "Wrap in parentheses", "wrap it in quotes" — said over words.
         case wrap(Wrapper)
 
-        /// What can be wrapped around words.
+        /// What can be wrapped around words. Bold and italic are Markdown's, `**` and `*`.
         public enum Wrapper: Equatable {
-            case parentheses, brackets, quotes, singleQuotes, dashes
+            case parentheses, brackets, quotes, singleQuotes, dashes, bold, italic
         }
 
         /// The names a mark can be said by, as they come back from the transcriber once lower-cased
@@ -392,6 +392,10 @@ public struct RevisionText: Equatable {
                 self = .wrap(.quotes)
             } else if what.contains("dash") {
                 self = .wrap(.dashes)
+            } else if what.contains("bold") {
+                self = .wrap(.bold)
+            } else if what.contains("italic") {
+                self = .wrap(.italic)
             } else {
                 return nil
             }
@@ -423,6 +427,13 @@ public struct RevisionText: Equatable {
             }
             return words
         }
+    }
+
+    /// Put a punctuation mark in at `gap` — what saying its name over a gap does, asked for from
+    /// the editor's hold menu instead. Returns the id of the word the mark went on.
+    @discardableResult
+    public mutating func insertMark(_ mark: String, at gap: Int) -> UUID {
+        punctuate(at: gap, with: mark)
     }
 
     /// Put `mark` in at `gap`: on the end of the word before it — taking the place of the mark
@@ -460,11 +471,11 @@ public struct RevisionText: Equatable {
     }
 
     /// Wrap the words in `range`. Quotes go round everything, the closing punctuation included.
-    /// Parentheses and brackets close before it ("(a cat),"), unless the words are a sentence of
-    /// their own. Dashes are words of their own, set off by spaces; a comma, semicolon or colon
-    /// that closed the words is the dash's job now, and there's no dash at the start of a sentence
-    /// or after its end.
-    private mutating func wrap(_ range: ClosedRange<Int>, in wrapper: SpokenCommand.Wrapper) {
+    /// Parentheses, brackets and Markdown's bold and italic close before it ("(a cat),",
+    /// "**a cat**,"), unless the words are a sentence of their own. Dashes are words of their own,
+    /// set off by spaces; a comma, semicolon or colon that closed the words is the dash's job now,
+    /// and there's no dash at the start of a sentence or after its end.
+    public mutating func wrap(_ range: ClosedRange<Int>, in wrapper: SpokenCommand.Wrapper) {
         guard tokens.indices.contains(range.lowerBound), tokens.indices.contains(range.upperBound) else { return }
         let first = range.lowerBound
         let last = range.upperBound
@@ -474,10 +485,15 @@ public struct RevisionText: Equatable {
             let double = wrapper == .quotes
             tokens[first].word = (double ? "“" : "‘") + tokens[first].word
             tokens[last].word += double ? "”" : "’"
-        case .parentheses, .brackets:
-            let parens = wrapper == .parentheses
-            tokens[first].word = (parens ? "(" : "[") + tokens[first].word
-            let close = parens ? ")" : "]"
+        case .parentheses, .brackets, .bold, .italic:
+            let (open, close): (String, String)
+            switch wrapper {
+            case .parentheses: (open, close) = ("(", ")")
+            case .brackets:    (open, close) = ("[", "]")
+            case .bold:        (open, close) = ("**", "**")
+            default:           (open, close) = ("*", "*")
+            }
+            tokens[first].word = open + tokens[first].word
             var word = tokens[last].word
             if !(opensSentence && Self.endsSentence(word)), let mark = Self.closingPunctuation(of: word),
                !word.hasSuffix("..") {
@@ -495,6 +511,91 @@ public struct RevisionText: Equatable {
             if closes { tokens.insert(Token(word: "—"), at: last + 1) }
             if !opensSentence { tokens.insert(Token(word: "—"), at: first) }
         }
+    }
+
+    // MARK: Stitching
+
+    /// **Stitch** the words in `range` back into one run: the marks between them taken out and the
+    /// capitals lowered — what a transcriber's stop-start sentences need ("I went. To the store."
+    /// becomes "I went to the store."). Two things are kept, because they belong to what's around
+    /// the words rather than to the words themselves: a capital that opens a sentence, and the mark
+    /// that closes the last word. An apostrophe or hyphen inside a word is part of it ("don't",
+    /// "well-known"), as is a point or comma inside a number ("3.5"), and "I" and an acronym keep
+    /// their capitals. A word that was nothing but marks (a dash) goes. Line breaks stay.
+    ///
+    /// Returns the ids of the words left, in order — empty when there were none.
+    @discardableResult
+    public mutating func stitch(_ range: ClosedRange<Int>) -> [UUID] {
+        guard tokens.indices.contains(range.lowerBound), tokens.indices.contains(range.upperBound) else {
+            return []
+        }
+        let opens = startsSentence(at: range.lowerBound)
+        let lastWord = range.reversed().first { !tokens[$0].isPlaceholder }
+        var isFirst = true
+        var emptied: [Int] = []
+        for index in range where !tokens[index].isPlaceholder {
+            let original = tokens[index].word
+            var word = Self.unpunctuated(original)
+            guard !word.isEmpty else {
+                emptied.append(index)
+                continue
+            }
+            word = isFirst && opens ? Self.capitalized(Self.lowered(word)) : Self.lowered(word)
+            isFirst = false
+            if index == lastWord { word += Self.closingMark(of: original) }
+            tokens[index].word = word
+        }
+        // Taken out the way `delete` takes words out: a line break that followed one stays.
+        for index in emptied.reversed() {
+            if index > 0, tokens[index].lineBreaks > tokens[index - 1].lineBreaks {
+                tokens[index - 1].trailing = tokens[index].trailing
+            }
+            tokens.remove(at: index)
+        }
+        let upper = range.upperBound - emptied.count
+        guard range.lowerBound <= upper else { return [] }
+        return tokens[range.lowerBound...upper].filter { !$0.isPlaceholder }.map(\.id)
+    }
+
+    /// The marks `stitch` takes out of a word: sentence punctuation, quotes, brackets and dashes.
+    /// Anything else (%, $, &, /) is part of what the word says.
+    private static let stitchedMarks = Set(".,;:!?…\"“”‘’'()[]{}—–-")
+
+    /// `word` with its marks taken out, keeping an apostrophe or hyphen between two letters and a
+    /// point, comma or colon between two digits.
+    static func unpunctuated(_ word: String) -> String {
+        let characters = Array(word)
+        var kept = ""
+        for (index, character) in characters.enumerated() {
+            guard stitchedMarks.contains(character) else {
+                kept.append(character)
+                continue
+            }
+            guard index > 0, index < characters.count - 1 else { continue }
+            let before = characters[index - 1]
+            let after = characters[index + 1]
+            if "'’-".contains(character), before.isLetter, after.isLetter {
+                kept.append(character)
+            } else if ".,:".contains(character), before.isNumber, after.isNumber {
+                kept.append(character)
+            }
+        }
+        return kept
+    }
+
+    /// The mark that ends `word`, looking past a closing quote or bracket — or nothing.
+    static func closingMark(of word: String) -> String {
+        let stripped = word.trimmingCharacters(in: CharacterSet(charactersIn: "\"'”’)]"))
+        guard let last = stripped.last, ".,;:!?…".contains(last) else { return "" }
+        return String(last)
+    }
+
+    /// A word in lower case all through — except "I" and its contractions, and an acronym.
+    static func lowered(_ word: String) -> String {
+        let letters = word.filter(\.isLetter)
+        if letters == "I" || word.hasPrefix("I'") || word.hasPrefix("I’") { return word }
+        if letters.count > 1, letters.allSatisfy(\.isUppercase) { return word }
+        return word.lowercased()
     }
 
     /// Whether a word ends a sentence in a way that makes the next one start with a capital: a
