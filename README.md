@@ -193,20 +193,21 @@ the rest of the app depends on.
     place.
   - **Hold** anywhere else in the text and speak: let go, and it goes in at the gap you held, shown
     by an ember caret while you talk.
-  - **Slide up** out of either hold and a narrow menu opens **to the left of your thumb** (to its
-    right, near the left edge), with **Record** — the recording the hold started — level with your
-    finger. Keep the finger down and slide up or down it; the option you're beside is filled in, and
-    its name floats **above your thumb**, where the counter was, so the thumb never hides what
-    you're about to choose. Above Record are marks to put in — **period**, **comma**, **question
-    mark**, **exclamation point**, nearest first — which go where the recording's words would have:
-    on the end of the selection (taking the place of its mark) or at the gap you held. Below Record,
-    when there's a selection, are things to do to it: **parentheses**, **quotes**, **bold** and
-    **italic** (Markdown's `**` and `*`, closing before a trailing comma), and at the bottom
-    **Stitch**, which takes every mark and capital out of the selection — "I went. To the store."
-    becomes "I went to the store." — keeping a capital that opens a sentence, the mark that closes
-    the last word, "I", acronyms, and the apostrophes, hyphens and decimal points inside words. Let
-    go on anything but Record and the recording is dropped; let go on Record (or never slide up)
-    and it stands, as before.
+  - **Slide up or down** out of either hold and a menu opens **above the press** (below it, near
+    the top of the screen) and **stays put**. It's three rows: things to do to the selection, when
+    there is one — **parentheses**, **quotes**, **bold**, **italic** (Markdown's `**` and `*`,
+    closing before a trailing comma) and **Clean** (✨); marks to put in — **period**, **comma**,
+    **question mark**, **exclamation point**; and along the bottom **Record**, the recording the
+    hold started, with its counter running. The menu opens on Record, and from there your finger,
+    still down, moves the choice over it one for one — up a row, across a button — without having
+    to cover it. The chosen button is filled in and its name sits over the menu; while anything
+    but Record is chosen, the counter is **struck through**, since letting go there drops the
+    recording. Marks go where the recording's words would have: on the end of the selection
+    (taking the place of its mark) or at the gap you held. **Clean** takes every mark and capital
+    out of the selection — "I went. To the store." becomes "I went to the store." — keeping a
+    capital that opens a sentence, the mark that closes the last word, "I", acronyms, and the
+    apostrophes, hyphens and decimal points inside words. Let go on Record (or without moving) and
+    the recording stands, as before.
   - **Say a punctuation mark** — "comma", "period" (or "full stop"), "question mark",
     "exclamation point", "semicolon", "colon", "dash", "ellipsis" — and, if that's all you said,
     the **mark** goes in rather than the word: held in a gap, on the end of the word before it;

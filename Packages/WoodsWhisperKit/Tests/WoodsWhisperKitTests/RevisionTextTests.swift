@@ -277,29 +277,29 @@ final class RevisionTextTests: XCTestCase {
         XCTAssertEqual(sentence.revisedText, "One. *Two three.*")
     }
 
-    func testStitchingTakesOutMarksAndCapitals() {
+    func testCleaningTakesOutMarksAndCapitals() {
         var revision = RevisionText("I went. To the store. And bought milk.")
         let ids = revision.tokens.map(\.id)
-        let left = revision.stitch(0...7)
+        let left = revision.clean(0...7)
         XCTAssertEqual(revision.revisedText, "I went to the store and bought milk.")
         XCTAssertEqual(left, ids)
     }
 
-    func testStitchingMidSentenceLowersTheFirstWord() {
+    func testCleaningMidSentenceLowersTheFirstWord() {
         var revision = RevisionText("We left. Early, “Before dawn.” Then rain.")
-        revision.stitch(1...4)
+        revision.clean(1...4)
         XCTAssertEqual(revision.revisedText, "We left early before dawn. Then rain.")
     }
 
-    func testStitchingKeepsWhatsInsideWords() {
+    func testCleaningKeepsWhatsInsideWords() {
         var revision = RevisionText("Don't. Well-known, NASA said 3.5% Then.")
-        revision.stitch(0...5)
+        revision.clean(0...5)
         XCTAssertEqual(revision.revisedText, "Don't well-known NASA said 3.5% then.")
     }
 
-    func testStitchingDropsAWordThatWasOnlyMarks() {
+    func testCleaningDropsAWordThatWasOnlyMarks() {
         var revision = RevisionText("A cat — a dog")
-        let left = revision.stitch(1...3)
+        let left = revision.clean(1...3)
         XCTAssertEqual(revision.revisedText, "A cat a dog")
         XCTAssertEqual(left.count, 2)
     }

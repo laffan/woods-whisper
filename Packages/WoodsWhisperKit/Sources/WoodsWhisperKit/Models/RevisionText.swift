@@ -513,9 +513,9 @@ public struct RevisionText: Equatable {
         }
     }
 
-    // MARK: Stitching
+    // MARK: Cleaning
 
-    /// **Stitch** the words in `range` back into one run: the marks between them taken out and the
+    /// **Clean** the words in `range` back into one run: the marks between them taken out and the
     /// capitals lowered — what a transcriber's stop-start sentences need ("I went. To the store."
     /// becomes "I went to the store."). Two things are kept, because they belong to what's around
     /// the words rather than to the words themselves: a capital that opens a sentence, and the mark
@@ -525,7 +525,7 @@ public struct RevisionText: Equatable {
     ///
     /// Returns the ids of the words left, in order — empty when there were none.
     @discardableResult
-    public mutating func stitch(_ range: ClosedRange<Int>) -> [UUID] {
+    public mutating func clean(_ range: ClosedRange<Int>) -> [UUID] {
         guard tokens.indices.contains(range.lowerBound), tokens.indices.contains(range.upperBound) else {
             return []
         }
@@ -557,9 +557,9 @@ public struct RevisionText: Equatable {
         return tokens[range.lowerBound...upper].filter { !$0.isPlaceholder }.map(\.id)
     }
 
-    /// The marks `stitch` takes out of a word: sentence punctuation, quotes, brackets and dashes.
+    /// The marks `clean` takes out of a word: sentence punctuation, quotes, brackets and dashes.
     /// Anything else (%, $, &, /) is part of what the word says.
-    private static let stitchedMarks = Set(".,;:!?…\"“”‘’'()[]{}—–-")
+    private static let cleanedMarks = Set(".,;:!?…\"“”‘’'()[]{}—–-")
 
     /// `word` with its marks taken out, keeping an apostrophe or hyphen between two letters and a
     /// point, comma or colon between two digits.
@@ -567,7 +567,7 @@ public struct RevisionText: Equatable {
         let characters = Array(word)
         var kept = ""
         for (index, character) in characters.enumerated() {
-            guard stitchedMarks.contains(character) else {
+            guard cleanedMarks.contains(character) else {
                 kept.append(character)
                 continue
             }

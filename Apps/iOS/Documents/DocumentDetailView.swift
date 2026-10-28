@@ -4217,10 +4217,11 @@ struct RevisionSubject: Identifiable {
 /// • **Hold** the selection, or a struck run, and speak: let go, and what you said takes its place.
 /// • **Hold** anywhere else in the text and speak: let go, and it goes in at the gap you held —
 ///   the graph canvas's hold, in a line of text.
-/// • **Slide up** out of a hold and a menu opens beside the thumb, recording in the middle of it:
-///   marks to put in above (. , ? !), and — when there's a selection — things to do to it below
-///   (parentheses, quotes, bold, italic, and **Stitch**, which takes its marks and capitals out).
-///   Slide to one and let go; let go on Record and the recording stands.
+/// • **Slide** up or down out of a hold and a menu opens above the press and stays put: a row of
+///   things to do to the selection (parentheses, quotes, bold, italic, and **Clean**, which takes
+///   its marks and capitals out) when there is one, a row of marks to put in (. , ? !), and
+///   Record — the hold's own recording, its counter running — along the bottom. The finger,
+///   moving on, moves the choice over it; let go on Record and the recording stands.
 /// • Say only a punctuation mark ("comma") and the mark goes in, not the word; say "wrap in
 ///   quotes" (or parentheses, brackets, dashes, bold, italics) over a selection and it's wrapped.
 ///   See `RevisionText.SpokenCommand`.
@@ -4269,6 +4270,7 @@ struct RevisionEditor: View {
     @State private var scrollOffset: CGFloat = 0
     @State private var contentHeight: CGFloat = 0
     @State private var viewportHeight: CGFloat = 0
+    @State private var viewportWidth: CGFloat = 0
     @State private var glideTask: Task<Void, Never>?
 
     // The finger: where it went down, what it's turned out to be, and the timer that makes a
@@ -4329,14 +4331,13 @@ struct RevisionEditor: View {
     private static let space = "revisionText"
     /// How far a finger moves before it's a swipe rather than a tap or a hold.
     private static let slop: CGFloat = 10
-    /// How far a held finger slides up before the hold's menu opens — more than a tap's slop, so a
-    /// finger that drifts a little while talking still just records.
+    /// How far a held finger slides, up or down, before the hold's menu opens — more than a tap's
+    /// slop, so a finger that drifts a little while talking still just records.
     private static let menuReveal: CGFloat = 28
-    /// The height of a row of the hold's menu: how far the finger slides from one option to the next.
-    private static let menuRow: CGFloat = 44
-    private static let menuWidth: CGFloat = 56
-    /// How far the menu stands off from the middle of the thumb, so the thumb doesn't cover it.
-    private static let menuGap: CGFloat = 44
+    /// One button of the hold's menu — and how far the finger moves from one to the next.
+    private static let menuCell = CGSize(width: 54, height: 48)
+    /// How far above the press the menu's bottom edge sits, clear of the thumb.
+    private static let menuLift: CGFloat = 64
     private static let holdDelay: UInt64 = 450_000_000
     /// How close together two taps have to come to count as a double tap.
     private static let doubleTapInterval: TimeInterval = 0.32
@@ -4356,7 +4357,7 @@ struct RevisionEditor: View {
     /// with the menu not open — keep the recording.
     private var heldOption: HoldOption {
         guard let hold, let menu = hold.menu else { return .record }
-        return menu[hold.highlighted]
+        return menu[hold.highlighted.row][hold.highlighted.column]
     }
 
     // MARK: Body
@@ -4380,8 +4381,9 @@ struct RevisionEditor: View {
                     .overlay { movingWords(in: geo.size) }
                     .overlay(alignment: .topTrailing) { scrollIndicator(in: geo.size) }
                     .overlay(alignment: .top) { originalBadge }
-                    .onChange(of: geo.size.height, initial: true) { _, height in
-                        viewportHeight = height
+                    .onChange(of: geo.size, initial: true) { _, size in
+                        viewportHeight = size.height
+                        viewportWidth = size.width
                         clampScroll()
                     }
             }
@@ -4556,25 +4558,18 @@ struct RevisionEditor: View {
             .allowsHitTesting(false)
     }
 
-    /// Above the thumb while it holds: the elapsed counter while it's recording — as on the graph
-    /// canvas — or, with the menu open, the option it's beside, since the menu itself is only marks.
+    /// The elapsed counter, floating above the finger while a hold records — as on the graph
+    /// canvas — until the menu opens, which carries the counter in its bottom row.
     @ViewBuilder
     private func holdReadout(in size: CGSize) -> some View {
-        if let hold, isRecording || hold.menu != nil {
-            let option = heldOption
+        if let hold, hold.menu == nil, isRecording {
             HStack(spacing: 9) {
-                if option == .record {
-                    Circle()
-                        .fill(isRecording ? WW.ember : WW.inkTertiary)
-                        .frame(width: 10, height: 10)
-                    Text(isRecording ? Recording.durationLabel(recorder.elapsed) : "No recording")
-                        .font(.system(size: 17, weight: .medium, design: .rounded).monospacedDigit())
-                        .foregroundStyle(WW.ink)
-                } else {
-                    Text(option.title)
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(WW.dropBlue)
-                }
+                Circle()
+                    .fill(WW.ember)
+                    .frame(width: 10, height: 10)
+                Text(Recording.durationLabel(recorder.elapsed))
+                    .font(.system(size: 17, weight: .medium, design: .rounded).monospacedDigit())
+                    .foregroundStyle(WW.ink)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 9)
@@ -4582,57 +4577,80 @@ struct RevisionEditor: View {
             .overlay(Capsule().stroke(WW.hairline, lineWidth: 1))
             .shadow(color: .black.opacity(0.16), radius: 14, y: 4)
             .fixedSize()
-            // A little to the thumb's right, away from the menu at its left.
-            .position(x: min(max(90, hold.location.x + (hold.menu == nil ? 0 : 30)), max(90, size.width - 90)),
+            .position(x: min(max(80, hold.location.x), max(80, size.width - 80)),
                       y: max(30, hold.location.y - fontSize - 44))
             .allowsHitTesting(false)
             .transition(.opacity)
         }
     }
 
-    /// The hold's menu, once the finger has slid up: a column of marks beside the thumb — to its
-    /// left, or its right when there's no room — with Record in the middle, marks to put in above,
-    /// and what can be done to the selection below. The option beside the finger is filled in.
+    /// The hold's menu, once the finger has moved far enough: fixed above the press (below it when
+    /// there's no room), rows of buttons over a Record row that carries the counter. The button the
+    /// finger is pointing at is filled in, and its name sits over the menu.
     @ViewBuilder
     private func holdMenu(in size: CGSize) -> some View {
-        if let hold, let options = hold.menu {
-            let width = Self.menuWidth
-            let leftEdge = hold.location.x - Self.menuGap - width
-            let x = leftEdge >= 8
-                ? leftEdge + width / 2
-                : min(hold.location.x + Self.menuGap + width / 2, size.width - width / 2 - 4)
+        if let hold, let rows = hold.menu {
+            let frame = hold.menuFrame
             VStack(spacing: 0) {
-                ForEach(Array(options.enumerated()), id: \.offset) { index, option in
-                    let lit = index == hold.highlighted
-                    holdGlyph(option, lit: lit)
-                        .frame(width: width - 8, height: Self.menuRow - 4)
-                        .background {
-                            if lit {
-                                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    .fill(option == .record ? WW.ember : WW.dropBlue)
-                            }
+                ForEach(Array(rows.enumerated()), id: \.offset) { rowIndex, row in
+                    HStack(spacing: 0) {
+                        ForEach(Array(row.enumerated()), id: \.offset) { columnIndex, option in
+                            let lit = hold.highlighted == HoldCell(row: rowIndex, column: columnIndex)
+                            holdButton(option, lit: lit)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .background {
+                                    if lit {
+                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                            .fill(option == .record ? WW.ember : WW.dropBlue)
+                                    }
+                                }
+                                .padding(2)
                         }
-                        .frame(height: Self.menuRow)
+                    }
+                    .frame(height: Self.menuCell.height)
                 }
             }
-            .frame(width: width)
-            .background(WW.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(WW.hairline, lineWidth: 1))
+            .padding(4)
+            .frame(width: frame.width, height: frame.height)
+            .background(WW.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(WW.hairline, lineWidth: 1))
             .shadow(color: .black.opacity(0.18), radius: 14, y: 4)
-            .position(x: x, y: hold.menuTop + CGFloat(options.count) * Self.menuRow / 2)
+            .overlay(alignment: .top) {
+                let option = heldOption
+                if option != .record {
+                    Text(option.title)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(WW.dropBlue)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(WW.surface, in: Capsule())
+                        .overlay(Capsule().stroke(WW.hairline, lineWidth: 1))
+                        .fixedSize()
+                        .offset(y: -28)
+                }
+            }
+            .position(x: frame.midX, y: frame.midY)
             .allowsHitTesting(false)
             .transition(.opacity)
         }
     }
 
+    /// What a button of the hold's menu shows. Record shows the counter — struck through while
+    /// another button is chosen, since letting go there drops the recording.
     @ViewBuilder
-    private func holdGlyph(_ option: HoldOption, lit: Bool) -> some View {
+    private func holdButton(_ option: HoldOption, lit: Bool) -> some View {
         let ink = lit ? Color.white : WW.ink
         switch option {
         case .record:
-            Circle()
-                .fill(lit ? Color.white : WW.ember)
-                .frame(width: 12, height: 12)
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(lit ? Color.white : (isRecording ? WW.ember : WW.inkTertiary))
+                    .frame(width: 10, height: 10)
+                Text(isRecording ? Recording.durationLabel(recorder.elapsed) : "No recording")
+                    .font(.system(size: 17, weight: .medium, design: .rounded).monospacedDigit())
+                    .strikethrough(!lit, color: WW.inkSecondary)
+                    .foregroundStyle(lit ? Color.white : WW.inkSecondary)
+            }
         case .mark(let mark):
             Text(mark)
                 .font(.system(size: 26, weight: .bold, design: .rounded))
@@ -4648,9 +4666,9 @@ struct RevisionEditor: View {
             default:
                 Text("( )").font(.system(size: 18, weight: .semibold)).foregroundStyle(ink)
             }
-        case .stitch:
-            Image(systemName: "link")
-                .font(.system(size: 17, weight: .semibold))
+        case .clean:
+            Image(systemName: "sparkles")
+                .font(.system(size: 18, weight: .semibold))
                 .foregroundStyle(ink)
         }
     }
@@ -4796,7 +4814,7 @@ struct RevisionEditor: View {
                 if option != .record { return "Let go to \(option.verb)." }
                 return isRecording ? "Let go to keep the recording." : "Let go to leave it as it was."
             }
-            let more = canActOnSelection ? "slide up for marks and more" : "slide up for marks"
+            let more = canActOnSelection ? "slide for marks and more" : "slide for marks"
             guard isRecording else { return "No recording · \(more)" }
             if case .insert = recordTarget { return "Speak — let go to put it in here · \(more)" }
             return "Speak — let go and it takes their place · \(more)"
@@ -4804,7 +4822,7 @@ struct RevisionEditor: View {
         if revision.hasPendingEdit { return "Transcribing…" }
         if showsReset { return "Hold to try again · Reset puts back what was there" }
         if selection != nil {
-            return "Double-tap to strike through · drag to move · hold to speak over, slide up for more"
+            return "Double-tap to strike through · drag to move · hold to speak over, slide for more"
         }
         if revision.tokens.contains(where: \.isStruck) {
             return "Hold struck words to speak over them · struck words go on Done"
@@ -5095,50 +5113,65 @@ struct RevisionEditor: View {
         WWHaptics.recordingStarted()
     }
 
-    /// The held finger has moved. Slid far enough up, the menu opens beside it; once it's open,
-    /// the option beside the finger is the one letting go will choose.
+    /// The held finger has moved. Slid far enough up or down, the menu opens above the press and
+    /// stays there; from then on the finger moves a pointer over it, one for one, starting on
+    /// Record — so the finger never has to cover the menu to choose from it.
     private func updateHold(to point: CGPoint) {
         guard var current = hold else { return }
         current.location = point
         if current.menu == nil {
-            guard current.start.y - point.y > Self.menuReveal else {
+            guard abs(point.y - current.start.y) > Self.menuReveal else {
                 hold = current
                 return
             }
-            let options = holdOptions()
-            let record = CGFloat(options.firstIndex(of: .record) ?? 0)
-            let height = CGFloat(options.count) * Self.menuRow
-            // Record level with the finger, as near as the screen allows.
-            let top = point.y - (record + 0.5) * Self.menuRow
-            current.menuTop = min(max(8, top), max(8, viewportHeight - height - 8))
-            current.menu = options
-            current.highlighted = menuIndex(at: point.y, in: current)
+            let rows = holdOptions()
+            let width = CGFloat(rows.map(\.count).max() ?? 1) * Self.menuCell.width + 8
+            let height = CGFloat(rows.count) * Self.menuCell.height + 8
+            var top = current.start.y - Self.menuLift - height
+            if top < 8 { top = current.start.y + Self.menuLift }
+            top = min(top, max(8, viewportHeight - height - 8))
+            let left = min(max(8, current.start.x - width / 2), max(8, viewportWidth - width - 8))
+            let frame = CGRect(x: left, y: top, width: width, height: height)
+            current.menu = rows
+            current.menuFrame = frame
+            let record = CGPoint(x: frame.midX, y: frame.maxY - 4 - Self.menuCell.height / 2)
+            current.pointerOffset = CGSize(width: record.x - point.x, height: record.y - point.y)
+            current.highlighted = HoldCell(row: rows.count - 1, column: 0)
             WWHaptics.medium()
         } else {
-            let index = menuIndex(at: point.y, in: current)
-            if index != current.highlighted {
-                current.highlighted = index
+            let cell = menuCell(pointedAtBy: point, in: current)
+            if cell != current.highlighted {
+                current.highlighted = cell
                 WWHaptics.light()
             }
         }
         hold = current
     }
 
-    /// The row of the menu level with `y`, kept to the rows there are.
-    private func menuIndex(at y: CGFloat, in hold: Hold) -> Int {
-        guard let count = hold.menu?.count, count > 0 else { return 0 }
-        let row = Int(((y - hold.menuTop) / Self.menuRow).rounded(.down))
-        return min(max(row, 0), count - 1)
+    /// The button the finger points at: the one under its pointer, or the nearest one when the
+    /// pointer has gone past the menu's edge.
+    private func menuCell(pointedAtBy point: CGPoint, in hold: Hold) -> HoldCell {
+        guard let rows = hold.menu, !rows.isEmpty else { return HoldCell(row: 0, column: 0) }
+        let pointer = CGPoint(x: point.x + hold.pointerOffset.width, y: point.y + hold.pointerOffset.height)
+        let inner = hold.menuFrame.insetBy(dx: 4, dy: 4)
+        let row = min(max(Int(((pointer.y - inner.minY) / Self.menuCell.height).rounded(.down)), 0),
+                      rows.count - 1)
+        let count = rows[row].count
+        let column = min(max(Int(((pointer.x - inner.minX) / (inner.width / CGFloat(count))).rounded(.down)), 0),
+                         count - 1)
+        return HoldCell(row: row, column: column)
     }
 
-    /// The menu, top to bottom: marks above Record — the commonest nearest it — and, while there's
-    /// a selection to work on, what can be done to it below, with Stitch at the bottom.
-    private func holdOptions() -> [HoldOption] {
-        var options: [HoldOption] = [.mark("!"), .mark("?"), .mark(","), .mark("."), .record]
+    /// The menu, top to bottom: what can be done to the selection (while there is one), marks to
+    /// put in, and Record on a row of its own.
+    private func holdOptions() -> [[HoldOption]] {
+        var rows: [[HoldOption]] = []
         if canActOnSelection {
-            options += [.wrap(.parentheses), .wrap(.quotes), .wrap(.bold), .wrap(.italic), .stitch]
+            rows.append([.wrap(.parentheses), .wrap(.quotes), .wrap(.bold), .wrap(.italic), .clean])
         }
-        return options
+        rows.append([.mark("."), .mark(","), .mark("?"), .mark("!")])
+        rows.append([.record])
+        return rows
     }
 
     /// Whether there's a selection the menu's actions can work on: one with no placeholder in it.
@@ -5174,10 +5207,10 @@ struct RevisionEditor: View {
         case .wrap(let wrapper):
             guard canActOnSelection, let range = selectedRange else { return }
             change { $0.wrap(range, in: wrapper) }
-        case .stitch:
+        case .clean:
             guard canActOnSelection, let range = selectedRange else { return }
             var left: [UUID] = []
-            change { left = $0.stitch(range) }
+            change { left = $0.clean(range) }
             if let first = left.first, let last = left.last {
                 selection = TokenSpan(first: first, last: last)
             } else {
@@ -5504,15 +5537,23 @@ struct RevisionEditor: View {
     }
 
     /// A finger held down: where it went down and where it is now (viewport points), the gap a
-    /// mark from the menu goes into, and — once it has slid up — the menu: its options top to
-    /// bottom, where its top is, and which one the finger is beside.
+    /// mark from the menu goes into, and — once it has moved far enough — the menu: its rows top to
+    /// bottom, where it's drawn, how far the finger's position is shifted to point into it, and
+    /// which button it points at.
     private struct Hold {
         let start: CGPoint
         var location: CGPoint
         let markGap: Int
-        var menu: [HoldOption]?
-        var menuTop: CGFloat = 0
-        var highlighted = 0
+        var menu: [[HoldOption]]?
+        var menuFrame: CGRect = .zero
+        var pointerOffset: CGSize = .zero
+        var highlighted = HoldCell(row: 0, column: 0)
+    }
+
+    /// A button of the hold's menu, by row and place in the row.
+    private struct HoldCell: Equatable {
+        var row: Int
+        var column: Int
     }
 
     /// What a hold's menu offers.
@@ -5523,12 +5564,12 @@ struct RevisionEditor: View {
         case mark(String)
         /// Wrap the selection.
         case wrap(RevisionText.SpokenCommand.Wrapper)
-        /// Take the selection's marks and capitals out (`RevisionText.stitch`).
-        case stitch
+        /// Take the selection's marks and capitals out (`RevisionText.clean`).
+        case clean
 
         var actsOnSelection: Bool {
             switch self {
-            case .wrap, .stitch: return true
+            case .wrap, .clean: return true
             case .record, .mark: return false
             }
         }
@@ -5542,7 +5583,7 @@ struct RevisionEditor: View {
             case .wrap(.italic): return "Italic"
             case .wrap(.quotes): return "Quotes"
             case .wrap: return "Parentheses"
-            case .stitch: return "Stitch"
+            case .clean: return "Clean"
             }
         }
 
@@ -5556,7 +5597,7 @@ struct RevisionEditor: View {
             case .wrap(.italic): return "make it italic"
             case .wrap(.quotes): return "wrap it in quotes"
             case .wrap: return "wrap it in parentheses"
-            case .stitch: return "take out its marks and capitals"
+            case .clean: return "clean it of marks and capitals"
             }
         }
 

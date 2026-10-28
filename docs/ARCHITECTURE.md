@@ -119,7 +119,7 @@ storage, and connectivity code without the model dependencies.
   words to another gap, ids and all. The hold menu's actions are the same operations a spoken
   command reaches, made public for it: `insertMark(_:at:)` (what saying "comma" into a gap does),
   `wrap(_:in:)` (now with Markdown `.bold` and `.italic` beside the brackets, quotes and dashes) and
-  `stitch(_:)`, which strips marks and capitals from a run while keeping what belongs to its
+  `clean(_:)`, which strips marks and capitals from a run while keeping what belongs to its
   surroundings — an opening capital, the closing mark. `revisedText` — what's saved — leaves the struck words out. Never persisted: it lives
   only while the editor is open (`RevisionEditor` in the app), and the clips behind it are let go
   once transcribed (`AppModel.transcribeRevisionClip`), kept only when they couldn't be.
@@ -235,9 +235,12 @@ finger that lands **on the selection** and travels past the slop is a move (`tou
 whichever way it sets off; a still finger past `holdDelay` is a hold (`TouchMode.holding`), which
 starts recording at once and records a `Hold` — where it went down, the gap a mark would go into
 (`markGap`, worked out from the same target the recording has), and the menu once it's open.
-Sliding up past `menuReveal` opens the menu: its rows are laid out with Record level with the
-finger, clamped to the screen, and from then on the highlighted row is simply the one level with
-the finger (`menuIndex`). On release, `endHold` keeps the recording when the finger is on Record —
+Moving up or down past `menuReveal` opens the menu, laid out once above the press (`menuFrame`)
+and fixed there: rows of `HoldOption`s, Record alone on the last. The finger doesn't point at it
+directly — it would cover what it's choosing — but through `pointerOffset`, set so that where the
+finger is when the menu opens points at Record; from then on the finger's movement moves that
+pointer one for one, and `menuCell(pointedAtBy:in:)` gives the button under it, or the nearest
+one past an edge. On release, `endHold` keeps the recording when the finger is on Record —
 or never opened the menu — and otherwise drops it (`dropRecording`) and performs the option. A hold
 cancelled by the system keeps a recording but performs nothing else, since nobody chose it.
 
