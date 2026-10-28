@@ -235,13 +235,13 @@ finger that lands **on the selection** and travels past the slop is a move (`tou
 whichever way it sets off; a still finger past `holdDelay` is a hold (`TouchMode.holding`), which
 starts recording at once and records a `Hold` — where it went down, the gap a mark would go into
 (`markGap`, worked out from the same target the recording has), and the menu once it's open.
-Moving up or down past `menuReveal` opens the menu, laid out once above the press (`menuFrame`)
-and fixed there: rows of `HoldOption`s, Record alone on the last. The finger doesn't point at it
-directly — it would cover what it's choosing — but through `pointerOffset`, set so that where the
-finger is when the menu opens points at Record; from then on the finger's movement moves that
+The hold opens its menu at once (`openMenu`), laid out above the press (`menuFrame`) and fixed
+there: rows of `HoldOption`s, the last being Record with a square Cancel beside it. The finger
+doesn't point at it directly — it would cover what it's choosing — but through `pointerOffset`,
+set so that the press itself points at Record; from then on the finger's movement moves that
 pointer one for one, and `menuCell(pointedAtBy:in:)` gives the button under it, or the nearest
-one past an edge. On release, `endHold` keeps the recording when the finger is on Record —
-or never opened the menu — and otherwise drops it (`dropRecording`) and performs the option. A hold
+one past an edge. On release, `endHold` keeps the recording when the finger is on Record,
+and otherwise drops it (`dropRecording`) and performs the option. A hold
 cancelled by the system keeps a recording but performs nothing else, since nobody chose it.
 
 **Inbox tags (iOS).** `Recording.tag` holds a tag's **name**, not a reference into the list of them

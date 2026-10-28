@@ -21,6 +21,7 @@ struct SettingsView: View {
     @State private var graphAutoTransformID: UUID? = AppSettings.shared.graphAutoTransformPresetID
     /// The tag list as it's being edited, and the field a new one is typed into.
     @State private var inboxTags: [InboxTagStyle] = AppSettings.shared.inboxTags
+    @State private var confirmingTagReset = false
     @State private var newTag = ""
     @FocusState private var deviceNameFocused: Bool
 
@@ -336,11 +337,14 @@ struct SettingsView: View {
                     .foregroundStyle(canAddTag ? WW.moss : WW.inkTertiary)
                     .disabled(!canAddTag)
             }
+            Button("Reset to Defaults") { confirmingTagReset = true }
+                .foregroundStyle(inboxTags == InboxTag.defaultStyles ? WW.inkTertiary : WW.ember)
+                .disabled(inboxTags == InboxTag.defaultStyles)
         } header: {
             WWSectionHeader("Inbox Tags")
         } footer: {
             WWFooter("Swipe an Inbox entry right and tap Tag to file it under one of these. An entry "
-                     + "whose first word *is* one of them — “Question…”, “Fixed…”, “Reminders…” — "
+                     + "whose first word *is* one of them — “Journal…”, “Quotes…”, “Stories…” — "
                      + "files itself the moment it's transcribed. Tap a colour to change it. Swipe a "
                      + "tag away and the entries filed under it keep saying so — and keep their "
                      + "filter — until they're filed somewhere else.")
@@ -349,6 +353,16 @@ struct SettingsView: View {
         // reaches the setting the rest of the app reads.
         .onChange(of: inboxTags) { _, tags in AppSettings.shared.inboxTags = tags }
         .listRowBackground(WW.surface)
+        .confirmationDialog("Reset the Inbox tags?", isPresented: $confirmingTagReset,
+                            titleVisibility: .visible) {
+            Button("Reset to \(InboxTag.defaultNames.joined(separator: ", "))", role: .destructive) {
+                inboxTags = InboxTag.defaultStyles
+                AppSettings.shared.inboxTags = inboxTags
+                wwLog("Reset the Inbox tags to the defaults", .general)
+            }
+        } message: {
+            Text("Your tags are replaced by the defaults. Entries already filed keep their tags, and their filters.")
+        }
     }
 
     private var canAddTag: Bool {

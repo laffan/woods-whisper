@@ -93,7 +93,8 @@ the rest of the app depends on.
   sections or in the Inbox, and you're told why.
 - **Tags.** An Inbox entry can be filed under a tag — **Journal**, **Quote**, **LLM**, **Story** to
   start with, each in its own colour, and the list is yours to edit in **Settings → Inbox Tags** (tap a
-  tag's swatch to change its colour; a new tag takes the first colour none of the others is wearing). Two ways in: swipe an entry right
+  tag's swatch to change its colour; a new tag takes the first colour none of the others is wearing;
+  **Reset to Defaults** puts the starting four back, after asking). Two ways in: swipe an entry right
   and tap **Tag**, or simply *say* it — an entry whose **first word is a tag** files itself the
   moment it's transcribed. It's forgiving about how you said it ("Journaling…", "Quotes…", "Stories…", "LLMs…"
   all count) and strict about where: a tag has to open the entry, not turn up in the middle of a
@@ -193,21 +194,21 @@ the rest of the app depends on.
     place.
   - **Hold** anywhere else in the text and speak: let go, and it goes in at the gap you held, shown
     by an ember caret while you talk.
-  - **Slide up or down** out of either hold and a menu opens **above the press** (below it, near
-    the top of the screen) and **stays put**. It's three rows: things to do to the selection, when
-    there is one — **parentheses**, **quotes**, **bold**, **italic** (Markdown's `**` and `*`,
-    closing before a trailing comma) and **Clean** (✨); marks to put in — **period**, **comma**,
-    **question mark**, **exclamation point**; and along the bottom **Record**, the recording the
-    hold started, with its counter running. The menu opens on Record, and from there your finger,
-    still down, moves the choice over it one for one — up a row, across a button — without having
-    to cover it. The chosen button is filled in and its name sits over the menu; while anything
-    but Record is chosen, the counter is **struck through**, since letting go there drops the
-    recording. Marks go where the recording's words would have: on the end of the selection
-    (taking the place of its mark) or at the gap you held. **Clean** takes every mark and capital
-    out of the selection — "I went. To the store." becomes "I went to the store." — keeping a
-    capital that opens a sentence, the mark that closes the last word, "I", acronyms, and the
-    apostrophes, hyphens and decimal points inside words. Let go on Record (or without moving) and
-    the recording stands, as before.
+  - Either hold also opens a menu **above the press** (below it, near the top of the screen), which
+    **stays put**. It's three rows: things to do to the selection, when there is one —
+    **parentheses**, **quotes**, **bold**, **italic** (Markdown's `**` and `*`, closing before a
+    trailing comma) and **Clean** (✨); marks to put in — **period**, **comma**, **question mark**,
+    **exclamation point**; and along the bottom **Record**, the recording the hold started, with
+    its counter running, and a square **Cancel** (✕) beside it. The menu opens on Record, and
+    your finger, still down, moves the choice over it one for one — up a row, across a button —
+    without having to cover it. The chosen button is filled in and its name sits over the menu;
+    while anything but Record is chosen, the counter is **struck through**, since letting go there
+    drops the recording. Marks go where the recording's words would have: on the end of the
+    selection (taking the place of its mark) or at the gap you held. **Clean** takes every mark
+    and capital out of the selection — "I went. To the store." becomes "I went to the store." —
+    keeping a capital that opens a sentence, the mark that closes the last word, "I", acronyms,
+    and the apostrophes, hyphens and decimal points inside words. **Cancel** drops the recording
+    and changes nothing. Let go on Record (or without moving) and the recording stands, as before.
   - **Say a punctuation mark** — "comma", "period" (or "full stop"), "question mark",
     "exclamation point", "semicolon", "colon", "dash", "ellipsis" — and, if that's all you said,
     the **mark** goes in rather than the word: held in a gap, on the end of the word before it;
