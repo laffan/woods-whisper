@@ -115,7 +115,13 @@ public final class BluetoothRecordingServer: NSObject, RecordingReceiver {
     public func start() throws {
         queue.async {
             guard self.manager == nil else { return }
-            self.manager = CBPeripheralManager(delegate: self, queue: self.queue)
+            // No system alert when Bluetooth is off (or set to refuse new connections from Control
+            // Center): this starts by itself at every launch, for a Watch that may never come, so
+            // asking each time is a nag rather than help. With Bluetooth back on it advertises as
+            // usual, and the Watch still has WiFi.
+            self.manager = CBPeripheralManager(
+                delegate: self, queue: self.queue,
+                options: [CBPeripheralManagerOptionShowPowerAlertKey: false])
         }
     }
 

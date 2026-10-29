@@ -4335,6 +4335,9 @@ struct RevisionEditor: View {
     private static let menuCell = CGSize(width: 54, height: 48)
     /// Cancel, beside Record, is a square button whatever the menu's width.
     private static var cancelWidth: CGFloat { menuCell.height }
+    /// How much further the menu's pointer moves than the finger does, so a small movement of the
+    /// thumb reaches across the menu — it's steered like a joystick, not touched.
+    private static let menuGain: CGFloat = 1.6
     /// How far above the press the menu's bottom edge sits, clear of the thumb.
     private static let menuLift: CGFloat = 64
     private static let holdDelay: UInt64 = 450_000_000
@@ -5088,8 +5091,7 @@ struct RevisionEditor: View {
 
     /// The menu, laid out once above the press (below it near the top of the screen) and fixed
     /// there. The finger doesn't point at it directly — it would cover what it's choosing — but
-    /// through an offset set so that the press itself points at Record; from then on the finger
-    /// moves that pointer one for one.
+    /// steers a pointer that starts on Record, moving `menuGain` times as far as the finger does.
     private func openMenu(_ hold: Hold) -> Hold {
         var hold = hold
         let rows = holdOptions()
@@ -5105,7 +5107,7 @@ struct RevisionEditor: View {
         let inner = frame.insetBy(dx: 4, dy: 4)
         let record = CGPoint(x: inner.minX + (inner.width - Self.cancelWidth) / 2,
                              y: inner.maxY - Self.menuCell.height / 2)
-        hold.pointerOffset = CGSize(width: record.x - hold.start.x, height: record.y - hold.start.y)
+        hold.pointerOrigin = record
         hold.highlighted = HoldCell(row: rows.count - 1, column: 0)
         return hold
     }
@@ -5126,7 +5128,8 @@ struct RevisionEditor: View {
     /// pointer has gone past the menu's edge.
     private func menuCell(pointedAtBy point: CGPoint, in hold: Hold) -> HoldCell {
         guard let rows = hold.menu, !rows.isEmpty else { return HoldCell(row: 0, column: 0) }
-        let pointer = CGPoint(x: point.x + hold.pointerOffset.width, y: point.y + hold.pointerOffset.height)
+        let pointer = CGPoint(x: hold.pointerOrigin.x + (point.x - hold.start.x) * Self.menuGain,
+                              y: hold.pointerOrigin.y + (point.y - hold.start.y) * Self.menuGain)
         let inner = hold.menuFrame.insetBy(dx: 4, dy: 4)
         let row = min(max(Int(((pointer.y - inner.minY) / Self.menuCell.height).rounded(.down)), 0),
                       rows.count - 1)
@@ -5516,16 +5519,15 @@ struct RevisionEditor: View {
     }
 
     /// A finger held down: where it went down and where it is now (viewport points), the gap a
-    /// mark from the menu goes into, and — once it has moved far enough — the menu: its rows top to
-    /// bottom, where it's drawn, how far the finger's position is shifted to point into it, and
-    /// which button it points at.
+    /// mark from the menu goes into, and the menu: its rows top to bottom, where it's drawn, where
+    /// the pointer the finger steers starts (on Record), and which button it points at.
     private struct Hold {
         let start: CGPoint
         var location: CGPoint
         let markGap: Int
         var menu: [[HoldOption]]?
         var menuFrame: CGRect = .zero
-        var pointerOffset: CGSize = .zero
+        var pointerOrigin: CGPoint = .zero
         var highlighted = HoldCell(row: 0, column: 0)
     }
 

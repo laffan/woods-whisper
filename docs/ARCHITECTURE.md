@@ -237,9 +237,8 @@ starts recording at once and records a `Hold` — where it went down, the gap a 
 (`markGap`, worked out from the same target the recording has), and the menu once it's open.
 The hold opens its menu at once (`openMenu`), laid out above the press (`menuFrame`) and fixed
 there: rows of `HoldOption`s, the last being Record with a square Cancel beside it. The finger
-doesn't point at it directly — it would cover what it's choosing — but through `pointerOffset`,
-set so that the press itself points at Record; from then on the finger's movement moves that
-pointer one for one, and `menuCell(pointedAtBy:in:)` gives the button under it, or the nearest
+doesn't point at it directly — it would cover what it's choosing — but steers a pointer that
+starts on Record (`pointerOrigin`) and moves `menuGain` (1.6) times as far as the finger does, and `menuCell(pointedAtBy:in:)` gives the button under it, or the nearest
 one past an edge. On release, `endHold` keeps the recording when the finger is on Record,
 and otherwise drops it (`dropRecording`) and performs the option. A hold
 cancelled by the system keeps a recording but performs nothing else, since nobody chose it.

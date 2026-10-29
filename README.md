@@ -52,7 +52,9 @@ the rest of the app depends on.
      type it on the Watch, and the Watch finds the iPad itself. Pairing **races WiFi and
      Bluetooth** — over WiFi when both share a network, or **Bluetooth (`CBPeripheralManager` on
      the iPad, `CBCentralManager` on the Watch) when there's no WiFi at all**, so it works
-     off-grid even with a WiFi-only iPad. See `docs/CONNECTIVITY.md`.
+     off-grid even with a WiFi-only iPad. See `docs/CONNECTIVITY.md`. With Bluetooth switched off
+     (or set to refuse new connections from Control Center) the app says nothing about it at
+     launch — the receiver simply waits until Bluetooth is back, and WiFi still works meanwhile.
 
    The iPhone/iPad advertises itself — and shows up on the Watch — under the name in
    **Settings → About → Device name**. It starts as the device's own name (clear the field to go
@@ -200,8 +202,8 @@ the rest of the app depends on.
     trailing comma) and **Clean** (✨); marks to put in — **period**, **comma**, **question mark**,
     **exclamation point**; and along the bottom **Record**, the recording the hold started, with
     its counter running, and a square **Cancel** (✕) beside it. The menu opens on Record, and
-    your finger, still down, moves the choice over it one for one — up a row, across a button —
-    without having to cover it. The chosen button is filled in and its name sits over the menu;
+    your finger, still down, steers the choice over it like a joystick — its movement amplified a
+    little (1.6×), so a short slide reaches across the menu — without having to cover it. The chosen button is filled in and its name sits over the menu;
     while anything but Record is chosen, the counter is **struck through**, since letting go there
     drops the recording. Marks go where the recording's words would have: on the end of the
     selection (taking the place of its mark) or at the gap you held. **Clean** takes every mark
