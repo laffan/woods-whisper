@@ -197,9 +197,9 @@ the rest of the app depends on.
   - **Hold** anywhere else in the text and speak: let go, and it goes in at the gap you held, shown
     by an ember caret while you talk.
   - Either hold also opens a menu **above the press**, which **stays put**. It never sits below the
-    words the hold is for: it clears the top of the selection (or the gap's caret). A band over the
-    text is kept clear for it from the moment the editor opens, so a hold on the top line has room
-    for the menu without the text moving. It's three rows: things to do to the selection, when there is one —
+    words the hold is for: it clears the top of the selection (or the gap's caret). The text opens with a
+    top margin deep enough for the menu over its first line (the menu may rise over the navigation
+    bar), so nothing moves to make room. It's three rows: things to do to the selection, when there is one —
     **parentheses**, **quotes**, **bold**, **italic** (Markdown's `**` and `*`, closing before a
     trailing comma) and **Clean** (✨); marks to put in — **period**, **comma**, **question mark**,
     **exclamation point**, **colon**, **semicolon**; and along the bottom **Record**, the recording the hold started, with
