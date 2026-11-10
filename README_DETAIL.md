@@ -196,11 +196,13 @@ the rest of the app depends on.
     place.
   - **Hold** anywhere else in the text and speak: let go, and it goes in at the gap you held, shown
     by an ember caret while you talk.
-  - Either hold also opens a menu **above the press** (below it, near the top of the screen), which
-    **stays put**. It's three rows: things to do to the selection, when there is one —
+  - Either hold also opens a menu **above the press**, which **stays put**. It never sits below the
+    words the hold is for: it clears the top of the selection (or the gap's caret), and near the top
+    of the screen, where there's no room for it, the text moves down to make room, then moves back
+    when you let go. It's three rows: things to do to the selection, when there is one —
     **parentheses**, **quotes**, **bold**, **italic** (Markdown's `**` and `*`, closing before a
     trailing comma) and **Clean** (✨); marks to put in — **period**, **comma**, **question mark**,
-    **exclamation point**; and along the bottom **Record**, the recording the hold started, with
+    **exclamation point**, **colon**, **semicolon**; and along the bottom **Record**, the recording the hold started, with
     its counter running, and a square **Cancel** (✕) beside it. The menu opens on Record, and
     your finger, still down, steers the choice over it like a joystick — its movement amplified a
     little (1.6×), so a short slide reaches across the menu — without having to cover it. The chosen button is filled in and its name sits over the menu;
