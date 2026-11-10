@@ -4218,9 +4218,9 @@ struct RevisionSubject: Identifiable {
 /// • **Hold** anywhere else in the text and speak: let go, and it goes in at the gap you held —
 ///   the graph canvas's hold, in a line of text.
 /// • A hold also opens a menu above the press, which stays put — never below the words it's for:
-///   near the top of the screen the text moves down to make room for it. It has a row of things
-///   to do to the selection (parentheses, quotes, bold, italic, and **Clean**, which takes its
-///   marks and capitals out) when there is one, a row of marks to put in (. , ? ! : ;), and along
+///   a band over the text is kept clear for it, so it fits above the top line without the text
+///   moving. It has a row of things to do to the selection (parentheses, quotes, bold, italic,
+///   and **Clean**, which takes its marks and capitals out) when there is one, a row of marks to put in (. , ? ! : ;), and along
 ///   the bottom Record — the hold's own recording, its counter running — with a square Cancel
 ///   beside it. The finger, moving on, moves the choice over it; let go on Record and the
 ///   recording stands.
@@ -4347,6 +4347,12 @@ struct RevisionEditor: View {
     private static let menuClearance: CGFloat = 10
     /// Room kept over the menu for the name of the chosen button, which sits above it.
     private static let menuHeadroom: CGFloat = 36
+    /// The band kept clear over the text, from the moment the editor opens, for the menu of a hold
+    /// on the top line: the tallest menu (three rows), its headroom, and its clearance — so the
+    /// menu never has to sit below the words it's for and the text never moves to make room.
+    private static var menuBand: CGFloat {
+        menuHeadroom + 3 * menuCell.height + 8 + menuClearance
+    }
     private static let holdDelay: UInt64 = 450_000_000
     /// How close together two taps have to come to count as a double tap.
     private static let doubleTapInterval: TimeInterval = 0.32
@@ -4369,32 +4375,32 @@ struct RevisionEditor: View {
         return menu[hold.highlighted.row][hold.highlighted.column]
     }
 
-    /// How far the text is drawn up from its top: the scroll, less how far a hold's menu has
-    /// pushed the text down to make room for itself over the words it's for.
-    private var shownOffset: CGFloat { scrollOffset - (hold?.textPush ?? 0) }
-
     // MARK: Body
 
     var body: some View {
         NavigationStack {
             GeometryReader { geo in
+                // The text's viewport: everything under the band kept clear for the hold's menu.
+                // The menu is drawn over the viewport, unclipped, so it can reach up into the band.
+                let area = CGSize(width: geo.size.width,
+                                  height: max(0, geo.size.height - Self.menuBand))
                 textContent
                     // Its whole height, not the screen's: offered the viewport's height, the text
                     // would be squeezed into it (its frame only sets a minimum), measure no taller
                     // than the screen, and leave nothing to scroll.
                     .fixedSize(horizontal: false, vertical: true)
-                    .frame(width: geo.size.width, alignment: .topLeading)
-                    .offset(y: -shownOffset)
-                    .animation(.snappy(duration: 0.22), value: hold?.textPush ?? 0)
-                    .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
+                    .frame(width: area.width, alignment: .topLeading)
+                    .offset(y: -scrollOffset)
+                    .frame(width: area.width, height: area.height, alignment: .topLeading)
                     .clipped()
                     .contentShape(Rectangle())
                     .gesture(touchGesture)
-                    .overlay { holdMenu(in: geo.size) }
-                    .overlay { movingWords(in: geo.size) }
-                    .overlay(alignment: .topTrailing) { scrollIndicator(in: geo.size) }
+                    .overlay { holdMenu(in: area) }
+                    .overlay { movingWords(in: area) }
+                    .overlay(alignment: .topTrailing) { scrollIndicator(in: area) }
+                    .frame(width: geo.size.width, height: geo.size.height, alignment: .bottom)
                     .overlay(alignment: .top) { originalBadge }
-                    .onChange(of: geo.size, initial: true) { _, size in
+                    .onChange(of: area, initial: true) { _, size in
                         viewportHeight = size.height
                         viewportWidth = size.width
                         clampScroll()
@@ -4571,10 +4577,10 @@ struct RevisionEditor: View {
             .allowsHitTesting(false)
     }
 
-    /// The hold's menu: fixed above the press and the words it's for (the text moves down when
-    /// there's no room), rows of buttons over a Record row that carries the counter, with Cancel
-    /// beside it. The button the finger is pointing at is filled in, and its name sits over the
-    /// menu.
+    /// The hold's menu: fixed above the press and the words it's for (up in the band over the text
+    /// for a hold near the top), rows of buttons over a Record row that carries the counter, with
+    /// Cancel beside it. The button the finger is pointing at is filled in, and its name sits over
+    /// the menu.
     @ViewBuilder
     private func holdMenu(in size: CGSize) -> some View {
         if let hold, let rows = hold.menu {
@@ -4676,7 +4682,7 @@ struct RevisionEditor: View {
             let height = fontSize * 2.4 + 24
             // The bottom of the words: a little over the caret, or over the point the caret
             // would be at when there's no gap to drop into there.
-            let caretTop = drag.caret.map { $0.minY + Self.insetTop - shownOffset }
+            let caretTop = drag.caret.map { $0.minY + Self.insetTop - scrollOffset }
                 ?? drag.location.y - moveLift - fontSize * 0.7
             let words = revision.tokens[range].map(\.word).joined(separator: " ")
             // On the top line there's no room over the caret, and drawn any lower the words would
@@ -4920,7 +4926,7 @@ struct RevisionEditor: View {
 
     /// A point on screen (the viewport) as a point in the laid-out text.
     private func contentPoint(_ point: CGPoint) -> CGPoint {
-        CGPoint(x: point.x - Self.insetX, y: point.y - Self.insetTop + shownOffset)
+        CGPoint(x: point.x - Self.insetX, y: point.y - Self.insetTop + scrollOffset)
     }
 
     private func scroll(to offset: CGFloat) {
@@ -5103,11 +5109,10 @@ struct RevisionEditor: View {
     }
 
     /// The menu, laid out once above the press — and above the top of the words it's for, so it
-    /// never sits below the selection or the gap — and fixed there. Near the top of the screen,
-    /// where there's no room for it, the text moves down until there is (`Hold.textPush`), and
-    /// goes back when the hold ends. The finger doesn't point at it directly — it would cover what
-    /// it's choosing — but steers a pointer that starts on Record, moving `menuGain` times as far
-    /// as the finger does.
+    /// never sits below the selection or the gap — and fixed there. Near the top of the text it
+    /// goes up into the band kept clear over it (`menuBand`), so nothing moves to make room. The
+    /// finger doesn't point at it directly — it would cover what it's choosing — but steers a
+    /// pointer that starts on Record, moving `menuGain` times as far as the finger does.
     private func openMenu(_ hold: Hold, for target: RecordTarget) -> Hold {
         var hold = hold
         let rows = holdOptions()
@@ -5122,17 +5127,16 @@ struct RevisionEditor: View {
             case .insert(_, let caret):
                 return caret?.minY
             }
-        }().map { $0 + Self.insetTop - shownOffset }
-        var bottom = hold.start.y - Self.menuLift
-        if let targetTop { bottom = min(bottom, targetTop - Self.menuClearance) }
-        var top = bottom - height
-        if top < Self.menuHeadroom {
-            // Pushed down by what it takes to clear the menu, but not so far that the word under
-            // the finger leaves the screen (a selection taller than the screen can't all clear it).
-            let room = max(0, viewportHeight - 40 - hold.start.y)
-            hold.textPush = min(Self.menuHeadroom - top, room)
-            top = Self.menuHeadroom
-        }
+        }().map { $0 + Self.insetTop - scrollOffset }
+        // Clear of the thumb and of the words, as high as the band allows. The band is tall enough
+        // for the menu over any line that's wholly in sight, so it gives up clearing the thumb
+        // before the words; only words that start above the viewport (a selection scrolled partly
+        // out of sight) can't all be cleared.
+        let highest = Self.menuHeadroom - Self.menuBand
+        var bottom = min(hold.start.y - Self.menuLift,
+                         targetTop.map { $0 - Self.menuClearance } ?? .infinity)
+        bottom = max(bottom, highest + height)
+        let top = bottom - height
         let left = min(max(8, hold.start.x - width / 2), max(8, viewportWidth - width - 8))
         let frame = CGRect(x: left, y: top, width: width, height: height)
         hold.menu = rows
@@ -5562,9 +5566,6 @@ struct RevisionEditor: View {
         var menuFrame: CGRect = .zero
         var pointerOrigin: CGPoint = .zero
         var highlighted = HoldCell(row: 0, column: 0)
-        /// How far the text is moved down while the hold lasts, so the menu fits above the words
-        /// it's for.
-        var textPush: CGFloat = 0
     }
 
     /// A button of the hold's menu, by row and place in the row.
