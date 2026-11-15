@@ -51,7 +51,8 @@ struct ContentView: View {
         .animation(.default, value: model.busyMessage ?? model.nearby.receivingMessage)
         .overlay {
             if let heldRecording {
-                HeldRecordingReadout(anchor: heldRecording.anchor, recorder: heldRecording.recorder)
+                HeldRecordingReadout(anchor: heldRecording.anchor, recorder: heldRecording.recorder,
+                                     tag: heldRecording.tag, tint: heldRecording.tint)
             }
         }
         .alert("Something went wrong",

@@ -108,8 +108,8 @@ the rest of the app depends on.
   colour down its left edge**, the full height of the row. A row of every tag sits across the top of the Inbox, always —
   tap one to see just those, tap it again for everything. **Hold** one instead and a recording
   starts (the same tick the graph's hold gives); the elapsed counter **floats above your finger**,
-  the graph's own, over the navigation bar since that's what's above the chips — and the chip under
-  your finger carries it too. Let go and the entry lands in the Inbox **already filed under that tag**. A tag with nothing under it yet is
+  the graph's own with the tag's name ahead of the time, over the navigation bar since that's what's
+  above the chips — and the chip under your finger carries it too. Let go and the entry lands in the Inbox **already filed under that tag**. A tag with nothing under it yet is
   still there to record into, and tapping it shows an empty filter that says so. While you're looking at one
   tag, **Copy All**, **New Document** and **Delete All** appear at the bottom — no plate under them,
   floating over the page the way the record button does — because everything on screen is then one

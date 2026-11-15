@@ -3630,7 +3630,8 @@ struct InboxView: View {
             return
         }
         recordingTag = tag
-        heldRecording = HeldRecording(anchor: chip, recorder: tagRecorder)
+        heldRecording = HeldRecording(anchor: chip, recorder: tagRecorder,
+                                      tag: tag, tint: tagColor(tag))
         WWHaptics.recordingStarted()
     }
 
@@ -5764,15 +5765,29 @@ private struct RevisionFlowLayout: Layout {
 
 /// The counter that floats over a hold while it records — a red dot and the time so far, on a
 /// capsule — so the one thing worth watching isn't under the finger doing the holding. The graph
-/// canvas draws it over a held canvas or "+", and `HeldRecordingReadout` over a held Inbox tag.
+/// canvas draws it over a held canvas or "+", and `HeldRecordingReadout` over a held Inbox tag —
+/// with the tag's name, in its colour, ahead of the time, since the finger is covering the chip that
+/// says which tag it is.
 struct RecordingCounterCapsule: View {
     let elapsed: TimeInterval
+    /// What's being recorded into, shown before the time: a held tag's name. Nil for none.
+    var label: String? = nil
+    var labelTint: Color = WW.ink
+
+    /// The font a label is measured in, to keep the capsule on screen — the one it's set in.
+    static let labelFont = UIFont.systemFont(ofSize: 17, weight: .semibold)
 
     var body: some View {
         HStack(spacing: 9) {
             Circle()
                 .fill(WW.ember)
                 .frame(width: 10, height: 10)
+            if let label {
+                Text(label)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(labelTint)
+                    .lineLimit(1)
+            }
             Text(Recording.durationLabel(elapsed))
                 .font(.system(size: 17, weight: .medium, design: .rounded).monospacedDigit())
                 .foregroundStyle(WW.ink)
@@ -5793,6 +5808,9 @@ struct HeldRecording {
     var anchor: CGRect
     /// The recorder whose counter it shows.
     let recorder: AudioRecorder
+    /// The tag being recorded into, and its colour, named ahead of the time.
+    let tag: String
+    let tint: Color
 }
 
 /// A `HeldRecording`'s counter, placed the way the graph canvas places its own: a little above the
@@ -5802,13 +5820,20 @@ struct HeldRecording {
 struct HeldRecordingReadout: View {
     let anchor: CGRect
     @ObservedObject var recorder: AudioRecorder
+    let tag: String
+    let tint: Color
 
     var body: some View {
         GeometryReader { geo in
             let origin = geo.frame(in: .global).origin
-            let x = min(max(80, anchor.midX - origin.x), max(80, geo.size.width - 80))
+            // Half the capsule's width — padding, dot and time are about 108 points with the gaps —
+            // and a few points more, so a long tag name doesn't push it off the side.
+            let labelWidth = (tag as NSString)
+                .size(withAttributes: [.font: RecordingCounterCapsule.labelFont]).width
+            let margin = max(80, 66 + labelWidth / 2)
+            let x = min(max(margin, anchor.midX - origin.x), max(margin, geo.size.width - margin))
             let y = max(geo.safeAreaInsets.top + 22, anchor.midY - origin.y - 62)
-            RecordingCounterCapsule(elapsed: recorder.elapsed)
+            RecordingCounterCapsule(elapsed: recorder.elapsed, label: tag, labelTint: tint)
                 .position(x: x, y: y)
         }
         .allowsHitTesting(false)
