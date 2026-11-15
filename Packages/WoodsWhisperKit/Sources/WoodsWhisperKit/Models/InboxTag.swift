@@ -41,7 +41,7 @@ public enum InboxTag {
     public static let defaultStyles = [
         InboxTagStyle(name: "Journal", colorID: "moss"),
         InboxTagStyle(name: "Quote", colorID: "violet"),
-        InboxTagStyle(name: "LLM", colorID: "amber"),
+        InboxTagStyle(name: "Fix", colorID: "amber"),
         InboxTagStyle(name: "Story", colorID: "slate")
     ]
 

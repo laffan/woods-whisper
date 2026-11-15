@@ -18,9 +18,14 @@ struct ContentView: View {
     enum Tab: String, Hashable { case inbox, documents, log, settings }
     @SceneStorage("ContentView.selectedTab") private var selectedTab: Tab = .inbox
 
+    /// An Inbox tag being held to record. Its counter is drawn here, over the tab view, rather than
+    /// in the Inbox: the chips sit just under the navigation bar, and the counter belongs above the
+    /// finger — over the bar, which nothing inside the navigation stack can draw on top of.
+    @State private var heldRecording: HeldRecording?
+
     var body: some View {
         TabView(selection: $selectedTab) {
-            InboxTab()
+            InboxTab(heldRecording: $heldRecording)
                 .tabItem { Label("Inbox", systemImage: "tray.and.arrow.down") }
                 .tag(Tab.inbox)
 
@@ -44,6 +49,11 @@ struct ContentView: View {
             }
         }
         .animation(.default, value: model.busyMessage ?? model.nearby.receivingMessage)
+        .overlay {
+            if let heldRecording {
+                HeldRecordingReadout(anchor: heldRecording.anchor, recorder: heldRecording.recorder)
+            }
+        }
         .alert("Something went wrong",
                isPresented: Binding(get: { model.setupError != nil },
                                     set: { if !$0 { model.setupError = nil } })) {
@@ -178,13 +188,15 @@ struct WoodsWhisperShortcuts: AppShortcutsProvider {
 /// Documents rather than a row buried inside it.
 struct InboxTab: View {
     @EnvironmentObject private var model: AppModel
+    /// Handed on to the Inbox — see `ContentView.heldRecording`.
+    @Binding var heldRecording: HeldRecording?
     @State private var inboxID: UUID?
 
     var body: some View {
         NavigationStack {
             Group {
                 if let inboxID {
-                    InboxView(documentID: inboxID)
+                    InboxView(documentID: inboxID, heldRecording: $heldRecording)
                 } else {
                     ProgressView()
                         .frame(maxWidth: .infinity, maxHeight: .infinity)

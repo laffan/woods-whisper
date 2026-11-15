@@ -2985,6 +2985,10 @@ struct InboxView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.scenePhase) private var scenePhase
     let documentID: UUID
+    /// A tag being held to record, for `ContentView` to float its counter over: the chips sit just
+    /// under the navigation bar, so a counter clear of the finger is one drawn over the bar, and
+    /// only a view above the navigation stack can draw there.
+    @Binding var heldRecording: HeldRecording?
 
     @State private var showingRecorder = false
 
@@ -3038,7 +3042,8 @@ struct InboxView: View {
     @State private var showingFilteredDeleteConfirm = false
 
     // Holding a tag at the top records an entry already filed under it: the recorder behind the
-    // hold, and which tag is being spoken into (its chip carries the counter meanwhile).
+    // hold, and which tag is being spoken into (its chip carries the counter meanwhile, and a
+    // second one floats above the finger — see `heldRecording`).
     @StateObject private var tagRecorder = AudioRecorder()
     @State private var recordingTag: String?
 
@@ -3563,7 +3568,7 @@ struct InboxView: View {
 
     /// The row of tags across the top of the Inbox — every tag, always, whether or not anything is
     /// filed under it yet. **Tap** one to see just those entries; **hold** one to record a new entry
-    /// that arrives already filed under it (the chip carries the counter while you speak).
+    /// that arrives already filed under it (the counter floats above the finger while you speak).
     ///
     /// Tapping the tag you're already on takes the filter off, which is the same gesture as tapping
     /// "All" and saves reaching for it.
@@ -3589,7 +3594,7 @@ struct InboxView: View {
                                                 filterTag = (filterTag == tag) ? nil : tag
                                             }
                                         },
-                                        onHold: { beginTagRecording(tag) },
+                                        onHold: { beginTagRecording(tag, at: $0) },
                                         onRelease: { finishTagRecording() })
                     }
                 }
@@ -3604,8 +3609,9 @@ struct InboxView: View {
     // MARK: Holding a tag to record
 
     /// A tag has been held: start capturing. Nothing is filed yet — the entry appears when the
-    /// finger lifts, already under the tag that was held.
-    private func beginTagRecording(_ tag: String) {
+    /// finger lifts, already under the tag that was held. `chip` is where the held chip is on
+    /// screen, which the floating counter is drawn above.
+    private func beginTagRecording(_ tag: String, at chip: CGRect) {
         guard recordingTag == nil else { return }
         guard AVAudioApplication.shared.recordPermission == .granted else {
             // Checked, never awaited — the finger is already down. Asking is a separate path.
@@ -3624,6 +3630,7 @@ struct InboxView: View {
             return
         }
         recordingTag = tag
+        heldRecording = HeldRecording(anchor: chip, recorder: tagRecorder)
         WWHaptics.recordingStarted()
     }
 
@@ -3633,6 +3640,7 @@ struct InboxView: View {
     private func finishTagRecording() {
         guard let tag = recordingTag else { return }
         recordingTag = nil
+        heldRecording = nil
         guard let result = tagRecorder.stop() else { return }
         // A press let go the instant it's recognised isn't a recording.
         guard result.duration >= GraphCanvas.minimumClip else {
@@ -4352,7 +4360,7 @@ struct RevisionEditor: View {
     private static var cancelWidth: CGFloat { menuCell.height }
     /// How much further the menu's pointer moves than the finger does, so a small movement of the
     /// thumb reaches across the menu — it's steered like a joystick, not touched.
-    private static let menuGain: CGFloat = 1.6
+    private static let menuGain: CGFloat = 2.0
     /// How far above the press the menu's bottom edge sits, clear of the thumb.
     private static let menuLift: CGFloat = 64
     /// How far above the top of the words a hold is for (the selection, or the gap's caret) the
@@ -5754,9 +5762,64 @@ private struct RevisionFlowLayout: Layout {
     }
 }
 
+/// The counter that floats over a hold while it records — a red dot and the time so far, on a
+/// capsule — so the one thing worth watching isn't under the finger doing the holding. The graph
+/// canvas draws it over a held canvas or "+", and `HeldRecordingReadout` over a held Inbox tag.
+struct RecordingCounterCapsule: View {
+    let elapsed: TimeInterval
+
+    var body: some View {
+        HStack(spacing: 9) {
+            Circle()
+                .fill(WW.ember)
+                .frame(width: 10, height: 10)
+            Text(Recording.durationLabel(elapsed))
+                .font(.system(size: 17, weight: .medium, design: .rounded).monospacedDigit())
+                .foregroundStyle(WW.ink)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 9)
+        .background(WW.surface, in: Capsule())
+        .overlay(Capsule().stroke(WW.hairline, lineWidth: 1))
+        .shadow(color: .black.opacity(0.16), radius: 14, y: 4)
+    }
+}
+
+/// A recording held down under a finger, where its counter has to float over the bars to be seen:
+/// the Inbox's tag chips, which sit just under the navigation bar. The Inbox sets it; `ContentView`
+/// draws it, over everything.
+struct HeldRecording {
+    /// What's being held, in global coordinates — the counter floats above it.
+    var anchor: CGRect
+    /// The recorder whose counter it shows.
+    let recorder: AudioRecorder
+}
+
+/// A `HeldRecording`'s counter, placed the way the graph canvas places its own: a little above the
+/// press, and kept on screen at the sides. It goes no higher than the top of the safe area, so for
+/// a chip just under the navigation bar it sits over the bar's middle — over the title, if that's
+/// where the chip is, which it can cover for as long as the hold lasts.
+struct HeldRecordingReadout: View {
+    let anchor: CGRect
+    @ObservedObject var recorder: AudioRecorder
+
+    var body: some View {
+        GeometryReader { geo in
+            let origin = geo.frame(in: .global).origin
+            let x = min(max(80, anchor.midX - origin.x), max(80, geo.size.width - 80))
+            let y = max(geo.safeAreaInsets.top + 22, anchor.midY - origin.y - 62)
+            RecordingCounterCapsule(elapsed: recorder.elapsed)
+                .position(x: x, y: y)
+        }
+        .allowsHitTesting(false)
+    }
+}
+
 /// A tag at the top of the Inbox: **tap** it to filter by it, **hold** it to record an entry that's
 /// filed under it from the start — the graph's "+" hold, on a chip. While it records, the chip turns
-/// ember and carries the counter, since the finger is covering whatever else would say so.
+/// ember and carries the counter — but the finger is on the chip, covering both, so the hold also
+/// hands its frame to `onHold` for the graph's floating counter to be drawn above it
+/// (`HeldRecordingReadout`).
 ///
 /// The hold is a long press *sequenced into* a drag rather than a drag from the first instant: the
 /// chips sit in a horizontal scroll view, and a zero-distance drag would claim every swipe along
@@ -5771,12 +5834,15 @@ private struct HoldableTagChip: View {
     let elapsed: TimeInterval?
     let canHold: Bool
     let onTap: () -> Void
-    let onHold: () -> Void
+    /// The hold has begun; given where the chip is on screen, in global coordinates.
+    let onHold: (CGRect) -> Void
     let onRelease: () -> Void
 
     @GestureState private var isHeld = false
     /// The same, for the UIKit hold, which reports its end rather than resetting a gesture state.
     @State private var isHolding = false
+    /// Where the chip is on screen, kept up to date as the row scrolls, for the floating counter.
+    @State private var chipFrame: CGRect = .zero
 
     var body: some View {
         let recording = elapsed != nil
@@ -5796,11 +5862,18 @@ private struct HoldableTagChip: View {
         .padding(.vertical, 6)
         .background(isOn && !recording ? ink : ink.opacity(0.10), in: Capsule())
         .overlay(Capsule().stroke(isOn || recording ? ink : ink.opacity(0.45), lineWidth: 1))
+        .background {
+            GeometryReader { geo in
+                Color.clear.onChange(of: geo.frame(in: .global), initial: true) { _, chip in
+                    chipFrame = chip
+                }
+            }
+        }
         .scaleEffect(isHeld || isHolding ? 0.96 : 1)
         .contentShape(Capsule())
         .modifier(ChipGestures(hold: hold, onTap: onTap, onHoldPhase: holdPhase))
         .onChange(of: isHeld) { _, held in
-            if !held { onRelease() } else if canHold { onHold() }
+            if !held { onRelease() } else if canHold { onHold(chipFrame) }
         }
         .accessibilityLabel(title)
         .accessibilityHint("Tap to filter by this tag. Hold to record an entry filed under it.")
@@ -5824,7 +5897,7 @@ private struct HoldableTagChip: View {
         switch phase {
         case .began:
             isHolding = true
-            if canHold { onHold() }
+            if canHold { onHold(chipFrame) }
         case .changed:
             break
         case .ended, .cancelled:
@@ -7697,22 +7770,10 @@ struct GraphDocumentView: View {
             let x: CGFloat = min(max(80, anchor.x), max(80, size.width - 80))
             // Never up under the navigation bar, which the canvas now runs beneath.
             let y: CGFloat = max(chrome.top + 34, anchor.y - 62)
-            HStack(spacing: 9) {
-                Circle()
-                    .fill(WW.ember)
-                    .frame(width: 10, height: 10)
-                Text(Recording.durationLabel(recorder.elapsed))
-                    .font(.system(size: 17, weight: .medium, design: .rounded).monospacedDigit())
-                    .foregroundStyle(WW.ink)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 9)
-            .background(WW.surface, in: Capsule())
-            .overlay(Capsule().stroke(WW.hairline, lineWidth: 1))
-            .shadow(color: .black.opacity(0.16), radius: 14, y: 4)
-            .position(x: x, y: y)
-            .allowsHitTesting(false)
-            .transition(.opacity)
+            RecordingCounterCapsule(elapsed: recorder.elapsed)
+                .position(x: x, y: y)
+                .allowsHitTesting(false)
+                .transition(.opacity)
         }
     }
 

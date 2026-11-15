@@ -728,14 +728,16 @@ final class WoodsWhisperKitTests: XCTestCase {
     /// The tags it starts with now, in every form they're likely to be said.
     func testTheDefaultTagsFile() {
         let tags = InboxTag.defaultNames
-        XCTAssertEqual(tags, ["Journal", "Quote", "LLM", "Story"])
+        XCTAssertEqual(tags, ["Journal", "Quote", "Fix", "Story"])
         XCTAssertEqual(InboxTag.autoTag(for: "Journal. Slept badly", from: tags), "Journal")
         XCTAssertEqual(InboxTag.autoTag(for: "Journaling about the hike", from: tags), "Journal")
         XCTAssertEqual(InboxTag.autoTag(for: "Quote: the map is not the land", from: tags), "Quote")
         XCTAssertEqual(InboxTag.autoTag(for: "Quotes from the ranger", from: tags), "Quote")
         XCTAssertEqual(InboxTag.autoTag(for: "Quoting Muir", from: tags), "Quote")
-        XCTAssertEqual(InboxTag.autoTag(for: "LLM, summarise this", from: tags), "LLM")
-        XCTAssertEqual(InboxTag.autoTag(for: "LLMs are odd", from: tags), "LLM")
+        XCTAssertEqual(InboxTag.autoTag(for: "Fix: the stove door sticks", from: tags), "Fix")
+        XCTAssertEqual(InboxTag.autoTag(for: "Fixes for the tent", from: tags), "Fix")
+        XCTAssertEqual(InboxTag.autoTag(for: "Fixing the stove", from: tags), "Fix")
+        XCTAssertNil(InboxTag.autoTag(for: "Fixture list for Saturday", from: tags))
         XCTAssertEqual(InboxTag.autoTag(for: "Story about the bear", from: tags), "Story")
         XCTAssertEqual(InboxTag.autoTag(for: "Stories for the kids", from: tags), "Story")
         XCTAssertNil(InboxTag.autoTag(for: "Storm coming in", from: tags))

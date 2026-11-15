@@ -93,12 +93,12 @@ the rest of the app depends on.
   another document, or rewritten past recognising by a whole-document transform) offers reorder
   only. If the new clip can't be joined on, it's kept as a recording of its own, after those
   sections or in the Inbox, and you're told why.
-- **Tags.** An Inbox entry can be filed under a tag — **Journal**, **Quote**, **LLM**, **Story** to
+- **Tags.** An Inbox entry can be filed under a tag — **Journal**, **Quote**, **Fix**, **Story** to
   start with, each in its own colour, and the list is yours to edit in **Settings → Inbox Tags** (tap a
   tag's swatch to change its colour; a new tag takes the first colour none of the others is wearing;
   **Reset to Defaults** puts the starting four back, after asking). Two ways in: swipe an entry right
   and tap **Tag**, or simply *say* it — an entry whose **first word is a tag** files itself the
-  moment it's transcribed. It's forgiving about how you said it ("Journaling…", "Quotes…", "Stories…", "LLMs…"
+  moment it's transcribed. It's forgiving about how you said it ("Journaling…", "Quotes…", "Stories…", "Fixing…"
   all count) and strict about where: a tag has to open the entry, not turn up in the middle of a
   sentence. A transform runs first, so what the entry ends up saying is what files it, and a tag you
   chose by hand is never overruled. The word that filed it is then **taken off the entry** — with
@@ -107,8 +107,9 @@ the rest of the app depends on.
   A filed entry wears its tag twice: the small pill beside the date, and a **bar of the tag's
   colour down its left edge**, the full height of the row. A row of every tag sits across the top of the Inbox, always —
   tap one to see just those, tap it again for everything. **Hold** one instead and a recording
-  starts (the same tick the graph's hold gives, and the chip carries the counter); let go and the
-  entry lands in the Inbox **already filed under that tag**. A tag with nothing under it yet is
+  starts (the same tick the graph's hold gives); the elapsed counter **floats above your finger**,
+  the graph's own, over the navigation bar since that's what's above the chips — and the chip under
+  your finger carries it too. Let go and the entry lands in the Inbox **already filed under that tag**. A tag with nothing under it yet is
   still there to record into, and tapping it shows an empty filter that says so. While you're looking at one
   tag, **Copy All**, **New Document** and **Delete All** appear at the bottom — no plate under them,
   floating over the page the way the record button does — because everything on screen is then one
@@ -204,8 +205,8 @@ the rest of the app depends on.
     trailing comma) and **Clean** (✨); marks to put in — **period**, **comma**, **question mark**,
     **exclamation point**, **colon**, **semicolon**; and along the bottom **Record**, the recording the hold started, with
     its counter running, and a square **Cancel** (✕) beside it. The menu opens on Record, and
-    your finger, still down, steers the choice over it like a joystick — its movement amplified a
-    little (1.6×), so a short slide reaches across the menu — without having to cover it. The chosen button is filled in and its name sits over the menu;
+    your finger, still down, steers the choice over it like a joystick — its movement amplified
+    (2×), so a short slide reaches across the menu — without having to cover it. The chosen button is filled in and its name sits over the menu;
     while anything but Record is chosen, the counter is **struck through**, since letting go there
     drops the recording. Marks go where the recording's words would have: on the end of the
     selection (taking the place of its mark) or at the gap you held. **Clean** takes every mark
